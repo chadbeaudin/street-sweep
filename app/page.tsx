@@ -5,14 +5,19 @@ import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
-const Map = dynamic(() => import('@/components/Map'), {
+const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
-    loading: () => <div className="h-full w-full bg-gray-100 flex items-center justify-center">Loading Map...</div>
+    loading: () => <div className="flex-1 bg-gray-100 flex items-center justify-center">Loading map...</div>
 });
 
+import { ElevationProfile } from '@/components/ElevationProfile';
+
 export default function Home() {
-    const [bbox, setBbox] = useState<{ north: number, south: number, east: number, west: number } | null>(null);
-    const [route, setRoute] = useState<[number, number][]>([]);
+    const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
+    const [route, setRoute] = useState<[number, number, number?][] | null>(null);
+    const [elevationData, setElevationData] = useState<any[] | null>(null);
+    const [totalDistance, setTotalDistance] = useState<string | null>(null);
+    const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
 
@@ -30,15 +35,17 @@ export default function Home() {
                 body: JSON.stringify({ bbox })
             });
 
+            const data = await res.json();
             if (!res.ok) {
-                const data = await res.json();
                 throw new Error(JSON.stringify(data));
             }
 
-            const geoJson = await res.json();
-            // Extract coordinates from the first feature
-            if (geoJson.features && geoJson.features.length > 0) {
-                setRoute(geoJson.features[0].geometry.coordinates);
+            // Extract coordinates and profile from the first feature
+            if (data.features && data.features.length > 0) {
+                const feature = data.features[0];
+                setRoute(feature.geometry.coordinates);
+                setElevationData(feature.properties.elevationProfile);
+                setTotalDistance(feature.properties.totalDistance);
             } else {
                 setError({ message: "No route generated." });
             }
@@ -63,23 +70,24 @@ export default function Home() {
     };
 
     const downloadGPX = () => {
-        if (route.length === 0) return;
+        if (!route) return;
 
-        const gpxData = `<?xml version="1.0" encoding="UTF-8"?>
+        const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="StreetSweep" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
     <name>StreetSweep Route</name>
     <trkseg>
-${route.map(p => `      <trkpt lat="${p[1]}" lon="${p[0]}"></trkpt>`).join('\n')}
+${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefined ? `\n        <ele>${pt[2]}</ele>` : ''}
+      </trkpt>`).join('\n')}
     </trkseg>
   </trk>
 </gpx>`;
 
-        const blob = new Blob([gpxData], { type: 'application/gpx+xml' });
+        const blob = new Blob([gpx], { type: 'application/gpx+xml' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'street-sweep-route.gpx';
+        a.download = 'route.gpx';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -87,54 +95,60 @@ ${route.map(p => `      <trkpt lat="${p[1]}" lon="${p[0]}"></trkpt>`).join('\n')
     };
 
     return (
-        <main className="flex h-screen flex-col relative overflow-hidden">
-            <header className="bg-slate-900 text-white p-4 flex justify-between items-center shadow-md z-50 relative">
-                <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
-                    StreetSweep
-                </h1>
-                <div className="flex gap-4 items-center">
-                    {route.length > 0 && (
-                        <button
-                            onClick={downloadGPX}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm flex items-center gap-2"
-                        >
-                            Download GPX
-                        </button>
+        <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
+            <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-20">
+                <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                        <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A2 2 0 013 15.414V5.586a2 2 0 012.316-1.97l5.447 1.258a2 2 0 001.374 0l5.447-1.258A2 2 0 0121 5.586v9.828a2 2 0 01-1.236 1.861L15 20l-6-2.586L9 20z" />
+                        </svg>
+                    </div>
+                    <h1 className="text-xl font-bold text-gray-900 tracking-tight">StreetSweep</h1>
+                </div>
+
+                <div className="flex items-center gap-3">
+                    {route && (
+                        <>
+                            <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-md text-sm font-medium text-indigo-700 flex items-center gap-2">
+                                <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
+                                {totalDistance} mi
+                            </div>
+                            <button
+                                onClick={downloadGPX}
+                                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                GPX
+                            </button>
+                        </>
                     )}
-                    {loading ? (
-                        <div className="flex items-center text-sm gap-2 text-blue-300">
-                            <Loader2 className="animate-spin h-4 w-4" /> Generating...
-                        </div>
-                    ) : (
-                        <button
-                            onClick={handleGenerate}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-md font-medium transition-colors shadow-sm"
-                        >
-                            Generate Route
-                        </button>
-                    )}
+                    <button
+                        onClick={handleGenerate}
+                        disabled={loading}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
+                    >
+                        {loading ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Generating...
+                            </>
+                        ) : (
+                            'Generate Route'
+                        )}
+                    </button>
                 </div>
             </header>
 
-            <div className="flex-1 relative">
-                <Map
-                    route={route}
-                    bbox={bbox || undefined}
-                    onBBoxChange={setBbox}
-                />
+            <div className="flex-1 flex flex-col relative min-h-0">
+                <Map bbox={bbox} onBBoxChange={setBbox} route={route} hoveredPoint={hoveredPoint} />
 
-                {error && (
-                    <ErrorDialog
-                        message={error.message}
-                        trace={error.trace}
-                        onClose={() => setError(null)}
+                {elevationData && (
+                    <ElevationProfile
+                        data={elevationData}
+                        onHover={setHoveredPoint}
                     />
-                )}
-                {!bbox && !loading && (
-                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white/80 p-6 rounded-xl shadow-xl backdrop-blur-md z-[1000] text-center max-w-sm">
-                        <h2 className="text-lg font-semibold text-slate-800 mb-2">Ready to Sweep?</h2>
-                        <p className="text-slate-600">Move the map to your target neighborhood and click <strong>Generate Route</strong>.</p>
-                    </div>
                 )}
             </div>
         </main>

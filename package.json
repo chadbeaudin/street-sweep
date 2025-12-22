@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@turf/distance": "^7.3.1",
     "clsx": "^2.1.0",
     "eulerian-trail": "^0.1.0",
     "leaflet": "^1.9.4",
@@ -19,6 +20,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
+    "recharts": "^3.6.0",
     "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {
