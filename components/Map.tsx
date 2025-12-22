@@ -70,8 +70,8 @@ export default function Map({ route, bbox, onBBoxChange }: MapProps) {
         <MapContainer
             center={center}
             zoom={14}
-            className="h-full w-full absolute inset-0 z-0"
-            style={{ height: '100%', width: '100%', position: 'absolute', top: 0, left: 0 }}
+            className="absolute inset-0 outline-none"
+            style={{ width: '100%', height: '100%' }}
         >
             <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

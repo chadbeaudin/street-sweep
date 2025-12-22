@@ -37,8 +37,11 @@ export async function POST(request: Request) {
         };
 
         return NextResponse.json(geoJson);
-    } catch (error) {
+    } catch (error: any) {
         console.error('Error in generate route:', error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+        return NextResponse.json({
+            error: error.message || 'Internal Server Error',
+            trace: error.stack
+        }, { status: 500 });
     }
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
@@ -13,11 +14,11 @@ export default function Home() {
     const [bbox, setBbox] = useState<{ north: number, south: number, east: number, west: number } | null>(null);
     const [route, setRoute] = useState<[number, number][]>([]);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
 
     const handleGenerate = async () => {
         if (!bbox) {
-            setError("Please move the map to set an area.");
+            setError({ message: "Please move the map to set an area." });
             return;
         }
         setLoading(true);
@@ -30,7 +31,8 @@ export default function Home() {
             });
 
             if (!res.ok) {
-                throw new Error(`Error: ${res.statusText}`);
+                const data = await res.json();
+                throw new Error(JSON.stringify(data));
             }
 
             const geoJson = await res.json();
@@ -38,10 +40,23 @@ export default function Home() {
             if (geoJson.features && geoJson.features.length > 0) {
                 setRoute(geoJson.features[0].geometry.coordinates);
             } else {
-                setError("No route generated.");
+                setError({ message: "No route generated." });
             }
         } catch (e: any) {
-            setError(e.message);
+            console.error("API Error:", e);
+            let message = e.message;
+            let trace = undefined;
+            try {
+                // Try to parse JSON error from API
+                const jsonError = JSON.parse(e.message);
+                if (jsonError.error) {
+                    message = jsonError.error;
+                    trace = jsonError.trace;
+                }
+            } catch {
+                // Not JSON, just use message
+            }
+            setError({ message, trace });
         } finally {
             setLoading(false);
         }
@@ -72,8 +87,8 @@ ${route.map(p => `      <trkpt lat="${p[1]}" lon="${p[0]}"></trkpt>`).join('\n')
     };
 
     return (
-        <main className="flex h-screen flex-col">
-            <header className="bg-slate-900 text-white p-4 flex justify-between items-center shadow-md z-10">
+        <main className="flex h-screen flex-col relative overflow-hidden">
+            <header className="bg-slate-900 text-white p-4 flex justify-between items-center shadow-md z-50 relative">
                 <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
                     StreetSweep
                 </h1>
@@ -107,10 +122,13 @@ ${route.map(p => `      <trkpt lat="${p[1]}" lon="${p[0]}"></trkpt>`).join('\n')
                     bbox={bbox || undefined}
                     onBBoxChange={setBbox}
                 />
+
                 {error && (
-                    <div className="absolute top-4 left-1/2 transform -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded shadow-lg backdrop-blur-sm z-[1000]">
-                        {error}
-                    </div>
+                    <ErrorDialog
+                        message={error.message}
+                        trace={error.trace}
+                        onClose={() => setError(null)}
+                    />
                 )}
                 {!bbox && !loading && (
                     <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-white/80 p-6 rounded-xl shadow-xl backdrop-blur-md z-[1000] text-center max-w-sm">
