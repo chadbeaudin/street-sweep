@@ -20,6 +20,7 @@ interface MapProps {
     onBBoxChange?: (bbox: { north: number, south: number, east: number, west: number }) => void;
 }
 
+
 function MapEvents({ onBBoxChange }: { onBBoxChange?: (bbox: any) => void }) {
     const map = useMapEvents({
         moveend: () => {
@@ -37,20 +38,46 @@ function MapEvents({ onBBoxChange }: { onBBoxChange?: (bbox: any) => void }) {
     return null;
 }
 
+function RecenterMap({ lat, lon }: { lat: number, lon: number }) {
+    const map = useMapEvents({});
+    useEffect(() => {
+        map.setView([lat, lon], map.getZoom());
+    }, [lat, lon, map]);
+    return null;
+}
+
 export default function Map({ route, bbox, onBBoxChange }: MapProps) {
     // Convert GeoJSON [lon, lat] to Leaflet [lat, lon]
     const leafletRoute = route.map(p => [p[1], p[0]] as [number, number]);
+    const [center, setCenter] = useState<[number, number]>([40.0150, -105.2705]); // Default Boulder
+    const [hasLocation, setHasLocation] = useState(false);
+
+    useEffect(() => {
+        if (navigator.geolocation && !hasLocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    setCenter([position.coords.latitude, position.coords.longitude]);
+                    setHasLocation(true);
+                },
+                (error) => {
+                    console.error("Error getting location", error);
+                }
+            );
+        }
+    }, [hasLocation]);
 
     return (
         <MapContainer
-            center={[40.0150, -105.2705]} // Boulder, CO default
+            center={center}
             zoom={14}
             className="h-full w-full absolute inset-0 z-0"
+            style={{ height: '100%', width: '100%', position: 'absolute', top: 0, left: 0 }}
         >
             <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
+            {hasLocation && <RecenterMap lat={center[0]} lon={center[1]} />}
             {leafletRoute.length > 0 && (
                 <Polyline positions={leafletRoute} color="blue" weight={4} />
             )}

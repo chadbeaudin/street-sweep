@@ -1,6 +1,6 @@
 # StreetSweep
 
-**StreetSweep** is a web application designed to help runners and cyclists achieve 100% street coverage in their neighborhoods. It generates optimized routes that traverse every accessible street within a selected area with minimal backtracking, effectively solving the Chinese Postman Problem for custom bounding boxes.
+**StreetSweep** is a web application designed to help runners and cyclists achieve 100% street coverage in a given area. It generates optimized routes that traverse every accessible street within a selected area with minimal backtracking, effectively solving the Chinese Postman Problem for custom bounding boxes.  It will pull in all of your rides from Strava and show you which streets you have already ridden and which streets you still need to ride.
 
 ## Features
 
