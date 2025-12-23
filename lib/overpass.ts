@@ -1,24 +1,18 @@
 import { BoundingBox, OverpassResponse } from './types';
 
-const OVERPASS_API_URL = 'https://overpass-api.de/api/interpreter';
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://lz4.overpass-api.de/api/interpreter'
+];
+
+async function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse> {
-    const query = `
-    [out:json][timeout:25];
-    (
-      way["highway"](poly:"${bbox.south} ${bbox.west} ${bbox.north} ${bbox.east}"); 
-      way["highway"]["highway"!~"motorway|trunk|primary|secondary|tertiary"](if:length() < 20000);
-    );
-    (._;>;);
-    out body;
-  `;
-
-    // Efficient query for streets suitable for cycling
-    // Excluding major highways if needed, but for "coverage" we usually want residential
-    // Using a simpler query for getting all bike-accessible roads:
-
-    const bikeQuery = `
-    [out:json][timeout:25];
+  const bikeQuery = `
+    [out:json][timeout:30];
     (
       way["highway"]
          ["highway"!~"motorway|trunk|motorway_link|trunk_link"]
@@ -29,29 +23,49 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
     out body;
   `;
 
-    try {
-        const response = await fetch(OVERPASS_API_URL, {
-            method: 'POST',
-            body: bikeQuery, // Overpass accepts raw query body
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
+  let lastError: Error | null = null;
+  const maxRetries = 3;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    // Try each endpoint in order
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      try {
+        console.log(`Fetching OSM data from ${endpoint} (Attempt ${attempt + 1})...`);
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          body: bikeQuery,
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
-        if (!response.ok) {
-            throw new Error(`Overpass API error: ${response.status} ${response.statusText}`);
+        if (response.ok) {
+          return (await response.json()) as OverpassResponse;
         }
 
-        const data = (await response.json()) as OverpassResponse;
-        return data;
-    } catch (error) {
-        console.error("Failed to fetch OSM data:", error);
-        throw error;
+        // If 504 or 429, we should definitely retry another mirror
+        if (response.status === 504 || response.status === 429) {
+          console.warn(`Endpoint ${endpoint} failed with ${response.status}. Trying next mirror...`);
+          continue;
+        }
+
+        const errorText = await response.text();
+        throw new Error(`Overpass API error: ${response.status} ${response.statusText}. ${errorText}`);
+      } catch (error: any) {
+        console.error(`Attempt ${attempt + 1} at ${endpoint} failed:`, error.message);
+        lastError = error;
+      }
     }
+
+    // Wait before next round of retries
+    if (attempt < maxRetries - 1) {
+      const backoff = Math.pow(2, attempt) * 1000;
+      console.log(`All mirrors failed. Retrying in ${backoff}ms...`);
+      await delay(backoff);
+    }
+  }
+
+  throw lastError || new Error("Failed to fetch OSM data after multiple attempts.");
 }
 
 export async function fetchOSMDataByQuery(queryStr: string): Promise<OverpassResponse> {
-    // For geocoding, we might need a geocoding service like Nominatim to get BBox first.
-    // This function is a place holder.
-    throw new Error("Not implemented");
+  throw new Error("Not implemented");
 }

@@ -47,9 +47,9 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({ data, onHove
                         data={data}
                         margin={{ top: 5, right: 20, left: 10, bottom: 0 }}
                         onMouseMove={(state: any) => {
-                            if (state && state.activePayload && state.activePayload.length > 0) {
-                                const point = state.activePayload[0].payload;
-                                onHover({ lat: point.lat, lon: point.lon });
+                            if (state && state.activeTooltipIndex !== undefined && data[state.activeTooltipIndex]) {
+                                const payload = data[state.activeTooltipIndex];
+                                onHover({ lat: payload.lat, lon: payload.lon });
                             }
                         }}
                         onMouseLeave={() => onHover(null)}

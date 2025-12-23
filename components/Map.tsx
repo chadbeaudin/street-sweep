@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, CircleMarker } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -47,9 +47,44 @@ function RecenterMap({ route }: { route: [number, number, number?][] | null }) {
     return null;
 }
 
+function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) {
+    if (!point) return null;
+
+    // Standard Leaflet Icon can be more reliable than CircleMarker in some SVG setups
+    const hoverIcon = L.divIcon({
+        className: 'custom-hover-icon',
+        html: `<div style="
+            width: 20px; 
+            height: 20px; 
+            background: #EF4444; 
+            border: 3px solid white; 
+            border-radius: 50%; 
+            box-shadow: 0 0 10px rgba(0,0,0,0.5);
+            animation: pulse 1s infinite;
+        "></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+    });
+
+    return (
+        <Marker
+            position={[point.lat, point.lon]}
+            icon={hoverIcon}
+            zIndexOffset={1000}
+        />
+    );
+}
+
 const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint }) => {
     return (
         <div className="flex-1 relative min-h-0">
+            {/* Debug overlay */}
+            {hoveredPoint && (
+                <div className="absolute top-4 right-4 z-[1000] bg-white px-3 py-1 rounded shadow-md border border-gray-200 text-xs font-mono text-red-600">
+                    Hover: {hoveredPoint.lat.toFixed(4)}, {hoveredPoint.lon.toFixed(4)}
+                </div>
+            )}
+
             <MapContainer
                 center={[39.02, -104.7]}
                 zoom={13}
@@ -71,20 +106,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint }) =>
                     />
                 )}
 
-                {hoveredPoint && (
-                    <CircleMarker
-                        center={[hoveredPoint.lat, hoveredPoint.lon]}
-                        radius={10}
-                        pathOptions={{
-                            fillColor: '#F59E0B', // Bright yellow-orange
-                            fillOpacity: 1,
-                            color: 'white',
-                            weight: 3,
-                            className: 'animate-pulse'
-                        }}
-                    />
-                )}
+                <HoverMarker point={hoveredPoint} />
             </MapContainer>
+
+            <style jsx global>{`
+                @keyframes pulse {
+                    0% { transform: scale(1); opacity: 1; }
+                    50% { transform: scale(1.3); opacity: 0.8; }
+                    100% { transform: scale(1); opacity: 1; }
+                }
+            `}</style>
         </div>
     );
 };
