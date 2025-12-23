@@ -19,6 +19,7 @@ interface MapProps {
     onBBoxChange: (bbox: { south: number; west: number; north: number; east: number }) => void;
     route: [number, number, number?][] | null;
     hoveredPoint: { lat: number; lon: number } | null;
+    stravaRoads: [number, number][][] | null;
 }
 
 function MapEvents({ onBBoxChange }: { onBBoxChange: (bbox: any) => void }) {
@@ -75,7 +76,7 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
     );
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads }) => {
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
@@ -98,6 +99,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint }) =>
                         opacity={0.7}
                     />
                 )}
+
+                {stravaRoads && stravaRoads.map((road, idx) => (
+                    <Polyline
+                        key={`strava-${idx}`}
+                        positions={road as [number, number][]}
+                        color="#3B82F6" // Standard Blue
+                        weight={2}
+                        opacity={0.8} // Higher opacity reduces the "stacking" heatmap effect
+                    />
+                ))}
 
                 <HoverMarker point={hoveredPoint} />
             </MapContainer>

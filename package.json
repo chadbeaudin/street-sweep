@@ -9,7 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@mapbox/polyline": "^1.2.1",
     "@turf/distance": "^7.3.1",
+    "@types/mapbox__polyline": "^1.0.5",
+    "@types/polyline": "^0.1.32",
     "clsx": "^2.1.0",
     "eulerian-trail": "^0.1.0",
     "leaflet": "^1.9.4",
@@ -17,6 +20,7 @@
     "next": "^14.2.3",
     "ngraph.graph": "^20.0.1",
     "ngraph.path": "^1.4.0",
+    "polyline": "^0.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",

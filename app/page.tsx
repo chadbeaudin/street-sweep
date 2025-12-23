@@ -2,7 +2,7 @@
 
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -20,6 +20,18 @@ export default function Home() {
     const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
+    const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
+
+    useEffect(() => {
+        fetch('/api/strava/activities')
+            .then(res => res.json())
+            .then(data => {
+                if (data.riddenRoads) {
+                    setStravaRoads(data.riddenRoads);
+                }
+            })
+            .catch(err => console.error('Failed to fetch Strava roads:', err));
+    }, []);
 
     const handleGenerate = async () => {
         if (!bbox) {
@@ -124,6 +136,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </button>
                         </>
                     )}
+                    {stravaRoads && (
+                        <div className="px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-md text-sm font-medium text-blue-700 flex items-center gap-2">
+                            <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24">
+                                <path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l7 13.828h4.172L14.562 2.498" />
+                            </svg>
+                            {stravaRoads.length} Rides
+                        </div>
+                    )}
                     <button
                         onClick={handleGenerate}
                         disabled={loading}
@@ -142,7 +162,13 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             </header>
 
             <div className="flex-1 flex flex-col relative min-h-0">
-                <Map bbox={bbox} onBBoxChange={setBbox} route={route} hoveredPoint={hoveredPoint} />
+                <Map
+                    bbox={bbox}
+                    onBBoxChange={setBbox}
+                    route={route}
+                    hoveredPoint={hoveredPoint}
+                    stravaRoads={stravaRoads}
+                />
 
                 {elevationData && (
                     <ElevationProfile
