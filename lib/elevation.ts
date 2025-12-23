@@ -8,9 +8,11 @@ export interface ElevationPoint {
     lon: number;
 }
 
+const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
+
 /**
  * Fetches elevation data for a list of coordinates using the Open-Meteo API.
- * Samples coordinates if they exceed 100 to avoid multiple batches and rate limits.
+ * Samples coordinates if they exceed 99 to avoid multiple batches and rate limits.
  */
 export async function fetchElevationData(coordinates: [number, number][]): Promise<{ elevations: number[], sampledCoords: [number, number][] }> {
     if (coordinates.length === 0) return { elevations: [], sampledCoords: [] };
@@ -21,8 +23,8 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
         totalMiles += distance(point(coordinates[i - 1]), point(coordinates[i]), { units: 'miles' });
     }
 
-    // Fidelity: 100 points per mile, but between 50 and 1000 total points
-    const pointsPerMile = 100;
+    // Fidelity: 99 points per mile, but between 50 and 1000 total points
+    const pointsPerMile = 99;
     let targetPoints = Math.max(50, Math.min(1000, Math.round(totalMiles * pointsPerMile)));
 
     // Ensure we don't try to sample more points than we have
@@ -44,9 +46,11 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
     const lons = sampledCoords.map(c => c[0].toFixed(6));
 
     // Batch requests to avoid "414 Request-URI Too Large"
-    // even with 1000 points, we chunk them into 100 at a time
-    const batchSize = 100;
+    // even with 1000 points, we chunk them into 99 at a time
+    const batchSize = 99;
     const finalElevations: number[] = [];
+
+    const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
     try {
         for (let i = 0; i < sampledCoords.length; i += batchSize) {
@@ -54,18 +58,39 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
             const batchLons = lons.slice(i, i + batchSize).join(',');
             const url = `https://api.open-meteo.com/v1/elevation?latitude=${batchLats}&longitude=${batchLons}`;
 
-            const res = await fetch(url);
-            if (!res.ok) {
-                const errorText = await res.text();
-                console.error('Elevation API error:', res.status, errorText);
-                throw new Error(`Elevation API returned ${res.status} for batch ${i / batchSize}`);
+            let success = false;
+            let retries = 0;
+            const maxRetries = 3;
+
+            while (!success && retries < maxRetries) {
+                const res = await fetch(url);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.elevation) {
+                        finalElevations.push(...data.elevation);
+                        success = true;
+                    } else {
+                        throw new Error('Malformed elevation data response');
+                    }
+                } else if (res.status === 429) {
+                    const waitTime = Math.pow(2, retries) * 2000;
+                    console.warn(`${ts()} Rate limited (429). Retrying in ${waitTime}ms...`);
+                    await delay(waitTime);
+                    retries++;
+                } else {
+                    const errorText = await res.text();
+                    console.error('Elevation API error:', res.status, errorText);
+                    throw new Error(`Elevation API returned ${res.status} for batch ${i / batchSize}`);
+                }
             }
 
-            const data = await res.json();
-            if (data && data.elevation) {
-                finalElevations.push(...data.elevation);
-            } else {
-                throw new Error('Malformed elevation data response');
+            if (!success) {
+                throw new Error(`Failed to fetch elevation for batch ${i / batchSize} after ${maxRetries} retries`);
+            }
+
+            // Small delay between successful batches to be polite to the API
+            if (i + batchSize < sampledCoords.length) {
+                await delay(500);
             }
         }
         return { elevations: finalElevations, sampledCoords };
