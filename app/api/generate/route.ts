@@ -47,7 +47,8 @@ export async function POST(request: Request) {
         const lastPoint = profile[profile.length - 1];
         const totalDistance = lastPoint ? lastPoint.distance : 0;
 
-        // Convert circuit to GeoJSON LineString
+        // Convert sampled circuit to GeoJSON LineString
+        // This ensures every coord point has exactly one elevation point
         const geoJson = {
             type: 'FeatureCollection',
             features: [
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
                     },
                     geometry: {
                         type: 'LineString',
-                        coordinates: coords.map((c, i) => [c[0], c[1], Math.round(elevations[i] * 3.28084)])
+                        coordinates: sampledCoords.map((c, i) => [c[0], c[1], Math.round(elevations[i] * 3.28084)])
                     }
                 }
             ]
