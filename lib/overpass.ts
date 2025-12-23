@@ -10,6 +10,8 @@ async function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
+
 export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse> {
   const bikeQuery = `
     [out:json][timeout:30];
@@ -30,7 +32,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
     // Try each endpoint in order
     for (const endpoint of OVERPASS_ENDPOINTS) {
       try {
-        console.log(`Fetching OSM data from ${endpoint} (Attempt ${attempt + 1})...`);
+        console.log(`${ts()} Fetching OSM data from ${endpoint} (Attempt ${attempt + 1})...`);
         const response = await fetch(endpoint, {
           method: 'POST',
           body: bikeQuery,
@@ -43,14 +45,14 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
 
         // If 504 or 429, we should definitely retry another mirror
         if (response.status === 504 || response.status === 429) {
-          console.warn(`Endpoint ${endpoint} failed with ${response.status}. Trying next mirror...`);
+          console.warn(`${ts()} Endpoint ${endpoint} failed with ${response.status}. Trying next mirror...`);
           continue;
         }
 
         const errorText = await response.text();
         throw new Error(`Overpass API error: ${response.status} ${response.statusText}. ${errorText}`);
       } catch (error: any) {
-        console.error(`Attempt ${attempt + 1} at ${endpoint} failed:`, error.message);
+        console.error(`${ts()} Attempt ${attempt + 1} at ${endpoint} failed:`, error.message);
         lastError = error;
       }
     }
@@ -58,7 +60,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
     // Wait before next round of retries
     if (attempt < maxRetries - 1) {
       const backoff = Math.pow(2, attempt) * 1000;
-      console.log(`All mirrors failed. Retrying in ${backoff}ms...`);
+      console.log(`${ts()} All mirrors failed. Retrying in ${backoff}ms...`);
       await delay(backoff);
     }
   }

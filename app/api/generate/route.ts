@@ -3,24 +3,26 @@ import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
 import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
 
+const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
+
 export async function POST(request: Request) {
     try {
-        const { bbox } = await request.json();
+        const { bbox, riddenRoads } = await request.json();
 
         if (!bbox || !bbox.north || !bbox.south || !bbox.east || !bbox.west) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
         }
 
-        console.log('Fetching OSM data for bbox:', bbox);
+        console.log(`${ts()} Fetching OSM data for bbox:`, bbox);
         const osmData = await fetchOSMData(bbox);
-        console.log(`Fetched ${osmData.elements.length} elements.`);
+        console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
         const graph = new StreetGraph();
-        graph.buildFromOSM(osmData);
+        graph.buildFromOSM(osmData, riddenRoads);
 
-        console.log('Solving CPP...');
+        console.log(`${ts()} Solving Routing Problem...`);
         const circuit = graph.solveCPP();
-        console.log(`Generated circuit with ${circuit.length} points.`);
+        console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {
             return NextResponse.json({ error: 'Failed to generate a valid route. The area might be disconnected or too complex.' }, { status: 500 });
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
         const coords: [number, number][] = circuit.map(p => [p.lon, p.lat]);
 
         // Fetch elevation
-        console.log('Fetching elevation data...');
+        console.log(`${ts()} Fetching elevation data...`);
         let elevations: number[] = [];
         let sampledCoords = coords;
         try {
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
             elevations = result.elevations;
             sampledCoords = result.sampledCoords;
         } catch (e) {
-            console.warn('Elevation fetch failed, using zero elevation:', e);
+            console.warn(`${ts()} Elevation fetch failed, using zero elevation:`, e);
             elevations = new Array(coords.length).fill(0);
         }
 

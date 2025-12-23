@@ -94,9 +94,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 {route && route.length > 0 && (
                     <Polyline
                         positions={route.map(p => [p[1], p[0]] as [number, number])}
-                        color="#6366F1"
+                        color="#B4491E" // Dark Burnt Orange
                         weight={5}
-                        opacity={0.7}
+                        opacity={0.8}
                     />
                 )}
 
