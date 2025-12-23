@@ -54,9 +54,9 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
     const hoverIcon = L.divIcon({
         className: 'custom-hover-icon',
         html: `<div style="
-            width: 20px; 
-            height: 20px; 
-            background: #EF4444; 
+            width: 18px; 
+            height: 18px; 
+            background: #F59E0B; 
             border: 3px solid white; 
             border-radius: 50%; 
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
@@ -78,13 +78,6 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
 const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint }) => {
     return (
         <div className="flex-1 relative min-h-0">
-            {/* Debug overlay */}
-            {hoveredPoint && (
-                <div className="absolute top-4 right-4 z-[1000] bg-white px-3 py-1 rounded shadow-md border border-gray-200 text-xs font-mono text-red-600">
-                    Hover: {hoveredPoint.lat.toFixed(4)}, {hoveredPoint.lon.toFixed(4)}
-                </div>
-            )}
-
             <MapContainer
                 center={[39.02, -104.7]}
                 zoom={13}

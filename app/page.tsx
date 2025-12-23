@@ -142,22 +142,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             </header>
 
             <div className="flex-1 flex flex-col relative min-h-0">
-                {/* GLOBAL DEBUG OVERLAY */}
-                {hoveredPoint && (
-                    <div className="absolute top-20 right-4 z-[3000] bg-red-600 text-white px-4 py-2 rounded-full shadow-2xl font-bold text-sm pointer-events-none">
-                        MAP SYNC ACTIVE: {hoveredPoint.lat.toFixed(5)}, {hoveredPoint.lon.toFixed(5)}
-                    </div>
-                )}
-
                 <Map bbox={bbox} onBBoxChange={setBbox} route={route} hoveredPoint={hoveredPoint} />
 
                 {elevationData && (
                     <ElevationProfile
                         data={elevationData}
-                        onHover={(p) => {
-                            if (p) console.log('Hovering at:', p);
-                            setHoveredPoint(p);
-                        }}
+                        onHover={setHoveredPoint}
                     />
                 )}
             </div>
