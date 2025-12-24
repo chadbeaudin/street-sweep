@@ -222,6 +222,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setManualRoute([]);
         setHistory([]);
         setHistoryIndex(-1);
+        setRoute(null);
+        setElevationData(null);
+        setTotalDistance(null);
     };
 
     return (
@@ -280,12 +283,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             {stravaRoads.length} Rides
                         </div>
                     )}
-                    {selectedPoints.length > 0 && (
+                    {(selectedPoints.length > 0 || route) && (
                         <button
                             onClick={clearPoints}
                             className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
                         >
-                            Clear Points
+                            {route ? 'Start Over' : 'Clear Points'}
                         </button>
                     )}
                     <button
