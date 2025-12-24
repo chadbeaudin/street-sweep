@@ -13,8 +13,16 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
         }
 
-        console.log(`${ts()} Fetching OSM data for bbox:`, bbox);
-        const osmData = await fetchOSMData(bbox);
+        const BUFFER = 0.005; // ~500m buffer
+        const bufferedBbox = {
+            south: bbox.south - BUFFER,
+            west: bbox.west - BUFFER,
+            north: bbox.north + BUFFER,
+            east: bbox.east + BUFFER
+        };
+
+        console.log(`${ts()} Fetching OSM data for buffered bbox:`, bufferedBbox);
+        const osmData = await fetchOSMData(bufferedBbox);
         console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
         const graph = new StreetGraph();

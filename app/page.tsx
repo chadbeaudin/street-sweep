@@ -27,6 +27,9 @@ export default function Home() {
     const [historyIndex, setHistoryIndex] = useState(-1);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number }[]>([]);
+    const manualRouteRef = useRef<[number, number][]>([]);
+    const historyRef = useRef<{ points: { lat: number; lon: number }[], route: [number, number][] }[]>([]);
+    const historyIndexRef = useRef(-1);
 
     useEffect(() => {
         fetch('/api/strava/activities')
@@ -122,7 +125,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
-                const lastPoint = pointsRef.current[tempIdx - 1]; // This is the "real" or optimistic last point
+                // IMPORTANT: Read from ref to get the correct "last point" in the async sequence
+                const lastPoint = tempIdx > 0 ? pointsRef.current[tempIdx - 1] : null;
 
                 const stepRes = await fetch('/api/step', {
                     method: 'POST',
@@ -138,45 +142,43 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 const snappedPoint = stepData.snappedPoint;
 
-                // 2. Correct Update: Replace raw point with snapped point
+                // 2. Correct Update: Replace raw point with snapped point in ref and state
                 pointsRef.current[tempIdx] = snappedPoint;
                 setSelectedPoints([...pointsRef.current]);
 
+                let finalRoute = manualRouteRef.current;
                 if (stepData.path && stepData.path.length > 0) {
-                    setManualRoute(prev => {
-                        const newCoords = stepData.path;
-                        let finalRoute = prev;
-                        if (prev.length > 0) {
-                            const lastPrev = prev[prev.length - 1];
-                            const firstNew = newCoords[0];
-                            if (lastPrev[0] === firstNew[0] && lastPrev[1] === firstNew[1]) {
-                                finalRoute = [...prev, ...newCoords.slice(1)];
-                            } else {
-                                finalRoute = [...prev, ...newCoords];
-                            }
+                    const newCoords = stepData.path;
+                    if (finalRoute.length > 0) {
+                        const lastPrev = finalRoute[finalRoute.length - 1];
+                        const firstNew = newCoords[0];
+                        if (lastPrev[0] === firstNew[0] && lastPrev[1] === firstNew[1]) {
+                            finalRoute = [...finalRoute, ...newCoords.slice(1)];
                         } else {
-                            finalRoute = [...newCoords];
+                            finalRoute = [...finalRoute, ...newCoords];
                         }
-
-                        // Save to history after updating state
-                        const newHistory = history.slice(0, historyIndex + 1);
-                        const snapshot = { points: [...pointsRef.current], route: finalRoute };
-                        setHistory([...newHistory, snapshot]);
-                        setHistoryIndex(newHistory.length);
-
-                        return finalRoute;
-                    });
+                    } else {
+                        finalRoute = [...newCoords];
+                    }
                 } else if (!lastPoint) {
                     // Start of manual route
-                    const firstPoint: [number, number][] = [[snappedPoint.lon, snappedPoint.lat]];
-                    setManualRoute(firstPoint);
-
-                    // Save to history
-                    const newHistory = history.slice(0, historyIndex + 1);
-                    const snapshot = { points: [...pointsRef.current], route: firstPoint };
-                    setHistory([...newHistory, snapshot]);
-                    setHistoryIndex(newHistory.length);
+                    finalRoute = [[snappedPoint.lon, snappedPoint.lat]];
                 }
+
+                // Update refs (source of truth for subsequent clicks)
+                manualRouteRef.current = finalRoute;
+
+                const snapshot = { points: [...pointsRef.current], route: finalRoute };
+                // Truncate history based on current index (for redo safety)
+                const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+                historyRef.current = [...newHistory, snapshot];
+                historyIndexRef.current = historyRef.current.length - 1;
+
+                // Sync to React state for rendering
+                setManualRoute(finalRoute);
+                setHistory(historyRef.current);
+                setHistoryIndex(historyIndexRef.current);
+
             } catch (err) {
                 console.error('Failed to process click step:', err);
             }
@@ -184,40 +186,50 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
     };
 
     const handleUndo = () => {
-        if (historyIndex <= 0) {
-            if (historyIndex === 0) {
-                // Clear everything if undoing the first point
-                pointsRef.current = [];
-                setSelectedPoints([]);
-                setManualRoute([]);
-                setHistoryIndex(-1);
-            }
-            return;
+        if (historyIndexRef.current > 0) {
+            const prevIndex = historyIndexRef.current - 1;
+            const snapshot = historyRef.current[prevIndex];
+
+            // Sync all refs
+            pointsRef.current = [...snapshot.points];
+            manualRouteRef.current = [...snapshot.route];
+            historyIndexRef.current = prevIndex;
+
+            // Sync all state
+            setSelectedPoints(pointsRef.current);
+            setManualRoute(manualRouteRef.current);
+            setHistoryIndex(prevIndex);
+        } else if (historyIndexRef.current === 0) {
+            clearPoints();
         }
-
-        const newIndex = historyIndex - 1;
-        const prevState = history[newIndex];
-
-        pointsRef.current = [...prevState.points];
-        setSelectedPoints(prevState.points);
-        setManualRoute(prevState.route);
-        setHistoryIndex(newIndex);
     };
 
     const handleRedo = () => {
-        if (historyIndex >= history.length - 1) return;
+        if (historyIndexRef.current < historyRef.current.length - 1) {
+            const nextIndex = historyIndexRef.current + 1;
+            const snapshot = historyRef.current[nextIndex];
 
-        const newIndex = historyIndex + 1;
-        const nextState = history[newIndex];
+            // Sync all refs
+            pointsRef.current = [...snapshot.points];
+            manualRouteRef.current = [...snapshot.route];
+            historyIndexRef.current = nextIndex;
 
-        pointsRef.current = [...nextState.points];
-        setSelectedPoints(nextState.points);
-        setManualRoute(nextState.route);
-        setHistoryIndex(newIndex);
+            // Sync all state
+            setSelectedPoints(pointsRef.current);
+            setManualRoute(manualRouteRef.current);
+            setHistoryIndex(nextIndex);
+        }
     };
 
     const clearPoints = () => {
+        // Reset refs
         pointsRef.current = [];
+        manualRouteRef.current = [];
+        historyRef.current = [];
+        historyIndexRef.current = -1;
+        clickChainRef.current = Promise.resolve();
+
+        // Reset state
         setSelectedPoints([]);
         setManualRoute([]);
         setHistory([]);

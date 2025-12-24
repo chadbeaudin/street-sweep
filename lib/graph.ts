@@ -258,6 +258,49 @@ export class StreetGraph {
         return closestNode;
     }
 
+    public findClosestPointOnEdge(lat: number, lon: number): { lat: number, lon: number, u: string, v: string } | null {
+        let minDist = Infinity;
+        let bestPoint: { lat: number, lon: number, u: string, v: string } | null = null;
+
+        this.graph.forEachLink((link: any) => {
+            const u = this.graph.getNode(link.fromId);
+            const v = this.graph.getNode(link.toId);
+            if (!u || !v) return;
+
+            const res = this.pointToSegmentDistance(lat, lon, u.data.lat, u.data.lon, v.data.lat, v.data.lon);
+            if (res.distance < minDist) {
+                minDist = res.distance;
+                bestPoint = { lat: res.lat, lon: res.lon, u: link.fromId.toString(), v: link.toId.toString() };
+            }
+        });
+
+        return bestPoint;
+    }
+
+    private pointToSegmentDistance(pLat: number, pLon: number, lat1: number, lon1: number, lat2: number, lon2: number) {
+        const dLat = lat2 - lat1;
+        const dLon = lon2 - lon1;
+
+        if (dLat === 0 && dLon === 0) {
+            return { distance: this.haversine(pLat, pLon, lat1, lon1), lat: lat1, lon: lon1 };
+        }
+
+        // Scale longitude difference by cos(latitude) to account for aspect ratio
+        const cosLat = Math.cos(lat1 * Math.PI / 180);
+        const dLonScaled = dLon * cosLat;
+        const relLonScaled = (pLon - lon1) * cosLat;
+        const relLat = pLat - lat1;
+
+        const t = (relLat * dLat + relLonScaled * dLonScaled) / (dLat * dLat + dLonScaled * dLonScaled);
+
+        if (t <= 0) return { distance: this.haversine(pLat, pLon, lat1, lon1), lat: lat1, lon: lon1 };
+        if (t >= 1) return { distance: this.haversine(pLat, pLon, lat2, lon2), lat: lat2, lon: lon2 };
+
+        const closestLat = lat1 + t * dLat;
+        const closestLon = lon1 + t * dLon;
+        return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
+    }
+
     public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][]): { lat: number, lon: number }[] {
         console.log(`${ts()} Starting RPP Solver...`);
 
