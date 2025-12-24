@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Undo2, Redo2 } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -23,6 +23,8 @@ export default function Home() {
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][]>([]);
+    const [history, setHistory] = useState<{ points: { lat: number; lon: number }[], route: [number, number][] }[]>([]);
+    const [historyIndex, setHistoryIndex] = useState(-1);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number }[]>([]);
 
@@ -143,18 +145,37 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 if (stepData.path && stepData.path.length > 0) {
                     setManualRoute(prev => {
                         const newCoords = stepData.path;
+                        let finalRoute = prev;
                         if (prev.length > 0) {
                             const lastPrev = prev[prev.length - 1];
                             const firstNew = newCoords[0];
                             if (lastPrev[0] === firstNew[0] && lastPrev[1] === firstNew[1]) {
-                                return [...prev, ...newCoords.slice(1)];
+                                finalRoute = [...prev, ...newCoords.slice(1)];
+                            } else {
+                                finalRoute = [...prev, ...newCoords];
                             }
+                        } else {
+                            finalRoute = [...newCoords];
                         }
-                        return [...prev, ...newCoords];
+
+                        // Save to history after updating state
+                        const newHistory = history.slice(0, historyIndex + 1);
+                        const snapshot = { points: [...pointsRef.current], route: finalRoute };
+                        setHistory([...newHistory, snapshot]);
+                        setHistoryIndex(newHistory.length);
+
+                        return finalRoute;
                     });
                 } else if (!lastPoint) {
                     // Start of manual route
-                    setManualRoute([[snappedPoint.lon, snappedPoint.lat]]);
+                    const firstPoint: [number, number][] = [[snappedPoint.lon, snappedPoint.lat]];
+                    setManualRoute(firstPoint);
+
+                    // Save to history
+                    const newHistory = history.slice(0, historyIndex + 1);
+                    const snapshot = { points: [...pointsRef.current], route: firstPoint };
+                    setHistory([...newHistory, snapshot]);
+                    setHistoryIndex(newHistory.length);
                 }
             } catch (err) {
                 console.error('Failed to process click step:', err);
@@ -162,10 +183,45 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         });
     };
 
+    const handleUndo = () => {
+        if (historyIndex <= 0) {
+            if (historyIndex === 0) {
+                // Clear everything if undoing the first point
+                pointsRef.current = [];
+                setSelectedPoints([]);
+                setManualRoute([]);
+                setHistoryIndex(-1);
+            }
+            return;
+        }
+
+        const newIndex = historyIndex - 1;
+        const prevState = history[newIndex];
+
+        pointsRef.current = [...prevState.points];
+        setSelectedPoints(prevState.points);
+        setManualRoute(prevState.route);
+        setHistoryIndex(newIndex);
+    };
+
+    const handleRedo = () => {
+        if (historyIndex >= history.length - 1) return;
+
+        const newIndex = historyIndex + 1;
+        const nextState = history[newIndex];
+
+        pointsRef.current = [...nextState.points];
+        setSelectedPoints(nextState.points);
+        setManualRoute(nextState.route);
+        setHistoryIndex(newIndex);
+    };
+
     const clearPoints = () => {
         pointsRef.current = [];
         setSelectedPoints([]);
         setManualRoute([]);
+        setHistory([]);
+        setHistoryIndex(-1);
     };
 
     return (
@@ -181,6 +237,24 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 </div>
 
                 <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                        <button
+                            onClick={handleUndo}
+                            disabled={historyIndex < 0}
+                            className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md disabled:text-gray-200 transition-colors"
+                            title="Undo last point"
+                        >
+                            <Undo2 className="w-5 h-5" />
+                        </button>
+                        <button
+                            onClick={handleRedo}
+                            disabled={historyIndex >= history.length - 1}
+                            className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md disabled:text-gray-200 transition-colors"
+                            title="Redo point"
+                        >
+                            <Redo2 className="w-5 h-5" />
+                        </button>
+                    </div>
                     {route && (
                         <>
                             <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-md text-sm font-medium text-indigo-700 flex items-center gap-2">
