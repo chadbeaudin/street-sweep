@@ -7,7 +7,7 @@
 - **Interactive Map**: Select your target area visually using a dynamic map interface (Leaflet).
 - **Optimized Routing**: Uses the **Chinese Postman Algorithm** to calculate the most efficient path to cover all streets.
 - **GPX Export**: Download the generated route as a GPX file to use with Garmin, Wahoo, or other GPS devices.
-- **Modern Stack**: Built with Next.js 14, TypeScript, and TailwindCSS for a fast, responsive user experience.
+- **Stack**: Built with Next.js 14, TypeScript, and TailwindCSS for a fast, responsive user experience.
 
 ## Getting Started
 

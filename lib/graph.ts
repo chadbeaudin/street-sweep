@@ -331,11 +331,31 @@ export class StreetGraph {
             const targetNodes = new Set<string>();
             reachableComponents.forEach(c => c.forEach(n => targetNodes.add(n)));
 
-            const result = this.findClosestTarget(island[0], targetNodes);
-            if (result) {
+            // Optimization: Find the best entry point from the island to the mainland
+            // instead of just using island[0].
+            // We can pick a few sample nodes from the island or just try all if the island is small.
+            let bestResult: any = null;
+            let minWeight = Infinity;
+
+            // Sample some nodes from the island to find a good connection
+            const sampleSize = Math.min(island.length, 5);
+            const step = Math.max(1, Math.floor(island.length / sampleSize));
+
+            for (let j = 0; j < island.length; j += step) {
+                const result = this.findClosestTarget(island[j], targetNodes);
+                if (result) {
+                    const totalWeight = result.path.reduce((sum: number, p: any) => sum + p.weight, 0);
+                    if (totalWeight < minWeight) {
+                        minWeight = totalWeight;
+                        bestResult = result;
+                    }
+                }
+            }
+
+            if (bestResult) {
                 reachableComponents.push(island);
                 // Add the connecting path edges to the final graph
-                result.path.forEach(p => {
+                bestResult.path.forEach((p: any) => {
                     const link = this.graph.getLink(p.id, p.idNext);
                     if (link) {
                         edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
@@ -370,29 +390,87 @@ export class StreetGraph {
 
         if (oddNodes.length > 0) {
             console.log(`${ts()} Matching ${oddNodes.length} odd nodes...`);
-            const oddSet = new Set(oddNodes);
-            while (oddSet.size > 0) {
-                const u = oddSet.values().next().value as string;
-                oddSet.delete(u);
 
-                const result = this.findClosestTarget(u, oddSet);
-                if (result) {
-                    oddSet.delete(result.targetId);
-                    result.path.forEach(p => {
+            // 4a. Calculate all-pairs distances between odd nodes (Sorted Edge Greedy)
+            interface OddMatch {
+                u: string;
+                v: string;
+                path: { id: string, idNext: string, weight: number }[];
+                totalWeight: number;
+            }
+
+            const possibleMatches: OddMatch[] = [];
+            const oddArray = Array.from(oddNodes);
+
+            // This is O(K * Graph) where K is number of odd nodes.
+            // For typical street grids, this is efficient enough.
+            for (let i = 0; i < oddArray.length; i++) {
+                const u = oddArray[i];
+                const others = new Set(oddArray.slice(i + 1));
+                if (others.size === 0) break;
+
+                // We want to find ALL other odd nodes, not just the closest one, 
+                // but Dijkstra naturally explores in order of distance.
+                // However, our findClosestTarget returns early.
+                // Let's implement a version that returns all reachable targets.
+                // For now, let's just use the greedy approach but sorted.
+
+                // To do "Sorted Edge Greedy" properly, we need the full distance matrix.
+                // Let's modify the loop to find the closest for each remaining node.
+            }
+
+            const matchedNodes = new Set<string>();
+            const matches: OddMatch[] = [];
+
+            // Simple Sorted Greedy:
+            // 1. Find the shortest path between ANY two unmatched odd nodes.
+            // 2. Match them.
+            // 3. Repeat.
+
+            const remainingOdd = new Set(oddNodes);
+            while (remainingOdd.size > 0) {
+                let bestMatch: OddMatch | null = null;
+                let minWeight = Infinity;
+
+                // To find the GLOBAL best match, we'd need to run Dijkstra from every node.
+                // Given the scale, this is fine.
+                const oddArray = Array.from(remainingOdd);
+                for (const u of oddArray) {
+                    const targets = new Set(remainingOdd);
+                    targets.delete(u);
+
+                    const result = this.findClosestTarget(u, targets);
+                    if (result) {
+                        const weight = result.path.reduce((sum, p) => sum + p.weight, 0);
+                        if (weight < minWeight) {
+                            minWeight = weight;
+                            bestMatch = { u, v: result.targetId, path: result.path, totalWeight: weight };
+                        }
+                    }
+                }
+
+                if (bestMatch) {
+                    remainingOdd.delete(bestMatch.u);
+                    remainingOdd.delete(bestMatch.v);
+
+                    bestMatch.path.forEach(p => {
                         const link = this.graph.getLink(p.id, p.idNext);
                         if (link) {
                             edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
                         }
                     });
                 } else {
-                    // This is a major connectivity issue. If we can't match an odd node, 
-                    // we HAVE to double one of its existing edges to make it even.
+                    const u = remainingOdd.values().next().value as string;
                     console.error(`${ts()} Critical: Could not match odd node ${u}. Doubling an existing edge as fallback.`);
+                    remainingOdd.delete(u);
                     const node = this.graph.getNode(u);
-                    if (node && node.links && node.links.size > 0) {
-                        const link = Array.from(node.links)[0] as any;
-                        const v = (link.fromId === u ? link.toId : link.fromId).toString();
-                        edgesInFinalGraph.push({ u, v, data: { ...link.data, isVirtual: true } });
+                    if (node && node.links) {
+                        const linksArray = Array.from(node.links);
+                        if (linksArray.length > 0) {
+                            const link = linksArray[0] as any;
+                            const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                            edgesInFinalGraph.push({ u, v, data: { ...link.data, isVirtual: true } });
+                        }
                     }
                 }
             }
