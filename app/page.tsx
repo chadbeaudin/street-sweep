@@ -23,6 +23,7 @@ export default function Home() {
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][]>([]);
+    const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const [history, setHistory] = useState<{ points: { lat: number; lon: number }[], route: [number, number][] }[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -38,6 +39,20 @@ export default function Home() {
             })
             .catch(err => console.error('Failed to fetch Strava roads:', err));
     }, []);
+
+    useEffect(() => {
+        if (!bbox) return;
+        fetch('/api/roads', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bbox })
+        })
+            .then(res => res.json())
+            .then(data => {
+                if (data.roads) setAllRoads(data.roads);
+            })
+            .catch(err => console.error('Failed to fetch roads:', err));
+    }, [bbox]);
 
     const handleGenerate = async () => {
         if (!bbox) {
@@ -315,6 +330,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     route={route}
                     hoveredPoint={hoveredPoint}
                     stravaRoads={stravaRoads}
+                    allRoads={allRoads}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
                     manualRoute={manualRoute}

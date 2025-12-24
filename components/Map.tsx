@@ -23,9 +23,10 @@ interface MapProps {
     selectedPoints: { lat: number; lon: number }[];
     onPointAdd: (point: { lat: number; lon: number }) => void;
     manualRoute: [number, number][];
+    allRoads: [number, number][][];
 }
 
-function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
+function MapEvents({ onBBoxChange }: { onBBoxChange: (bbox: any) => void }) {
     const map = useMapEvents({
         moveend: () => {
             const bounds = map.getBounds();
@@ -35,9 +36,6 @@ function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => 
                 north: bounds.getNorth(),
                 east: bounds.getEast(),
             });
-        },
-        click: (e) => {
-            onMapClick(e.latlng);
         }
     });
     return null;
@@ -82,7 +80,7 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
     );
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, manualRoute }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, allRoads, selectedPoints, onPointAdd, manualRoute }) => {
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
@@ -94,8 +92,24 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                <MapEvents onBBoxChange={onBBoxChange} onMapClick={(latlng) => onPointAdd({ lat: latlng.lat, lon: latlng.lng })} />
+                <MapEvents onBBoxChange={onBBoxChange} />
                 <RecenterMap route={route} />
+
+                {/* Invisible interactive layer for cursor and snapping */}
+                {allRoads && allRoads.map((road, idx) => (
+                    <Polyline
+                        key={`road-hitbox-${idx}`}
+                        positions={road as [number, number][]}
+                        pathOptions={{
+                            color: 'transparent',
+                            weight: 20,
+                            interactive: true
+                        }}
+                        eventHandlers={{
+                            click: (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
+                        }}
+                    />
+                ))}
 
                 {/* Manual route from road-snapped coordinates */}
                 {manualRoute.length > 1 && (
@@ -166,12 +180,18 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     100% { transform: scale(1); opacity: 1; }
                 }
                 .leaflet-container {
-                    cursor: crosshair !important;
+                    cursor: grab;
                 }
                 .leaflet-grab {
-                    cursor: crosshair !important;
+                    cursor: grab !important;
+                }
+                .leaflet-active, .leaflet-grab:active {
+                    cursor: grabbing !important;
                 }
                 .leaflet-interactive {
+                    cursor: crosshair !important;
+                }
+                .custom-point-marker div, .custom-hover-icon div {
                     cursor: pointer !important;
                 }
             `}</style>
