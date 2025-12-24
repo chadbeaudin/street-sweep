@@ -46,6 +46,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
         // If 504 or 429, we should definitely retry another mirror
         if (response.status === 504 || response.status === 429) {
           console.warn(`${ts()} Endpoint ${endpoint} failed with ${response.status}. Trying next mirror...`);
+          lastError = new Error(`Overpass API error: ${response.status} ${response.statusText}`);
           continue;
         }
 

@@ -11,21 +11,23 @@ describe('fetchOSMData robustness', () => {
 
     const mockBBox = { south: 40.0, west: -105.0, north: 40.1, east: -104.9 };
 
-    it('throws error on 504 Gateway Timeout', async () => {
-        (global.fetch as jest.Mock).mockResolvedValueOnce({
+    it('throws error when ALL mirrors fail with 504 Gateway Timeout', async () => {
+        (global.fetch as jest.Mock).mockResolvedValue({
             ok: false,
             status: 504,
-            statusText: 'Gateway Timeout'
+            statusText: 'Gateway Timeout',
+            text: async () => 'Gateway Timeout'
         });
 
         await expect(fetchOSMData(mockBBox)).rejects.toThrow('Overpass API error: 504 Gateway Timeout');
     });
 
-    it('throws error on 429 Too Many Requests', async () => {
-        (global.fetch as jest.Mock).mockResolvedValueOnce({
+    it('throws error when ALL mirrors fail with 429 Too Many Requests', async () => {
+        (global.fetch as jest.Mock).mockResolvedValue({
             ok: false,
             status: 429,
-            statusText: 'Too Many Requests'
+            statusText: 'Too Many Requests',
+            text: async () => 'Too Many Requests'
         });
 
         await expect(fetchOSMData(mockBBox)).rejects.toThrow('Overpass API error: 429 Too Many Requests');

@@ -14,24 +14,44 @@ describe('elevation library robustness', () => {
     it('handles successful batched GET elevation fetch', async () => {
         (global.fetch as jest.Mock).mockResolvedValueOnce({
             ok: true,
-            json: async () => ({ elevation: [1500, 1600] })
+            json: async () => ({ results: [{ elevation: 1500 }, { elevation: 1600 }] })
         });
 
-        const elevations = await fetchElevationData(mockCoords);
-        expect(elevations).toEqual([1500, 1600]);
+        const result = await fetchElevationData(mockCoords);
+        expect(result.elevations).toEqual([1500, 1600]);
+        expect(result.sampledCoords).toEqual(mockCoords);
         expect(global.fetch).toHaveBeenCalledWith(
-            expect.stringContaining('latitude=40,40.1&longitude=-105,-105.1')
+            expect.stringContaining('api.opentopodata.org')
         );
     });
 
-    it('throws error on elevation API failure', async () => {
+    it('falls back to second provider on first one failure', async () => {
+        // First call (Open Topo Data) fails
         (global.fetch as jest.Mock).mockResolvedValueOnce({
             ok: false,
             status: 500,
-            text: async () => 'Server Error'
+            text: async () => 'Open Topo Data Down'
+        });
+        // Second call (Open-Meteo) succeeds
+        (global.fetch as jest.Mock).mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ elevation: [1510, 1610] })
         });
 
-        await expect(fetchElevationData(mockCoords)).rejects.toThrow('Elevation API returned 500: Server Error');
+        const result = await fetchElevationData(mockCoords);
+        expect(result.elevations).toEqual([1510, 1610]);
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+        expect((global.fetch as jest.Mock).mock.calls[1][0]).toContain('api.open-meteo.com');
+    });
+
+    it('throws error when all providers fail', async () => {
+        (global.fetch as jest.Mock).mockResolvedValue({
+            ok: false,
+            status: 500,
+            text: async () => 'Total Failure'
+        });
+
+        await expect(fetchElevationData(mockCoords)).rejects.toThrow('All elevation providers failed');
     });
 
     it('calculates profile correctly with unit conversion', () => {

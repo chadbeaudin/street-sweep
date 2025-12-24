@@ -10,28 +10,57 @@ export interface ElevationPoint {
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
+interface ElevationProvider {
+    name: string;
+    batchSize: number;
+    fetch(lats: string[], lons: string[]): Promise<number[]>;
+}
+
+const OpenMeteoProvider: ElevationProvider = {
+    name: 'Open-Meteo',
+    batchSize: 500, // Open-Meteo supports up to 5000 per request
+    async fetch(lats, lons) {
+        const url = `https://api.open-meteo.com/v1/elevation?latitude=${lats.join(',')}&longitude=${lons.join(',')}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.elevation) throw new Error('Malformed response');
+        return data.elevation;
+    }
+};
+
+const OpenTopoDataProvider: ElevationProvider = {
+    name: 'Open Topo Data',
+    batchSize: 100, // Public API limit
+    async fetch(lats, lons) {
+        const locations = lats.map((lat, i) => `${lat},${lons[i]}`).join('|');
+        const url = `https://api.opentopodata.org/v1/srtm30m?locations=${locations}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data.results) throw new Error('Malformed response');
+        return data.results.map((r: any) => r.elevation);
+    }
+};
+
+const PROVIDERS = [OpenTopoDataProvider, OpenMeteoProvider];
+
 /**
- * Fetches elevation data for a list of coordinates using the Open-Meteo API.
- * Samples coordinates if they exceed 99 to avoid multiple batches and rate limits.
+ * Fetches elevation data for a list of coordinates using multiple fallback providers.
  */
 export async function fetchElevationData(coordinates: [number, number][]): Promise<{ elevations: number[], sampledCoords: [number, number][] }> {
     if (coordinates.length === 0) return { elevations: [], sampledCoords: [] };
 
-    // Calculate total distance to determine sample size based on density
     let totalMiles = 0;
     for (let i = 1; i < coordinates.length; i++) {
         totalMiles += distance(point(coordinates[i - 1]), point(coordinates[i]), { units: 'miles' });
     }
 
-    // Fidelity: 99 points per mile, but between 50 and 1000 total points
     const pointsPerMile = 99;
     let targetPoints = Math.max(50, Math.min(1000, Math.round(totalMiles * pointsPerMile)));
-
-    // Ensure we don't try to sample more points than we have
     targetPoints = Math.min(targetPoints, coordinates.length);
 
     const sampledCoords: [number, number][] = [];
-
     if (coordinates.length <= targetPoints) {
         sampledCoords.push(...coordinates);
     } else {
@@ -45,59 +74,55 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
     const lats = sampledCoords.map(c => c[1].toFixed(6));
     const lons = sampledCoords.map(c => c[0].toFixed(6));
 
-    // Batch requests to avoid "414 Request-URI Too Large"
-    // even with 1000 points, we chunk them into 99 at a time
-    const batchSize = 99;
-    const finalElevations: number[] = [];
-
     const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-    try {
-        for (let i = 0; i < sampledCoords.length; i += batchSize) {
-            const batchLats = lats.slice(i, i + batchSize).join(',');
-            const batchLons = lons.slice(i, i + batchSize).join(',');
-            const url = `https://api.open-meteo.com/v1/elevation?latitude=${batchLats}&longitude=${batchLons}`;
+    for (const provider of PROVIDERS) {
+        try {
+            console.log(`${ts()} Attempting elevation fetch with ${provider.name}...`);
+            const finalElevations: number[] = [];
 
-            let success = false;
-            let retries = 0;
-            const maxRetries = 3;
+            for (let i = 0; i < sampledCoords.length; i += provider.batchSize) {
+                const batchLats = lats.slice(i, i + provider.batchSize);
+                const batchLons = lons.slice(i, i + provider.batchSize);
 
-            while (!success && retries < maxRetries) {
-                const res = await fetch(url);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data && data.elevation) {
-                        finalElevations.push(...data.elevation);
+                let success = false;
+                let retries = 0;
+                const maxRetries = 3;
+
+                while (!success && retries < maxRetries) {
+                    try {
+                        const elevations = await provider.fetch(batchLats, batchLons);
+                        finalElevations.push(...elevations);
                         success = true;
-                    } else {
-                        throw new Error('Malformed elevation data response');
+                    } catch (err: any) {
+                        if (err.message.includes('429')) {
+                            const waitTime = Math.pow(2, retries) * 2000;
+                            console.warn(`${ts()} ${provider.name} rate limited (429). Retrying in ${waitTime}ms...`);
+                            await delay(waitTime);
+                            retries++;
+                        } else {
+                            throw err;
+                        }
                     }
-                } else if (res.status === 429) {
-                    const waitTime = Math.pow(2, retries) * 2000;
-                    console.warn(`${ts()} Rate limited (429). Retrying in ${waitTime}ms...`);
-                    await delay(waitTime);
-                    retries++;
-                } else {
-                    const errorText = await res.text();
-                    console.error('Elevation API error:', res.status, errorText);
-                    throw new Error(`Elevation API returned ${res.status} for batch ${i / batchSize}`);
+                }
+
+                if (!success) {
+                    throw new Error(`Failed to fetch current batch from ${provider.name}`);
+                }
+
+                if (i + provider.batchSize < sampledCoords.length) {
+                    await delay(500);
                 }
             }
 
-            if (!success) {
-                throw new Error(`Failed to fetch elevation for batch ${i / batchSize} after ${maxRetries} retries`);
-            }
-
-            // Small delay between successful batches to be polite to the API
-            if (i + batchSize < sampledCoords.length) {
-                await delay(500);
-            }
+            console.log(`${ts()} Successfully fetched elevation from ${provider.name}`);
+            return { elevations: finalElevations, sampledCoords };
+        } catch (err: any) {
+            console.warn(`${ts()} ${provider.name} failed: ${err.message}. Trying fallback...`);
         }
-        return { elevations: finalElevations, sampledCoords };
-    } catch (err) {
-        console.error('Elevation fetch failed:', err);
-        throw err;
     }
+
+    throw new Error('All elevation providers failed');
 }
 
 /**
