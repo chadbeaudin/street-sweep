@@ -12,7 +12,18 @@ async function delay(ms: number) {
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
+const OSM_CACHE = new Map<string, { data: OverpassResponse; timestamp: number }>();
+const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+
 export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse> {
+  const cacheKey = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+  const now = Date.now();
+  const cached = OSM_CACHE.get(cacheKey);
+
+  if (cached && (now - cached.timestamp < CACHE_TTL)) {
+    console.log(`${ts()} Returning cached OSM data for ${cacheKey}`);
+    return cached.data;
+  }
   const bikeQuery = `
     [out:json][timeout:30];
     (
@@ -40,7 +51,9 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
         });
 
         if (response.ok) {
-          return (await response.json()) as OverpassResponse;
+          const data = (await response.json()) as OverpassResponse;
+          OSM_CACHE.set(cacheKey, { data, timestamp: Date.now() });
+          return data;
         }
 
         // If 504 or 429, we should definitely retry another mirror

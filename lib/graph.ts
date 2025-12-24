@@ -1,8 +1,9 @@
 // @ts-ignore
 import createGraph, { Graph } from 'ngraph.graph';
-
 // @ts-ignore
 import eulerianTrail from 'eulerian-trail';
+// @ts-ignore
+import path from 'ngraph.path';
 
 import { OSMWay, OSMNode, OverpassResponse } from './types';
 
@@ -22,8 +23,25 @@ interface EdgeData {
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
+const GRAPH_CACHE = new Map<string, { graph: StreetGraph; timestamp: number }>();
+const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+
 export class StreetGraph {
     graph: Graph<NodeData, EdgeData>;
+
+    public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse): StreetGraph {
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}`;
+        const now = Date.now();
+        const cached = GRAPH_CACHE.get(key);
+        if (cached && (now - cached.timestamp < CACHE_TTL)) {
+            console.log(`${ts()} Returning cached StreetGraph for ${key}`);
+            return cached.graph;
+        }
+        const newGraph = new StreetGraph();
+        newGraph.buildFromOSM(data);
+        GRAPH_CACHE.set(key, { graph: newGraph, timestamp: now });
+        return newGraph;
+    }
 
     constructor() {
         this.graph = createGraph({ multigraph: true });
@@ -60,7 +78,6 @@ export class StreetGraph {
                             const dist = this.haversine(uNode.lat, uNode.lon, vNode.lat, vNode.lon);
                             const isRidden = this.checkIfRidden(uNode, vNode, riddenRoads);
 
-                            // Add undirected edge (represented as two directed)
                             this.graph.addLink(u, v, {
                                 id: way.id.toString(),
                                 weight: dist,
@@ -94,17 +111,9 @@ export class StreetGraph {
 
         for (const activity of riddenRoads) {
             if (activity.length === 0) continue;
-
-            // PRE-CHECK: Broad activity BBox
-            // To make this efficient, activities should ideally have their BBox cached.
-            // Since we don't have it cached yet, let's do a quick scan if it's the first time
-            // Or just rely on the point-in-bbox check which is already fast.
-            // Actually, we can just check THE FIRST AND LAST POINT of the activity? No, that's not safe.
-
             for (const point of activity) {
                 if (point[0] > edgeMinLat && point[0] < edgeMaxLat &&
                     point[1] > edgeMinLon && point[1] < edgeMaxLon) {
-
                     const dist = this.haversine(midLat, midLon, point[0], point[1]);
                     if (dist < thresholdMeters) return true;
                 }
@@ -114,17 +123,15 @@ export class StreetGraph {
     }
 
     private haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
-        const R = 6371e3; // metres
+        const R = 6371e3;
         const φ1 = lat1 * Math.PI / 180;
         const φ2 = lat2 * Math.PI / 180;
         const Δφ = (lat2 - lat1) * Math.PI / 180;
         const Δλ = (lon2 - lon1) * Math.PI / 180;
-
         const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
             Math.cos(φ1) * Math.cos(φ2) *
             Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
         return R * c;
     }
 
@@ -138,18 +145,9 @@ export class StreetGraph {
                 } else if (typeof node.links.length === 'number') {
                     degree = node.links.length;
                 } else {
-                    // Fallback iteration
                     node.links.forEach(() => degree++);
                 }
             }
-
-            // Since we represent each undirected edge as two directed edges (in/out),
-            // the total number of links is 2 * (undirected degree).
-            // We want to find nodes where undirected degree is odd.
-            // So we check if (total_links / 2) is odd.
-            // Or simply: total_links % 4 !== 0 (assuming strictly symmetric graph).
-            // But safely: (degree / 2) % 2 !== 0.
-
             if ((degree / 2) % 2 !== 0) {
                 oddNodes.push(node.id.toString());
             }
@@ -159,20 +157,16 @@ export class StreetGraph {
 
     public pruneDisconnectedComponents() {
         if (this.graph.getNodesCount() === 0) return;
-
         const visited = new Set<string>();
         const components: string[][] = [];
-
         this.graph.forEachNode((node) => {
             if (!visited.has(node.id.toString())) {
                 const component: string[] = [];
                 const stack = [node.id.toString()];
                 visited.add(node.id.toString());
-
                 while (stack.length > 0) {
                     const u = stack.pop()!;
                     component.push(u);
-
                     this.graph.getNode(u)?.links?.forEach((link: any) => {
                         const v = (link.fromId === u ? link.toId : link.fromId).toString();
                         if (!visited.has(v)) {
@@ -184,15 +178,8 @@ export class StreetGraph {
                 components.push(component);
             }
         });
-
         if (components.length <= 1) return;
-
-        // Sort by size (descending)
         components.sort((a, b) => b.length - a.length);
-
-        console.log(`${ts()} Found ${components.length} connected components. Keeping largest (${components[0].length} nodes). Removing ${components.length - 1} islands.`);
-
-        // Remove all nodes in smaller components
         for (let i = 1; i < components.length; i++) {
             for (const nodeId of components[i]) {
                 this.graph.removeNode(nodeId);
@@ -200,103 +187,134 @@ export class StreetGraph {
         }
     }
 
-    public findClosestTarget(fromId: string, targetIds: Set<string>): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
+    public findClosestTarget(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
         const distances = new Map<string, number>();
-        const previous = new Map<string, { id: string, linkId: string, linkWeight: number }>();
-        const unvisited = new Set<string>();
-
-        this.graph.forEachNode(node => {
-            distances.set(node.id.toString(), Infinity);
-            unvisited.add(node.id.toString());
-        });
+        const previous = new Map<string, { id: string, weight: number }>();
+        const queue: { id: string, weight: number }[] = [{ id: fromId, weight: 0 }];
         distances.set(fromId, 0);
 
-        while (unvisited.size > 0) {
-            let minNode: string | null = null;
-            let minDist = Infinity;
+        let bestTarget: string | null = null;
+        let minWeight = Infinity;
 
-            for (const nodeId of unvisited) {
-                const d = distances.get(nodeId)!;
-                if (d < minDist) {
-                    minDist = d;
-                    minNode = nodeId;
+        while (queue.length > 0) {
+            queue.sort((a, b) => a.weight - b.weight);
+            const { id: u, weight: distU } = queue.shift()!;
+
+            if (distU > minWeight) break;
+            if (targetIds.has(u)) {
+                if (distU < minWeight) {
+                    minWeight = distU;
+                    bestTarget = u;
                 }
             }
 
-            if (minNode === null || minDist === Infinity) break;
+            const node = this.graph.getNode(u);
+            node?.links?.forEach((link: any) => {
+                if (allowedLinks && !allowedLinks.has(link.id)) return;
+                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                const weight = link.data.weight;
+                const alt = distU + weight;
 
-            // IF WE FOUND ANY TARGET
-            if (targetIds.has(minNode) && minNode !== fromId) {
-                const path: { id: string, idNext: string, weight: number }[] = [];
-                let curr = minNode;
-                while (curr !== fromId) {
-                    const prev = previous.get(curr);
-                    if (!prev) break;
-                    path.unshift({ id: prev.id, idNext: curr, weight: prev.linkWeight });
-                    curr = prev.id;
-                }
-                return { path, targetId: minNode };
-            }
-
-            unvisited.delete(minNode);
-
-            this.graph.getNode(minNode)?.links?.forEach((link: any) => {
-                const neighborId = (link.fromId === minNode ? link.toId : link.fromId).toString();
-                if (unvisited.has(neighborId)) {
-                    const penalty = link.data.isRidden ? 10 : 1;
-                    const alt = minDist + (link.data.weight * penalty);
-                    if (alt < distances.get(neighborId)!) {
-                        distances.set(neighborId, alt);
-                        previous.set(neighborId, { id: minNode!, linkId: link.id, linkWeight: link.data.weight });
-                    }
+                if (!distances.has(v) || alt < distances.get(v)!) {
+                    distances.set(v, alt);
+                    previous.set(v, { id: u, weight });
+                    queue.push({ id: v, weight: alt });
                 }
             });
+        }
+
+        if (bestTarget) {
+            const p: { id: string, idNext: string, weight: number }[] = [];
+            let curr = bestTarget;
+            while (curr !== fromId) {
+                const prev = previous.get(curr)!;
+                p.unshift({ id: prev.id, idNext: curr, weight: prev.weight });
+                curr = prev.id;
+            }
+            return { path: p, targetId: bestTarget };
         }
 
         return null;
     }
 
-    public findPath(fromId: string, toId: string): { id: string, idNext: string, weight: number }[] {
-        const result = this.findClosestTarget(fromId, new Set([toId]));
+    public findPath(fromId: string, toId: string, allowedLinks?: Set<string>): { id: string, idNext: string, weight: number }[] {
+        const result = this.findClosestTarget(fromId, new Set([toId]), allowedLinks);
         return result ? result.path : [];
     }
 
-    public solveCPP(): { lat: number, lon: number }[] {
+    public findClosestNode(lat: number, lon: number, nodeIds?: Set<string>): string | null {
+        let closestNode: string | null = null;
+        let minDist = Infinity;
+        const checkNode = (node: any) => {
+            const nodeId = node.id.toString();
+            if (nodeIds && !nodeIds.has(nodeId)) return;
+            const dist = this.haversine(lat, lon, node.data.lat, node.data.lon);
+            if (dist < minDist) {
+                minDist = dist;
+                closestNode = nodeId;
+            }
+        };
+        this.graph.forEachNode(checkNode);
+        return closestNode;
+    }
+
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][]): { lat: number, lon: number }[] {
         console.log(`${ts()} Starting RPP Solver...`);
 
-        // 1. Identify required edges (E_R) - those un-ridden
         const requiredEdges: { u: string, v: string, link: any }[] = [];
         const unriddenNodes = new Set<string>();
+        const allowedLinks = new Set<string>();
 
-        this.graph.forEachLink((link: any) => {
-            if (link.fromId < link.toId) {
-                if (!link.data.isRidden) {
-                    requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
-                    unriddenNodes.add(link.fromId.toString());
-                    unriddenNodes.add(link.toId.toString());
+        if (manualRoute && manualRoute.length > 1) {
+            console.log(`${ts()} Constraining routing to ${manualRoute.length} manual points.`);
+            for (let i = 0; i < manualRoute.length - 1; i++) {
+                const p1 = manualRoute[i];
+                const p2 = manualRoute[i + 1];
+                const u = this.findClosestNode(p1[1], p1[0]);
+                const v = this.findClosestNode(p2[1], p2[0]);
+                if (u && v && u !== v) {
+                    const link = this.graph.getLink(u, v);
+                    if (link) {
+                        allowedLinks.add(link.id);
+                        const exists = requiredEdges.find(re => (re.u === u && re.v === v) || (re.u === v && re.v === u));
+                        if (!exists) {
+                            requiredEdges.push({ u, v, link });
+                            unriddenNodes.add(u);
+                            unriddenNodes.add(v);
+                        }
+                    }
                 }
             }
-        });
+        } else {
+            this.graph.forEachLink((link: any) => {
+                if (link.fromId < link.toId) {
+                    if (!link.data.isRidden) {
+                        requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
+                        unriddenNodes.add(link.fromId.toString());
+                        unriddenNodes.add(link.toId.toString());
+                    }
+                }
+            });
+        }
 
         if (requiredEdges.length === 0) {
             console.log(`${ts()} No unridden roads found in this area.`);
             return [];
         }
 
-        // 2. Find connected components of unridden roads
         let components: string[][] = [];
         const visitedNodes = new Set<string>();
-
-        for (const startNode of unriddenNodes) {
-            if (!visitedNodes.has(startNode)) {
+        for (const node of unriddenNodes) {
+            if (!visitedNodes.has(node)) {
                 const component: string[] = [];
-                const stack = [startNode];
-                visitedNodes.add(startNode);
+                const stack = [node];
+                visitedNodes.add(node);
                 while (stack.length > 0) {
                     const u = stack.pop()!;
                     component.push(u);
                     this.graph.getNode(u)?.links?.forEach((link: any) => {
-                        if (!link.data.isRidden) {
+                        if (manualRoute && !allowedLinks.has(link.id)) return;
+                        if (!link.data.isRidden || (manualRoute && allowedLinks.has(link.id))) {
                             const v = (link.fromId === u ? link.toId : link.fromId).toString();
                             if (!visitedNodes.has(v)) {
                                 visitedNodes.add(v);
@@ -308,204 +326,94 @@ export class StreetGraph {
                 components.push(component);
             }
         }
-
-        console.log(`${ts()} Found ${components.length} unridden road components.`);
         components.sort((a, b) => b.length - a.length);
 
-        // 3. Connect components to the largest component (The Main Body)
         const edgesInFinalGraph: { u: string, v: string, data: EdgeData }[] = [];
-        const activeUnriddenNodes = new Set<string>();
-        const reachableComponents: string[][] = [components[0]];
+        const reachableNodes = new Set(components[0]);
 
-        // Populate initial edges from the largest component
-        const mainComponentNodes = new Set(components[0]);
-        requiredEdges.forEach(re => {
-            if (mainComponentNodes.has(re.u) || mainComponentNodes.has(re.v)) {
-                // We'll filter strictly later, but for now we track nodes in the main component
-            }
-        });
-
-        console.log(`${ts()} Connecting islands to the mainland...`);
         for (let i = 1; i < components.length; i++) {
             const island = components[i];
-            const targetNodes = new Set<string>();
-            reachableComponents.forEach(c => c.forEach(n => targetNodes.add(n)));
-
-            // Optimization: Find the best entry point from the island to the mainland
-            // instead of just using island[0].
-            // We can pick a few sample nodes from the island or just try all if the island is small.
             let bestResult: any = null;
-            let minWeight = Infinity;
-
-            // Sample some nodes from the island to find a good connection
-            const sampleSize = Math.min(island.length, 5);
-            const step = Math.max(1, Math.floor(island.length / sampleSize));
-
-            for (let j = 0; j < island.length; j += step) {
-                const result = this.findClosestTarget(island[j], targetNodes);
-                if (result) {
-                    const totalWeight = result.path.reduce((sum: number, p: any) => sum + p.weight, 0);
-                    if (totalWeight < minWeight) {
-                        minWeight = totalWeight;
-                        bestResult = result;
-                    }
+            let minW = Infinity;
+            for (let j = 0; j < Math.min(island.length, 5); j++) {
+                const res = this.findClosestTarget(island[j], reachableNodes, manualRoute ? allowedLinks : undefined);
+                if (res) {
+                    const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
+                    if (w < minW) { minW = w; bestResult = res; }
                 }
             }
-
             if (bestResult) {
-                reachableComponents.push(island);
-                // Add the connecting path edges to the final graph
+                island.forEach(n => reachableNodes.add(n));
                 bestResult.path.forEach((p: any) => {
                     const link = this.graph.getLink(p.id, p.idNext);
-                    if (link) {
-                        edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
-                    }
+                    if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
                 });
-            } else {
-                console.warn(`${ts()} Pruning unreachable island of ${island.length} nodes.`);
             }
         }
 
-        // Add all required edges from reachable components
-        const finalReachableNodes = new Set<string>();
-        reachableComponents.forEach(c => c.forEach(n => finalReachableNodes.add(n)));
-
         requiredEdges.forEach(re => {
-            if (finalReachableNodes.has(re.u) && finalReachableNodes.has(re.v)) {
+            if (reachableNodes.has(re.u) && reachableNodes.has(re.v)) {
                 edgesInFinalGraph.push({ u: re.u, v: re.v, data: re.link.data });
             }
         });
 
-        // 4. Odd Node Matching
-        const degreeMap = new Map<string, number>();
+        const startNode = startPoint ? this.findClosestNode(startPoint.lat, startPoint.lon, reachableNodes) : null;
+        const endNode = endPoint ? this.findClosestNode(endPoint.lat, endPoint.lon, reachableNodes) : null;
+
+        const dMap = new Map<string, number>();
         edgesInFinalGraph.forEach(e => {
-            degreeMap.set(e.u, (degreeMap.get(e.u) || 0) + 1);
-            degreeMap.set(e.v, (degreeMap.get(e.v) || 0) + 1);
+            dMap.set(e.u, (dMap.get(e.u) || 0) + 1);
+            dMap.set(e.v, (dMap.get(e.v) || 0) + 1);
         });
 
-        const oddNodes: string[] = [];
-        for (const [node, degree] of degreeMap.entries()) {
-            if (degree % 2 !== 0) oddNodes.push(node);
+        const nodesToFlip = new Set<string>();
+        for (const [n, d] of dMap.entries()) if (d % 2 !== 0) nodesToFlip.add(n);
+
+        if (startNode && endNode && startNode !== endNode) {
+            if (nodesToFlip.has(startNode)) nodesToFlip.delete(startNode); else nodesToFlip.add(startNode);
+            if (nodesToFlip.has(endNode)) nodesToFlip.delete(endNode); else nodesToFlip.add(endNode);
         }
 
-        if (oddNodes.length > 0) {
-            console.log(`${ts()} Matching ${oddNodes.length} odd nodes...`);
-
-            // 4a. Calculate all-pairs distances between odd nodes (Sorted Edge Greedy)
-            interface OddMatch {
-                u: string;
-                v: string;
-                path: { id: string, idNext: string, weight: number }[];
-                totalWeight: number;
+        const remainingOdd = new Set(nodesToFlip);
+        while (remainingOdd.size > 0) {
+            const u = Array.from(remainingOdd)[0];
+            const targets = new Set(remainingOdd);
+            targets.delete(u);
+            const res = this.findClosestTarget(u, targets, manualRoute ? allowedLinks : undefined);
+            if (res) {
+                remainingOdd.delete(u);
+                remainingOdd.delete(res.targetId);
+                res.path.forEach(p => {
+                    const link = this.graph.getLink(p.id, p.idNext);
+                    if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                });
+            } else {
+                const node = Array.from(remainingOdd)[0];
+                remainingOdd.delete(node);
+                console.error("Could not match odd node", node);
             }
-
-            const possibleMatches: OddMatch[] = [];
-            const oddArray = Array.from(oddNodes);
-
-            // This is O(K * Graph) where K is number of odd nodes.
-            // For typical street grids, this is efficient enough.
-            for (let i = 0; i < oddArray.length; i++) {
-                const u = oddArray[i];
-                const others = new Set(oddArray.slice(i + 1));
-                if (others.size === 0) break;
-
-                // We want to find ALL other odd nodes, not just the closest one, 
-                // but Dijkstra naturally explores in order of distance.
-                // However, our findClosestTarget returns early.
-                // Let's implement a version that returns all reachable targets.
-                // For now, let's just use the greedy approach but sorted.
-
-                // To do "Sorted Edge Greedy" properly, we need the full distance matrix.
-                // Let's modify the loop to find the closest for each remaining node.
-            }
-
-            const matchedNodes = new Set<string>();
-            const matches: OddMatch[] = [];
-
-            // Simple Sorted Greedy:
-            // 1. Find the shortest path between ANY two unmatched odd nodes.
-            // 2. Match them.
-            // 3. Repeat.
-
-            const remainingOdd = new Set(oddNodes);
-            while (remainingOdd.size > 0) {
-                let bestMatch: OddMatch | null = null;
-                let minWeight = Infinity;
-
-                // To find the GLOBAL best match, we'd need to run Dijkstra from every node.
-                // Given the scale, this is fine.
-                const oddArray = Array.from(remainingOdd);
-                for (const u of oddArray) {
-                    const targets = new Set(remainingOdd);
-                    targets.delete(u);
-
-                    const result = this.findClosestTarget(u, targets);
-                    if (result) {
-                        const weight = result.path.reduce((sum, p) => sum + p.weight, 0);
-                        if (weight < minWeight) {
-                            minWeight = weight;
-                            bestMatch = { u, v: result.targetId, path: result.path, totalWeight: weight };
-                        }
-                    }
-                }
-
-                if (bestMatch) {
-                    remainingOdd.delete(bestMatch.u);
-                    remainingOdd.delete(bestMatch.v);
-
-                    bestMatch.path.forEach(p => {
-                        const link = this.graph.getLink(p.id, p.idNext);
-                        if (link) {
-                            edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
-                        }
-                    });
-                } else {
-                    const u = remainingOdd.values().next().value as string;
-                    console.error(`${ts()} Critical: Could not match odd node ${u}. Doubling an existing edge as fallback.`);
-                    remainingOdd.delete(u);
-                    const node = this.graph.getNode(u);
-                    if (node && node.links) {
-                        const linksArray = Array.from(node.links);
-                        if (linksArray.length > 0) {
-                            const link = linksArray[0] as any;
-                            const v = (link.fromId === u ? link.toId : link.fromId).toString();
-                            edgesInFinalGraph.push({ u, v, data: { ...link.data, isVirtual: true } });
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. Final Eulerian Trail Build
-        console.log(`${ts()} Final Graph: ${edgesInFinalGraph.length} edges.`);
-
-        // Final connectivity check
-        const nodesInCircuit = new Set<string>();
-        edgesInFinalGraph.forEach(e => { nodesInCircuit.add(e.u); nodesInCircuit.add(e.v); });
-
-        // Verify degrees again
-        const finalDegreeMap = new Map<string, number>();
-        edgesInFinalGraph.forEach(e => {
-            finalDegreeMap.set(e.u, (finalDegreeMap.get(e.u) || 0) + 1);
-            finalDegreeMap.set(e.v, (finalDegreeMap.get(e.v) || 0) + 1);
-        });
-        const remainingOdd = Array.from(finalDegreeMap.values()).filter(d => d % 2 !== 0).length;
-        if (remainingOdd > 0) {
-            console.error(`${ts()} Final graph Still has ${remainingOdd} odd nodes! Eulerian construction WILL fail.`);
-            // Potentially add one more loop to fix this if critical
         }
 
         try {
             const finalEdges: [string, string][] = edgesInFinalGraph.map(e => [e.u, e.v]);
-            const trail = eulerianTrail({ edges: finalEdges });
-            const circuit = trail.map((nodeId: string) => {
-                const node = this.graph.getNode(nodeId);
-                return { lat: node?.data.lat || 0, lon: node?.data.lon || 0 };
+            let trail = eulerianTrail({ edges: finalEdges, startNode: startNode || undefined });
+            if (startNode) {
+                if (startNode !== endNode) {
+                    if (trail[0] !== startNode && trail[trail.length - 1] === startNode) trail.reverse();
+                } else {
+                    const idx = trail.indexOf(startNode);
+                    if (idx !== -1 && (trail[0] !== startNode || trail[trail.length - 1] !== startNode)) {
+                        const base = trail.slice(0, -1);
+                        trail = [...base.slice(idx), ...base.slice(0, idx), startNode];
+                    }
+                }
+            }
+            return trail.map((id: string) => {
+                const n = this.graph.getNode(id);
+                return { lat: n?.data.lat || 0, lon: n?.data.lon || 0 };
             });
-            console.log(`${ts()} RPP Solver complete. Result: ${circuit.length} points.`);
-            return circuit;
         } catch (e: any) {
-            console.error(`${ts()} Eulerian trail construction failed:`, e.message);
+            console.error("Eulerian construction failed:", e.message);
             throw e;
         }
     }

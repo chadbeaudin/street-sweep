@@ -2,7 +2,7 @@
 
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -21,6 +21,10 @@ export default function Home() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
+    const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number }[]>([]);
+    const [manualRoute, setManualRoute] = useState<[number, number][]>([]);
+    const clickChainRef = useRef<Promise<void>>(Promise.resolve());
+    const pointsRef = useRef<{ lat: number; lon: number }[]>([]);
 
     useEffect(() => {
         fetch('/api/strava/activities')
@@ -44,7 +48,7 @@ export default function Home() {
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bbox, riddenRoads: stravaRoads })
+                body: JSON.stringify({ bbox, riddenRoads: stravaRoads, selectedPoints, manualRoute })
             });
 
             const data = await res.json();
@@ -106,6 +110,64 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         URL.revokeObjectURL(url);
     };
 
+    const handlePointAdd = (point: { lat: number; lon: number }) => {
+        if (!bbox) return;
+
+        // 1. Optimistic Update: Add raw point immediately for "insta-drop" feel
+        const tempIdx = pointsRef.current.length;
+        pointsRef.current.push(point);
+        setSelectedPoints([...pointsRef.current]);
+
+        clickChainRef.current = clickChainRef.current.then(async () => {
+            try {
+                const lastPoint = pointsRef.current[tempIdx - 1]; // This is the "real" or optimistic last point
+
+                const stepRes = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ point, lastPoint, bbox })
+                });
+                const stepData = await stepRes.json();
+
+                if (stepData.error) {
+                    console.warn('Step failed:', stepData.error);
+                    return;
+                }
+
+                const snappedPoint = stepData.snappedPoint;
+
+                // 2. Correct Update: Replace raw point with snapped point
+                pointsRef.current[tempIdx] = snappedPoint;
+                setSelectedPoints([...pointsRef.current]);
+
+                if (stepData.path && stepData.path.length > 0) {
+                    setManualRoute(prev => {
+                        const newCoords = stepData.path;
+                        if (prev.length > 0) {
+                            const lastPrev = prev[prev.length - 1];
+                            const firstNew = newCoords[0];
+                            if (lastPrev[0] === firstNew[0] && lastPrev[1] === firstNew[1]) {
+                                return [...prev, ...newCoords.slice(1)];
+                            }
+                        }
+                        return [...prev, ...newCoords];
+                    });
+                } else if (!lastPoint) {
+                    // Start of manual route
+                    setManualRoute([[snappedPoint.lon, snappedPoint.lat]]);
+                }
+            } catch (err) {
+                console.error('Failed to process click step:', err);
+            }
+        });
+    };
+
+    const clearPoints = () => {
+        pointsRef.current = [];
+        setSelectedPoints([]);
+        setManualRoute([]);
+    };
+
     return (
         <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-20">
@@ -144,6 +206,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             {stravaRoads.length} Rides
                         </div>
                     )}
+                    {selectedPoints.length > 0 && (
+                        <button
+                            onClick={clearPoints}
+                            className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
+                        >
+                            Clear Points
+                        </button>
+                    )}
                     <button
                         onClick={handleGenerate}
                         disabled={loading}
@@ -168,6 +238,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     route={route}
                     hoveredPoint={hoveredPoint}
                     stravaRoads={stravaRoads}
+                    selectedPoints={selectedPoints}
+                    onPointAdd={handlePointAdd}
+                    manualRoute={manualRoute}
                 />
 
                 {elevationData && (

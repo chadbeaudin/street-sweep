@@ -20,9 +20,12 @@ interface MapProps {
     route: [number, number, number?][] | null;
     hoveredPoint: { lat: number; lon: number } | null;
     stravaRoads: [number, number][][] | null;
+    selectedPoints: { lat: number; lon: number }[];
+    onPointAdd: (point: { lat: number; lon: number }) => void;
+    manualRoute: [number, number][];
 }
 
-function MapEvents({ onBBoxChange }: { onBBoxChange: (bbox: any) => void }) {
+function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
     const map = useMapEvents({
         moveend: () => {
             const bounds = map.getBounds();
@@ -33,6 +36,9 @@ function MapEvents({ onBBoxChange }: { onBBoxChange: (bbox: any) => void }) {
                 east: bounds.getEast(),
             });
         },
+        click: (e) => {
+            onMapClick(e.latlng);
+        }
     });
     return null;
 }
@@ -76,7 +82,7 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
     );
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, manualRoute }) => {
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
@@ -88,8 +94,48 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                <MapEvents onBBoxChange={onBBoxChange} />
+                <MapEvents onBBoxChange={onBBoxChange} onMapClick={(latlng) => onPointAdd({ lat: latlng.lat, lon: latlng.lng })} />
                 <RecenterMap route={route} />
+
+                {/* Manual route from road-snapped coordinates */}
+                {manualRoute.length > 1 && (
+                    <Polyline
+                        positions={manualRoute.map(p => [p[1], p[0]])}
+                        color="#6366F1" // indigo-500
+                        weight={3}
+                        dashArray="5, 8"
+                        opacity={0.6}
+                    />
+                )}
+
+                {/* Markers for selected points */}
+                {selectedPoints.map((point, idx) => {
+                    const isFirst = idx === 0;
+                    const isLast = idx === selectedPoints.length - 1;
+                    const color = isFirst ? '#10B981' : (isLast ? '#EF4444' : '#3B82F6');
+
+                    const markerIcon = L.divIcon({
+                        className: 'custom-point-marker',
+                        html: `<div style="
+                            width: 14px; 
+                            height: 14px; 
+                            background: ${color}; 
+                            border: 2px solid white; 
+                            border-radius: 50%; 
+                            box-shadow: 0 0 4px rgba(0,0,0,0.3);
+                        "></div>`,
+                        iconSize: [14, 14],
+                        iconAnchor: [7, 7],
+                    });
+
+                    return (
+                        <Marker
+                            key={`point-${idx}`}
+                            position={[point.lat, point.lon]}
+                            icon={markerIcon}
+                        />
+                    );
+                })}
 
                 {route && route.length > 0 && (
                     <Polyline
