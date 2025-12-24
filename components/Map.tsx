@@ -165,15 +165,6 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     50% { transform: scale(1.3); opacity: 0.8; }
                     100% { transform: scale(1); opacity: 1; }
                 }
-                .leaflet-container {
-                    cursor: crosshair !important;
-                }
-                .leaflet-grab {
-                    cursor: crosshair !important;
-                }
-                .leaflet-interactive {
-                    cursor: pointer !important;
-                }
             `}</style>
         </div>
     );
