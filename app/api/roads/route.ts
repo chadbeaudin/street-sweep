@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });
         }
 
-        const BUFFER = 0.005;
+        const BUFFER = 0.001; // reduced from 0.005 to mitigate 504 errors
         const bufferedBbox = {
             south: bbox.south - BUFFER,
             west: bbox.west - BUFFER,

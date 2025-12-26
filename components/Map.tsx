@@ -47,11 +47,10 @@ function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => 
         handleMove();
 
         map.on('moveend', handleMove);
-        map.on('click', (e) => onMapClick(e.latlng));
+        // Removed global click handler - points now only drop on interactive roads
 
         return () => {
             map.off('moveend', handleMove);
-            map.off('click');
         };
     }, [map, onBBoxChange, onMapClick]);
 
@@ -129,16 +128,59 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 <RecenterMap route={route} />
 
 
+                {/* Strava roads - visual background */}
+                {stravaRoads && stravaRoads.map((road, idx) => (
+                    <Polyline
+                        key={`strava-${idx}`}
+                        positions={road as [number, number][]}
+                        color="#3B82F6"
+                        weight={2}
+                        opacity={0.8}
+                        interactive={false}
+                    />
+                ))}
+
                 {/* Manual route from road-snapped coordinates */}
                 {flatManualRoute.length > 1 && (
                     <Polyline
                         positions={flatManualRoute.map(p => [p[1], p[0]])}
-                        color="#6366F1" // indigo-500
+                        color="#6366F1"
                         weight={3}
                         dashArray="5, 8"
                         opacity={0.6}
+                        interactive={false}
                     />
                 )}
+
+                {/* Generated route */}
+                {route && route.length > 0 && (
+                    <Polyline
+                        positions={route.map(p => [p[1], p[0]] as [number, number])}
+                        color="#B4491E"
+                        weight={5}
+                        opacity={0.8}
+                        interactive={false}
+                    />
+                )}
+
+                {/* Invisible interactive layer for cursor and snapping - Rendered AFTER visual lines to be on top of them */}
+                {allRoads && allRoads.map((road, idx) => (
+                    <Polyline
+                        key={`road-hitbox-${idx}`}
+                        positions={road as [number, number][]}
+                        pathOptions={{
+                            color: '#3B82F6',
+                            weight: 15,
+                            opacity: 0.01,
+                            interactive: true,
+                            bubblingMouseEvents: true,
+                            className: 'road-hitbox'
+                        }}
+                        eventHandlers={{
+                            click: (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
+                        }}
+                    />
+                ))}
 
                 {/* Markers for selected points */}
                 {selectedPoints.map((point, idx) => {
@@ -166,67 +208,23 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             position={[point.lat, point.lon]}
                             icon={markerIcon}
                             draggable={true}
-                            bubblingMouseEvents={false}
+                            zIndexOffset={500}
                             eventHandlers={{
-                                dragstart: (e) => {
-                                    L.DomEvent.stopPropagation(e);
+                                dragstart: (e: any) => {
                                     onPointMoveStart?.();
                                 },
-                                dragend: (e) => {
-                                    L.DomEvent.stopPropagation(e as any);
+                                dragend: (e: any) => {
                                     const marker = e.target;
                                     const position = marker.getLatLng();
                                     onPointMove(idx, { lat: position.lat, lon: position.lng });
                                     onPointMoveEnd?.();
-                                },
-                                click: (e) => {
-                                    L.DomEvent.stopPropagation(e);
-                                },
-                                mousedown: (e) => {
-                                    L.DomEvent.stopPropagation(e);
-                                },
+                                }
                             }}
                         />
                     );
                 })}
 
-                {route && route.length > 0 && (
-                    <Polyline
-                        positions={route.map(p => [p[1], p[0]] as [number, number])}
-                        color="#B4491E" // Dark Burnt Orange
-                        weight={5}
-                        opacity={0.8}
-                    />
-                )}
-
-                {stravaRoads && stravaRoads.map((road, idx) => (
-                    <Polyline
-                        key={`strava-${idx}`}
-                        positions={road as [number, number][]}
-                        color="#3B82F6" // Standard Blue
-                        weight={2}
-                        opacity={0.8} // Higher opacity reduces the "stacking" heatmap effect
-                    />
-                ))}
-
                 <HoverMarker point={hoveredPoint} />
-
-                {/* Invisible interactive layer for cursor and snapping - LAST to ensure hover priority */}
-                {allRoads && allRoads.map((road, idx) => (
-                    <Polyline
-                        key={`road-hitbox-${idx}`}
-                        positions={road as [number, number][]}
-                        pathOptions={{
-                            color: '#000',
-                            weight: 20,
-                            opacity: 0.0001,
-                            interactive: true
-                        }}
-                        eventHandlers={{
-                            click: (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
-                        }}
-                    />
-                ))}
             </MapContainer>
 
             <style jsx global>{`
@@ -236,10 +234,19 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     100% { transform: scale(1); opacity: 1; }
                 }
                 .leaflet-container {
-                    cursor: grab;
+                    cursor: grab !important;
                 }
-                .leaflet-interactive {
+                /* Use specific class for roads to avoid overriding markers */
+                .leaflet-container .road-hitbox {
                     cursor: crosshair !important;
+                    pointer-events: auto !important;
+                }
+                /* Markers should show pointer/grab when draggable */
+                .leaflet-container .leaflet-marker-icon.leaflet-interactive {
+                    cursor: pointer !important;
+                }
+                .leaflet-container .leaflet-marker-icon.leaflet-interactive:active {
+                    cursor: grabbing !important;
                 }
             `}</style>
         </div>

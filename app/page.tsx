@@ -73,10 +73,13 @@ export default function Home() {
             })
                 .then(res => res.json())
                 .then(data => {
-                    if (data.roads) setAllRoads(data.roads);
+                    if (data.roads) {
+                        console.log(`[StreetSweep] Received ${data.roads.length} roadmap segments.`);
+                        setAllRoads(data.roads);
+                    }
                 })
                 .catch(err => console.error('Failed to fetch roads:', err));
-        }, 500);
+        }, 300);
 
         return () => clearTimeout(timer);
     }, [bbox]);
@@ -203,6 +206,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 if (stepData.error) {
                     console.warn('Step failed:', stepData.error);
+                    // Rollback optimistic update
+                    pointsRef.current.splice(tempIdx, 1);
+                    setSelectedPoints([...pointsRef.current]);
                     return;
                 }
 
@@ -236,6 +242,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
             } catch (err) {
                 console.error('Failed to process click step:', err);
+                // Rollback optimistic update on network error
+                pointsRef.current.splice(tempIdx, 1);
+                setSelectedPoints([...pointsRef.current]);
             }
         });
     }, []);
