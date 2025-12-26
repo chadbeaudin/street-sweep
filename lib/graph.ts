@@ -308,7 +308,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][]): { lat: number, lon: number }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBox?: { north: number, south: number, east: number, west: number } | null): { lat: number, lon: number }[] {
         console.log(`${ts()} Starting RPP Solver...`);
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
@@ -335,7 +335,34 @@ export class StreetGraph {
                     }
                 }
             }
-        } else {
+        }
+
+        // Add all roads that fall within the selection box to required edges
+        if (selectionBox) {
+            console.log(`${ts()} Identifying roads in selection box...`);
+            this.graph.forEachLink((link: any) => {
+                const u = this.graph.getNode(link.fromId);
+                const v = this.graph.getNode(link.toId);
+                if (u && v) {
+                    const midLat = (u.data.lat + v.data.lat) / 2;
+                    const midLon = (u.data.lon + v.data.lon) / 2;
+
+                    if (midLat <= selectionBox.north && midLat >= selectionBox.south &&
+                        midLon <= selectionBox.east && midLon >= selectionBox.west) {
+
+                        allowedLinks.add(link.id);
+                        const exists = requiredEdges.find(re => (re.u === link.fromId && re.v === link.toId) || (re.u === link.toId && re.v === link.fromId));
+                        if (!exists) {
+                            requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
+                            unriddenNodes.add(link.fromId.toString());
+                            unriddenNodes.add(link.toId.toString());
+                        }
+                    }
+                }
+            });
+        }
+
+        if (!manualRoute && !selectionBox) {
             this.graph.forEachLink((link: any) => {
                 if (link.fromId < link.toId) {
                     if (!link.data.isRidden) {
@@ -363,7 +390,7 @@ export class StreetGraph {
                     const u = stack.pop()!;
                     component.push(u);
                     this.graph.getNode(u)?.links?.forEach((link: any) => {
-                        // We allow traversal across ANY link to discover connectivity, 
+                        // We allow traversal across ANY link to discover connectivity,
                         // even if we only "require" some of them.
                         const v = (link.fromId === u ? link.toId : link.fromId).toString();
                         if (!visitedNodes.has(v)) {
@@ -384,7 +411,9 @@ export class StreetGraph {
             const island = components[i];
             let bestResult: any = null;
             let minW = Infinity;
-            for (let j = 0; j < Math.min(island.length, 5); j++) {
+            // Increase search limit for bridging large components
+            const searchLimit = Math.min(island.length, 20);
+            for (let j = 0; j < searchLimit; j++) {
                 // IMPORTANT: When connecting islands, we allow using ANY link in the graph (not just allowedLinks)
                 const res = this.findClosestTarget(island[j], reachableNodes);
                 if (res) {
@@ -398,6 +427,8 @@ export class StreetGraph {
                     const link = this.graph.getLink(p.id, p.idNext);
                     if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
                 });
+            } else {
+                console.warn(`${ts()} Warning: Could not bridge component of size ${island.length}. Some roads may be omitted.`);
             }
         }
 
@@ -447,7 +478,20 @@ export class StreetGraph {
 
         try {
             const finalEdges: [string, string][] = edgesInFinalGraph.map(e => [e.u, e.v]);
-            let trail = eulerianTrail({ edges: finalEdges, startNode: startNode || undefined });
+            let trail: string[];
+            try {
+                trail = eulerianTrail({ edges: finalEdges, startNode: startNode || undefined });
+            } catch (err) {
+                console.warn(`${ts()} Eulerian trail discovery failed. Falling back to simple edge list.`, err);
+                // Fallback: return nodes of all edges in sequence (not a perfect path, but better than nothing)
+                const fallbackNodes: string[] = [];
+                edgesInFinalGraph.forEach(e => {
+                    if (fallbackNodes.length === 0 || fallbackNodes[fallbackNodes.length - 1] !== e.u) fallbackNodes.push(e.u);
+                    fallbackNodes.push(e.v);
+                });
+                trail = fallbackNodes;
+            }
+
             if (startNode) {
                 if (startNode !== endNode) {
                     if (trail[0] !== startNode && trail[trail.length - 1] === startNode) trail.reverse();
@@ -464,7 +508,7 @@ export class StreetGraph {
                 return { lat: n?.data.lat || 0, lon: n?.data.lon || 0 };
             });
         } catch (e: any) {
-            console.error("Eulerian construction failed:", e.message);
+            console.error("Route construction failed:", e.message);
             throw e;
         }
     }

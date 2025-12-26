@@ -7,7 +7,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox } = await request.json();
 
         if (!bbox || !bbox.north || !bbox.south || !bbox.east || !bbox.west) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
@@ -41,6 +41,14 @@ export async function POST(request: Request) {
             });
         }
 
+        // Expand to include selection box
+        if (selectionBox) {
+            minLat = Math.min(minLat, selectionBox.south);
+            maxLat = Math.max(maxLat, selectionBox.north);
+            minLon = Math.min(minLon, selectionBox.west);
+            maxLon = Math.max(maxLon, selectionBox.east);
+        }
+
         const bufferedBbox = {
             south: minLat - BUFFER,
             west: minLon - BUFFER,
@@ -58,7 +66,7 @@ export async function POST(request: Request) {
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
         const endPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[selectedPoints.length - 1] : undefined;
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute);
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBox);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {

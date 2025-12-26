@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useCallback } from 'react';
-import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -27,6 +27,9 @@ interface MapProps {
     onPointMoveEnd?: () => void;
     manualRoute: [number, number][][];
     allRoads: [number, number][][];
+    isSelectionMode?: boolean;
+    selectionBox: { north: number; south: number; east: number; west: number } | null;
+    onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -96,10 +99,43 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
     );
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads }) => {
+const SelectionTool: React.FC<{
+    isSelectionMode: boolean;
+    onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
+}> = ({ isSelectionMode, onSelectionChange }) => {
+    const [startPos, setStartPos] = React.useState<L.LatLng | null>(null);
+    const map = useMap();
+
+    useMapEvents({
+        mousedown: (e) => {
+            if (!isSelectionMode) return;
+            map.dragging.disable();
+            setStartPos(e.latlng);
+        },
+        mousemove: (e) => {
+            if (!isSelectionMode || !startPos) return;
+            onSelectionChange({
+                north: Math.max(startPos.lat, e.latlng.lat),
+                south: Math.min(startPos.lat, e.latlng.lat),
+                east: Math.max(startPos.lng, e.latlng.lng),
+                west: Math.min(startPos.lng, e.latlng.lng)
+            });
+        },
+        mouseup: (e) => {
+            if (!isSelectionMode) return;
+            map.dragging.enable();
+            setStartPos(null);
+        }
+    });
+
+    return null;
+};
+
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBox, onSelectionChange }) => {
     const handleMapClick = useCallback((latlng: L.LatLng) => {
+        if (isSelectionMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
-    }, [onPointAdd]);
+    }, [onPointAdd, isSelectionMode]);
 
     const flatManualRoute = React.useMemo(() => {
         return manualRoute.reduce((acc, seg, i) => {
@@ -127,6 +163,28 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
                 <RecenterMap route={route} />
 
+                {/* Selection Box Drawing Tool */}
+                <SelectionTool
+                    isSelectionMode={isSelectionMode}
+                    onSelectionChange={onSelectionChange}
+                />
+
+                {/* Visible Selection Rectangle */}
+                {selectionBox && (
+                    <Rectangle
+                        bounds={[
+                            [selectionBox.south, selectionBox.west],
+                            [selectionBox.north, selectionBox.east]
+                        ]}
+                        pathOptions={{
+                            color: '#F59E0B',
+                            weight: 2,
+                            fillColor: '#F59E0B',
+                            fillOpacity: 0.2,
+                            dashArray: '5, 5'
+                        }}
+                    />
+                )}
 
                 {/* Strava roads - visual background */}
                 {stravaRoads && stravaRoads.map((road, idx) => (
@@ -164,7 +222,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 )}
 
                 {/* Invisible interactive layer for cursor and snapping - Rendered AFTER visual lines to be on top of them */}
-                {allRoads && allRoads.map((road, idx) => (
+                {allRoads && !isSelectionMode && allRoads.map((road, idx) => (
                     <Polyline
                         key={`road-hitbox-${idx}`}
                         positions={road as [number, number][]}

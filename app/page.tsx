@@ -26,6 +26,8 @@ export default function Home() {
     const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+    const [selectionBox, setSelectionBox] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number; id: string }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
@@ -99,6 +101,7 @@ export default function Home() {
                     bbox,
                     riddenRoads: stravaRoads,
                     selectedPoints,
+                    selectionBox,
                     manualRoute: manualRoute.reduce((acc, seg, i) => {
                         if (i === 0) return seg;
                         // Avoid duplicate points at segment boundaries
@@ -360,6 +363,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setRoute(null);
         setElevationData(null);
         setTotalDistance(null);
+        setSelectionBox(null);
     }, []);
 
     const handleUndo = useCallback(() => {
@@ -411,6 +415,22 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 </div>
 
                 <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                        <button
+                            onClick={() => setIsSelectionMode(!isSelectionMode)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${isSelectionMode
+                                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                }`}
+                            title={isSelectionMode ? "Switch to Point mode" : "Switch to Area Select mode"}
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                            </svg>
+                            {isSelectionMode ? 'Area Selection' : 'Point Mode'}
+                        </button>
+                    </div>
+
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <button
                             onClick={handleUndo}
@@ -493,6 +513,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     onPointMoveEnd={handlePointMoveEnd}
                     manualRoute={manualRoute}
                     allRoads={allRoads}
+                    isSelectionMode={isSelectionMode}
+                    selectionBox={selectionBox}
+                    onSelectionChange={setSelectionBox}
                 />
 
                 {elevationData && (
