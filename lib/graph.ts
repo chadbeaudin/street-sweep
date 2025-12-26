@@ -48,11 +48,21 @@ export class StreetGraph {
     }
 
     public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null) {
-        // Iterate through all elements that are ways
+        const nodesMap = new Map<number, { lat: number, lon: number }>();
+
+        // 1. First pass: Collect any top-level node elements (for backward compatibility/tests)
+        for (const elem of data.elements) {
+            if (elem.type === 'node') {
+                nodesMap.set(elem.id, { lat: elem.lat, lon: elem.lon });
+                // We don't necessarily add them to graph yet, just index them
+            }
+        }
+
+        // 2. Second pass: Process ways
         for (const elem of data.elements) {
             if (elem.type === 'way') {
                 const way = elem as OSMWay;
-                if (!way.geometry || !way.nodes) continue;
+                if (!way.nodes) continue;
 
                 for (let i = 0; i < way.nodes.length - 1; i++) {
                     const uId = way.nodes[i];
@@ -60,8 +70,9 @@ export class StreetGraph {
                     const uIdStr = uId.toString();
                     const vIdStr = vId.toString();
 
-                    const uCoord = way.geometry[i];
-                    const vCoord = way.geometry[i + 1];
+                    // Try to get coordinates from inline geometry or nodesMap fallback
+                    const uCoord = way.geometry?.[i] || nodesMap.get(uId);
+                    const vCoord = way.geometry?.[i + 1] || nodesMap.get(vId);
 
                     if (uCoord && vCoord) {
                         // Ensure nodes exist in the graph
