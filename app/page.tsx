@@ -516,6 +516,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     isSelectionMode={isSelectionMode}
                     selectionBox={selectionBox}
                     onSelectionChange={setSelectionBox}
+                    onSelectionModeChange={setIsSelectionMode}
                 />
 
                 {elevationData && (

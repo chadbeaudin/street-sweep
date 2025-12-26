@@ -30,6 +30,7 @@ interface MapProps {
     isSelectionMode?: boolean;
     selectionBox: { north: number; south: number; east: number; west: number } | null;
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
+    onSelectionModeChange?: (isSelectionMode: boolean) => void;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -102,7 +103,8 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
 const SelectionTool: React.FC<{
     isSelectionMode: boolean;
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
-}> = ({ isSelectionMode, onSelectionChange }) => {
+    onSelectionModeChange?: (isSelectionMode: boolean) => void;
+}> = ({ isSelectionMode, onSelectionChange, onSelectionModeChange }) => {
     const [startPos, setStartPos] = React.useState<L.LatLng | null>(null);
     const map = useMap();
 
@@ -144,13 +146,15 @@ const SelectionTool: React.FC<{
             if (!isSelectionMode) return;
             map.dragging.enable();
             setStartPos(null);
+            // Revert to point mode after selection is complete
+            onSelectionModeChange?.(false);
         }
     });
 
     return null;
 };
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBox, onSelectionChange }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBox, onSelectionChange, onSelectionModeChange }) => {
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isSelectionMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
@@ -186,6 +190,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 <SelectionTool
                     isSelectionMode={isSelectionMode}
                     onSelectionChange={onSelectionChange}
+                    onSelectionModeChange={onSelectionModeChange}
                 />
 
                 {/* Visible Selection Rectangle */}
