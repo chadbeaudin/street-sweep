@@ -10,6 +10,7 @@ export interface OSMWay {
     type: 'way';
     id: number;
     nodes: number[];
+    geometry?: { lat: number; lon: number }[];
     tags?: Record<string, string>;
 }
 

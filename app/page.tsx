@@ -2,7 +2,7 @@
 
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Loader2, Undo2, Redo2 } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -21,15 +21,22 @@ export default function Home() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
-    const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number }[]>([]);
-    const [manualRoute, setManualRoute] = useState<[number, number][]>([]);
-    const [history, setHistory] = useState<{ points: { lat: number; lon: number }[], route: [number, number][] }[]>([]);
+    const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
+    const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
+    const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
+    const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
-    const pointsRef = useRef<{ lat: number; lon: number }[]>([]);
-    const manualRouteRef = useRef<[number, number][]>([]);
-    const historyRef = useRef<{ points: { lat: number; lon: number }[], route: [number, number][] }[]>([]);
+    const pointsRef = useRef<{ lat: number; lon: number; id: string }[]>([]);
+    const manualRouteRef = useRef<[number, number][][]>([]);
+    const historyRef = useRef<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
     const historyIndexRef = useRef(-1);
+    const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
+
+    // Keep bboxRef in sync with state for use in stable callbacks
+    useEffect(() => {
+        bboxRef.current = bbox;
+    }, [bbox]);
 
     useEffect(() => {
         fetch('/api/strava/activities')
@@ -42,7 +49,39 @@ export default function Home() {
             .catch(err => console.error('Failed to fetch Strava roads:', err));
     }, []);
 
-    const handleGenerate = async () => {
+    const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
+        setBbox(prev => {
+            if (prev &&
+                Math.abs(prev.south - newBbox.south) < 0.000001 &&
+                Math.abs(prev.north - newBbox.north) < 0.000001 &&
+                Math.abs(prev.west - newBbox.west) < 0.000001 &&
+                Math.abs(prev.east - newBbox.east) < 0.000001) {
+                return prev;
+            }
+            return newBbox;
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!bbox) return;
+
+        const timer = setTimeout(() => {
+            fetch('/api/roads', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bbox })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.roads) setAllRoads(data.roads);
+                })
+                .catch(err => console.error('Failed to fetch roads:', err));
+        }, 500);
+
+        return () => clearTimeout(timer);
+    }, [bbox]);
+
+    const handleGenerate = useCallback(async () => {
         if (!bbox) {
             setError({ message: "Please move the map to set an area." });
             return;
@@ -53,7 +92,21 @@ export default function Home() {
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bbox, riddenRoads: stravaRoads, selectedPoints, manualRoute })
+                body: JSON.stringify({
+                    bbox,
+                    riddenRoads: stravaRoads,
+                    selectedPoints,
+                    manualRoute: manualRoute.reduce((acc, seg, i) => {
+                        if (i === 0) return seg;
+                        // Avoid duplicate points at segment boundaries
+                        const lastPoint = acc[acc.length - 1];
+                        const firstPoint = seg[0];
+                        if (lastPoint && firstPoint && lastPoint[0] === firstPoint[0] && lastPoint[1] === firstPoint[1]) {
+                            return [...acc, ...seg.slice(1)];
+                        }
+                        return [...acc, ...seg];
+                    }, [] as [number, number][])
+                })
             });
 
             const data = await res.json();
@@ -88,7 +141,7 @@ export default function Home() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [bbox, stravaRoads, selectedPoints, manualRoute]);
 
     const downloadGPX = () => {
         if (!route) return;
@@ -115,12 +168,25 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         URL.revokeObjectURL(url);
     };
 
-    const handlePointAdd = (point: { lat: number; lon: number }) => {
-        if (!bbox) return;
+    const isDraggingRef = useRef(false);
+
+    const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
+        if (isDraggingRef.current) return;
+
+        const currentBbox = bboxRef.current;
+        if (!currentBbox) return;
+
+        // De-duplicate: don't add point if it's too close to the last one (prevents drag-ghosting)
+        if (pointsRef.current.length > 0) {
+            const last = pointsRef.current[pointsRef.current.length - 1];
+            const dist = Math.sqrt(Math.pow(last.lat - point.lat, 2) + Math.pow(last.lon - point.lon, 2));
+            if (dist < 0.0001) return; // Roughly 10 meters
+        }
 
         // 1. Optimistic Update: Add raw point immediately for "insta-drop" feel
+        const newPoint = { ...point, id: Math.random().toString(36).substr(2, 9) };
         const tempIdx = pointsRef.current.length;
-        pointsRef.current.push(point);
+        pointsRef.current.push(newPoint);
         setSelectedPoints([...pointsRef.current]);
 
         clickChainRef.current = clickChainRef.current.then(async () => {
@@ -131,7 +197,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 const stepRes = await fetch('/api/step', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ point, lastPoint, bbox })
+                    body: JSON.stringify({ point, lastPoint, bbox: currentBbox })
                 });
                 const stepData = await stepRes.json();
 
@@ -140,42 +206,31 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     return;
                 }
 
-                const snappedPoint = stepData.snappedPoint;
+                const snappedPoint = { ...stepData.snappedPoint, id: newPoint.id };
 
                 // 2. Correct Update: Replace raw point with snapped point in ref and state
                 pointsRef.current[tempIdx] = snappedPoint;
                 setSelectedPoints([...pointsRef.current]);
 
-                let finalRoute = manualRouteRef.current;
+                let currentSegments = [...manualRouteRef.current];
                 if (stepData.path && stepData.path.length > 0) {
-                    const newCoords = stepData.path;
-                    if (finalRoute.length > 0) {
-                        const lastPrev = finalRoute[finalRoute.length - 1];
-                        const firstNew = newCoords[0];
-                        if (lastPrev[0] === firstNew[0] && lastPrev[1] === firstNew[1]) {
-                            finalRoute = [...finalRoute, ...newCoords.slice(1)];
-                        } else {
-                            finalRoute = [...finalRoute, ...newCoords];
-                        }
-                    } else {
-                        finalRoute = [...newCoords];
-                    }
+                    currentSegments.push(stepData.path);
                 } else if (!lastPoint) {
-                    // Start of manual route
-                    finalRoute = [[snappedPoint.lon, snappedPoint.lat]];
+                    // Start of manual route (technically no segment yet, or empty segment)
+                    // We don't add a segment for the first point
                 }
 
                 // Update refs (source of truth for subsequent clicks)
-                manualRouteRef.current = finalRoute;
+                manualRouteRef.current = currentSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: finalRoute };
+                const snapshot = { points: [...pointsRef.current], route: [...currentSegments] };
                 // Truncate history based on current index (for redo safety)
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
 
                 // Sync to React state for rendering
-                setManualRoute(finalRoute);
+                setManualRoute(currentSegments);
                 setHistory(historyRef.current);
                 setHistoryIndex(historyIndexRef.current);
 
@@ -183,9 +238,122 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 console.error('Failed to process click step:', err);
             }
         });
-    };
+    }, []);
 
-    const handleUndo = () => {
+    const handlePointMove = useCallback((idx: number, newLatLng: { lat: number; lon: number }) => {
+        const currentBbox = bboxRef.current;
+        if (!currentBbox) return;
+
+        // 1. Optimistic Update: Update the waypoint immediately
+        const newPoints = [...pointsRef.current];
+        const pointId = newPoints[idx].id;
+        newPoints[idx] = { ...newLatLng, id: pointId };
+        pointsRef.current = newPoints;
+        setSelectedPoints([...newPoints]);
+
+        clickChainRef.current = clickChainRef.current.then(async () => {
+            try {
+                // Determine affected segments based on the current state of points
+                const affectedIndices = [];
+                if (idx > 0) affectedIndices.push(idx - 1); // prev -> moved
+                if (idx < pointsRef.current.length - 1) affectedIndices.push(idx); // moved -> next
+
+                const updatedSegments = [...manualRouteRef.current];
+
+                // Snap the moved point and fetch affected segments
+                const moveRes = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        point: newLatLng,
+                        bbox: currentBbox
+                    })
+                });
+                const moveData = await moveRes.json();
+                if (moveData.error) return;
+
+                const snappedMovedPoint = { ...moveData.snappedPoint, id: pointId };
+
+                // Use the latest points from the ref to avoid race conditions with point additions
+                const newestPoints = [...pointsRef.current];
+                const pointIdxInRef = newestPoints.findIndex(p => p.id === pointId);
+                if (pointIdxInRef !== -1) {
+                    newestPoints[pointIdxInRef] = snappedMovedPoint;
+                    pointsRef.current = newestPoints;
+                    setSelectedPoints([...newestPoints]);
+                } else {
+                    return; // Point was removed while waiting
+                }
+
+                // Fetch new paths for affected segments
+                for (const segmentIdx of affectedIndices) {
+                    const p1 = newestPoints[segmentIdx];
+                    const p2 = newestPoints[segmentIdx + 1];
+
+                    if (!p1 || !p2) continue;
+
+                    const stepRes = await fetch('/api/step', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            point: p2,
+                            lastPoint: p1,
+                            bbox: currentBbox
+                        })
+                    });
+                    const stepData = await stepRes.json();
+                    if (stepData.path) {
+                        updatedSegments[segmentIdx] = stepData.path;
+                    }
+                }
+
+                manualRouteRef.current = updatedSegments;
+
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments] };
+                const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+                historyRef.current = [...newHistory, snapshot];
+                historyIndexRef.current = historyRef.current.length - 1;
+
+                setManualRoute(updatedSegments);
+                setHistory(historyRef.current);
+                setHistoryIndex(historyIndexRef.current);
+
+            } catch (err) {
+                console.error('Failed to move point:', err);
+            }
+        });
+    }, []);
+
+    const handlePointMoveStart = useCallback(() => {
+        isDraggingRef.current = true;
+    }, []);
+
+    const handlePointMoveEnd = useCallback(() => {
+        // Delay resetting the flag to ensure any following click events are ignored
+        setTimeout(() => {
+            isDraggingRef.current = false;
+        }, 500); // Increased timeout to be safer
+    }, []);
+
+    const clearPoints = useCallback(() => {
+        // Reset refs
+        pointsRef.current = [];
+        manualRouteRef.current = [];
+        historyRef.current = [];
+        historyIndexRef.current = -1;
+        clickChainRef.current = Promise.resolve();
+
+        // Reset state
+        setSelectedPoints([]);
+        setManualRoute([]);
+        setHistory([]);
+        setHistoryIndex(-1);
+        setRoute(null);
+        setElevationData(null);
+        setTotalDistance(null);
+    }, []);
+
+    const handleUndo = useCallback(() => {
         if (historyIndexRef.current > 0) {
             const prevIndex = historyIndexRef.current - 1;
             const snapshot = historyRef.current[prevIndex];
@@ -202,9 +370,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         } else if (historyIndexRef.current === 0) {
             clearPoints();
         }
-    };
-
-    const handleRedo = () => {
+    }, [clearPoints]);
+    const handleRedo = useCallback(() => {
         if (historyIndexRef.current < historyRef.current.length - 1) {
             const nextIndex = historyIndexRef.current + 1;
             const snapshot = historyRef.current[nextIndex];
@@ -219,25 +386,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             setManualRoute(manualRouteRef.current);
             setHistoryIndex(nextIndex);
         }
-    };
+    }, []);
 
-    const clearPoints = () => {
-        // Reset refs
-        pointsRef.current = [];
-        manualRouteRef.current = [];
-        historyRef.current = [];
-        historyIndexRef.current = -1;
-        clickChainRef.current = Promise.resolve();
-
-        // Reset state
-        setSelectedPoints([]);
-        setManualRoute([]);
-        setHistory([]);
-        setHistoryIndex(-1);
-        setRoute(null);
-        setElevationData(null);
-        setTotalDistance(null);
-    };
 
     return (
         <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
@@ -323,13 +473,17 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             <div className="flex-1 flex flex-col relative min-h-0">
                 <Map
                     bbox={bbox}
-                    onBBoxChange={setBbox}
+                    onBBoxChange={handleBBoxChange}
                     route={route}
                     hoveredPoint={hoveredPoint}
                     stravaRoads={stravaRoads}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
+                    onPointMove={handlePointMove}
+                    onPointMoveStart={handlePointMoveStart}
+                    onPointMoveEnd={handlePointMoveEnd}
                     manualRoute={manualRoute}
+                    allRoads={allRoads}
                 />
 
                 {elevationData && (

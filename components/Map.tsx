@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -20,14 +20,20 @@ interface MapProps {
     route: [number, number, number?][] | null;
     hoveredPoint: { lat: number; lon: number } | null;
     stravaRoads: [number, number][][] | null;
-    selectedPoints: { lat: number; lon: number }[];
+    selectedPoints: { lat: number; lon: number; id: string }[];
     onPointAdd: (point: { lat: number; lon: number }) => void;
-    manualRoute: [number, number][];
+    onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
+    onPointMoveStart?: () => void;
+    onPointMoveEnd?: () => void;
+    manualRoute: [number, number][][];
+    allRoads: [number, number][][];
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
-    const map = useMapEvents({
-        moveend: () => {
+    const map = useMap();
+
+    useEffect(() => {
+        const handleMove = () => {
             const bounds = map.getBounds();
             onBBoxChange({
                 south: bounds.getSouth(),
@@ -35,11 +41,20 @@ function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => 
                 north: bounds.getNorth(),
                 east: bounds.getEast(),
             });
-        },
-        click: (e) => {
-            onMapClick(e.latlng);
-        }
-    });
+        };
+
+        // Initial fetch
+        handleMove();
+
+        map.on('moveend', handleMove);
+        map.on('click', (e) => onMapClick(e.latlng));
+
+        return () => {
+            map.off('moveend', handleMove);
+            map.off('click');
+        };
+    }, [map, onBBoxChange, onMapClick]);
+
     return null;
 }
 
@@ -82,7 +97,23 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
     );
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, manualRoute }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads }) => {
+    const handleMapClick = useCallback((latlng: L.LatLng) => {
+        onPointAdd({ lat: latlng.lat, lon: latlng.lng });
+    }, [onPointAdd]);
+
+    const flatManualRoute = React.useMemo(() => {
+        return manualRoute.reduce((acc, seg, i) => {
+            if (i === 0) return seg;
+            const lastPoint = acc[acc.length - 1];
+            const firstPoint = seg[0];
+            if (lastPoint && firstPoint && lastPoint[0] === firstPoint[0] && lastPoint[1] === firstPoint[1]) {
+                return [...acc, ...seg.slice(1)];
+            }
+            return [...acc, ...seg];
+        }, [] as [number, number][]);
+    }, [manualRoute]);
+
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
@@ -94,13 +125,14 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
-                <MapEvents onBBoxChange={onBBoxChange} onMapClick={(latlng) => onPointAdd({ lat: latlng.lat, lon: latlng.lng })} />
+                <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
                 <RecenterMap route={route} />
 
+
                 {/* Manual route from road-snapped coordinates */}
-                {manualRoute.length > 1 && (
+                {flatManualRoute.length > 1 && (
                     <Polyline
-                        positions={manualRoute.map(p => [p[1], p[0]])}
+                        positions={flatManualRoute.map(p => [p[1], p[0]])}
                         color="#6366F1" // indigo-500
                         weight={3}
                         dashArray="5, 8"
@@ -130,9 +162,30 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
                     return (
                         <Marker
-                            key={`point-${idx}`}
+                            key={point.id}
                             position={[point.lat, point.lon]}
                             icon={markerIcon}
+                            draggable={true}
+                            bubblingMouseEvents={false}
+                            eventHandlers={{
+                                dragstart: (e) => {
+                                    L.DomEvent.stopPropagation(e);
+                                    onPointMoveStart?.();
+                                },
+                                dragend: (e) => {
+                                    L.DomEvent.stopPropagation(e as any);
+                                    const marker = e.target;
+                                    const position = marker.getLatLng();
+                                    onPointMove(idx, { lat: position.lat, lon: position.lng });
+                                    onPointMoveEnd?.();
+                                },
+                                click: (e) => {
+                                    L.DomEvent.stopPropagation(e);
+                                },
+                                mousedown: (e) => {
+                                    L.DomEvent.stopPropagation(e);
+                                },
+                            }}
                         />
                     );
                 })}
@@ -157,6 +210,23 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 ))}
 
                 <HoverMarker point={hoveredPoint} />
+
+                {/* Invisible interactive layer for cursor and snapping - LAST to ensure hover priority */}
+                {allRoads && allRoads.map((road, idx) => (
+                    <Polyline
+                        key={`road-hitbox-${idx}`}
+                        positions={road as [number, number][]}
+                        pathOptions={{
+                            color: '#000',
+                            weight: 20,
+                            opacity: 0.0001,
+                            interactive: true
+                        }}
+                        eventHandlers={{
+                            click: (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
+                        }}
+                    />
+                ))}
             </MapContainer>
 
             <style jsx global>{`
@@ -164,6 +234,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     0% { transform: scale(1); opacity: 1; }
                     50% { transform: scale(1.3); opacity: 0.8; }
                     100% { transform: scale(1); opacity: 1; }
+                }
+                .leaflet-container {
+                    cursor: grab;
+                }
+                .leaflet-interactive {
+                    cursor: crosshair !important;
                 }
             `}</style>
         </div>

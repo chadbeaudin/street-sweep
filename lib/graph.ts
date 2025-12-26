@@ -48,56 +48,52 @@ export class StreetGraph {
     }
 
     public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null) {
-        const nodesMap = new Map<number, OSMNode>();
-
-        // First pass: Index nodes
-        for (const elem of data.elements) {
-            if (elem.type === 'node') {
-                nodesMap.set(elem.id, elem);
-                this.graph.addNode(elem.id.toString(), {
-                    lat: elem.lat,
-                    lon: elem.lon,
-                    degree: 0
-                });
-            }
-        }
-
-        // Second pass: Add edges from ways
+        // Iterate through all elements that are ways
         for (const elem of data.elements) {
             if (elem.type === 'way') {
                 const way = elem as OSMWay;
+                if (!way.geometry || !way.nodes) continue;
+
                 for (let i = 0; i < way.nodes.length - 1; i++) {
-                    const u = way.nodes[i].toString();
-                    const v = way.nodes[i + 1].toString();
+                    const uId = way.nodes[i];
+                    const vId = way.nodes[i + 1];
+                    const uIdStr = uId.toString();
+                    const vIdStr = vId.toString();
 
-                    if (this.graph.hasNode(u) && this.graph.hasNode(v)) {
-                        const uNode = nodesMap.get(way.nodes[i]);
-                        const vNode = nodesMap.get(way.nodes[i + 1]);
+                    const uCoord = way.geometry[i];
+                    const vCoord = way.geometry[i + 1];
 
-                        if (uNode && vNode) {
-                            const dist = this.haversine(uNode.lat, uNode.lon, vNode.lat, vNode.lon);
-                            const isRidden = this.checkIfRidden(uNode, vNode, riddenRoads);
-
-                            this.graph.addLink(u, v, {
-                                id: way.id.toString(),
-                                weight: dist,
-                                name: way.tags?.name,
-                                isRidden
-                            });
-                            this.graph.addLink(v, u, {
-                                id: way.id.toString(),
-                                weight: dist,
-                                name: way.tags?.name,
-                                isRidden
-                            });
+                    if (uCoord && vCoord) {
+                        // Ensure nodes exist in the graph
+                        if (!this.graph.hasNode(uIdStr)) {
+                            this.graph.addNode(uIdStr, { lat: uCoord.lat, lon: uCoord.lon, degree: 0 });
                         }
+                        if (!this.graph.hasNode(vIdStr)) {
+                            this.graph.addNode(vIdStr, { lat: vCoord.lat, lon: vCoord.lon, degree: 0 });
+                        }
+
+                        const dist = this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon);
+                        const isRidden = this.checkIfRidden(uCoord, vCoord, riddenRoads);
+
+                        this.graph.addLink(uIdStr, vIdStr, {
+                            id: way.id.toString(),
+                            weight: dist,
+                            name: way.tags?.name,
+                            isRidden
+                        });
+                        this.graph.addLink(vIdStr, uIdStr, {
+                            id: way.id.toString(),
+                            weight: dist,
+                            name: way.tags?.name,
+                            isRidden
+                        });
                     }
                 }
             }
         }
     }
 
-    private checkIfRidden(u: OSMNode, v: OSMNode, riddenRoads: [number, number][][] | null): boolean {
+    private checkIfRidden(u: { lat: number, lon: number }, v: { lat: number, lon: number }, riddenRoads: [number, number][][] | null): boolean {
         if (!riddenRoads || riddenRoads.length === 0) return false;
 
         const thresholdMeters = 20;
