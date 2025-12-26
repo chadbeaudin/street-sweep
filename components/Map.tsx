@@ -106,9 +106,28 @@ const SelectionTool: React.FC<{
     const [startPos, setStartPos] = React.useState<L.LatLng | null>(null);
     const map = useMap();
 
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                if (startPos) {
+                    setStartPos(null);
+                    onSelectionChange(null);
+                    map.dragging.enable();
+                } else {
+                    // Even if not dragging, let's clear the selection if it exists
+                    onSelectionChange(null);
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [startPos, map, onSelectionChange]);
+
     useMapEvents({
         mousedown: (e) => {
             if (!isSelectionMode) return;
+            // Prevent dragging the map while selecting
             map.dragging.disable();
             setStartPos(e.latlng);
         },

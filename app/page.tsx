@@ -147,7 +147,7 @@ export default function Home() {
         } finally {
             setLoading(false);
         }
-    }, [bbox, stravaRoads, selectedPoints, manualRoute]);
+    }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBox]);
 
     const downloadGPX = () => {
         if (!route) return;
@@ -419,8 +419,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         <button
                             onClick={() => setIsSelectionMode(!isSelectionMode)}
                             className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${isSelectionMode
-                                    ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                ? 'bg-amber-100 text-amber-700 border border-amber-200'
+                                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
                                 }`}
                             title={isSelectionMode ? "Switch to Point mode" : "Switch to Area Select mode"}
                         >
