@@ -2,7 +2,7 @@
 
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Loader2, Undo2, Redo2 } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -401,6 +401,15 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
     }, []);
 
+    const totalElevationGain = useMemo(() => {
+        if (!elevationData || elevationData.length < 2) return 0;
+        let gain = 0;
+        for (let i = 1; i < elevationData.length; i++) {
+            const diff = elevationData[i].elevation - elevationData[i - 1].elevation;
+            if (diff > 0) gain += diff;
+        }
+        return Math.round(gain);
+    }, [elevationData]);
 
     return (
         <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
@@ -454,6 +463,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-md text-sm font-medium text-indigo-700 flex items-center gap-2">
                                 <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
                                 {totalDistance} mi
+                            </div>
+                            <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-md text-sm font-medium text-emerald-700 flex items-center gap-2" title="Total elevation gain">
+                                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                </svg>
+                                {totalElevationGain} ft
                             </div>
                             <button
                                 onClick={downloadGPX}
