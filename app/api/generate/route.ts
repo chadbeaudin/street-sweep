@@ -14,11 +14,38 @@ export async function POST(request: Request) {
         }
 
         const BUFFER = 0.005; // ~500m buffer
+
+        let minLat = bbox.south;
+        let maxLat = bbox.north;
+        let minLon = bbox.west;
+        let maxLon = bbox.east;
+
+        // Expand to include all selected waypoints
+        if (selectedPoints && selectedPoints.length > 0) {
+            selectedPoints.forEach((p: any) => {
+                minLat = Math.min(minLat, p.lat);
+                maxLat = Math.max(maxLat, p.lat);
+                minLon = Math.min(minLon, p.lon);
+                maxLon = Math.max(maxLon, p.lon);
+            });
+        }
+
+        // Expand to include all manual route points
+        if (manualRoute && manualRoute.length > 0) {
+            manualRoute.forEach((p: [number, number]) => {
+                // p[0] is lon, p[1] is lat
+                minLat = Math.min(minLat, p[1]);
+                maxLat = Math.max(maxLat, p[1]);
+                minLon = Math.min(minLon, p[0]);
+                maxLon = Math.max(maxLon, p[0]);
+            });
+        }
+
         const bufferedBbox = {
-            south: bbox.south - BUFFER,
-            west: bbox.west - BUFFER,
-            north: bbox.north + BUFFER,
-            east: bbox.east + BUFFER
+            south: minLat - BUFFER,
+            west: minLon - BUFFER,
+            north: maxLat + BUFFER,
+            east: maxLon + BUFFER
         };
 
         console.log(`${ts()} Fetching OSM data for buffered bbox:`, bufferedBbox);

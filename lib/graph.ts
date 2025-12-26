@@ -363,13 +363,12 @@ export class StreetGraph {
                     const u = stack.pop()!;
                     component.push(u);
                     this.graph.getNode(u)?.links?.forEach((link: any) => {
-                        if (manualRoute && !allowedLinks.has(link.id)) return;
-                        if (!link.data.isRidden || (manualRoute && allowedLinks.has(link.id))) {
-                            const v = (link.fromId === u ? link.toId : link.fromId).toString();
-                            if (!visitedNodes.has(v)) {
-                                visitedNodes.add(v);
-                                stack.push(v);
-                            }
+                        // We allow traversal across ANY link to discover connectivity, 
+                        // even if we only "require" some of them.
+                        const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                        if (!visitedNodes.has(v)) {
+                            visitedNodes.add(v);
+                            stack.push(v);
                         }
                     });
                 }
@@ -386,7 +385,8 @@ export class StreetGraph {
             let bestResult: any = null;
             let minW = Infinity;
             for (let j = 0; j < Math.min(island.length, 5); j++) {
-                const res = this.findClosestTarget(island[j], reachableNodes, manualRoute ? allowedLinks : undefined);
+                // IMPORTANT: When connecting islands, we allow using ANY link in the graph (not just allowedLinks)
+                const res = this.findClosestTarget(island[j], reachableNodes);
                 if (res) {
                     const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
                     if (w < minW) { minW = w; bestResult = res; }
@@ -429,7 +429,8 @@ export class StreetGraph {
             const u = Array.from(remainingOdd)[0];
             const targets = new Set(remainingOdd);
             targets.delete(u);
-            const res = this.findClosestTarget(u, targets, manualRoute ? allowedLinks : undefined);
+            // Allow matching across ANY link
+            const res = this.findClosestTarget(u, targets);
             if (res) {
                 remainingOdd.delete(u);
                 remainingOdd.delete(res.targetId);
