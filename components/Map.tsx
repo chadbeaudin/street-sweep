@@ -213,6 +213,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 )}
 
                 {/* Strava roads - visual background */}
+                {/* Visual styling: High opacity to look like solid coverage, not heatmap */}
                 {stravaRoads && stravaRoads.map((road, idx) => (
                     <Polyline
                         key={`strava-${idx}`}
@@ -255,7 +256,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         pathOptions={{
                             color: '#3B82F6',
                             weight: 15,
-                            opacity: 0.01,
+                            opacity: 0, // Totally invisible, but interactive
                             interactive: true,
                             bubblingMouseEvents: true,
                             className: 'road-hitbox'
