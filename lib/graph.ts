@@ -75,6 +75,12 @@ export class StreetGraph {
                 if (!way.nodes) continue;
 
                 const highway = way.tags?.highway;
+
+                // SAFETY: Always exclude interstates/trunks from the graph entirely
+                if (highway === 'motorway' || highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link') {
+                    continue;
+                }
+
                 const surface = way.tags?.surface;
                 let isAvoided = false;
 

@@ -26,6 +26,12 @@ export async function POST(req: NextRequest) {
                 const way = elem as OSMWay;
                 if (!way.geometry) continue;
 
+                // SAFETY: Filter out interstates/highways to prevent snapping to them
+                const highway = way.tags?.highway;
+                if (highway === 'motorway' || highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link') {
+                    continue;
+                }
+
                 const path: [number, number][] = way.geometry.map(p => [p.lat, p.lon]);
                 if (path.length > 1) {
                     roads.push(path);
