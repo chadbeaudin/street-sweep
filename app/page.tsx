@@ -441,6 +441,17 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </svg>
                             {isSelectionMode ? 'Area Selection' : 'Point Mode'}
                         </button>
+                        {selectionBox && (
+                            <button
+                                onClick={() => setSelectionBox(null)}
+                                className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors"
+                                title="Clear selection area"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                            </button>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
