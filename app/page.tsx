@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -34,6 +34,7 @@ export default function Home() {
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectionBox, setSelectionBox] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
+    const [isEraserMode, setIsEraserMode] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number; id: string }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
@@ -454,6 +455,23 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         )}
                     </div>
 
+                    {/* Eraser Tool */}
+                    {route && (
+                        <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                            <button
+                                onClick={() => setIsEraserMode(!isEraserMode)}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${isEraserMode
+                                    ? 'bg-red-100 text-red-700 border border-red-200'
+                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                title={isEraserMode ? "Exit Eraser mode" : "Erase route segments"}
+                            >
+                                <Eraser className="w-4 h-4" />
+                                {isEraserMode && 'Eraser Active'}
+                            </button>
+                        </div>
+                    )}
+
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <div className="relative">
                             <button
@@ -611,6 +629,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     selectionBox={selectionBox}
                     onSelectionChange={setSelectionBox}
                     onSelectionModeChange={setIsSelectionMode}
+                    isEraserMode={isEraserMode}
+                    onRouteUpdate={setRoute}
                 />
 
                 {elevationData && (

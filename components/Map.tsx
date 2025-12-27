@@ -31,6 +31,8 @@ interface MapProps {
     selectionBox: { north: number; south: number; east: number; west: number } | null;
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
     onSelectionModeChange?: (isSelectionMode: boolean) => void;
+    isEraserMode?: boolean;
+    onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -156,11 +158,117 @@ const SelectionTool: React.FC<{
     return null;
 };
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBox, onSelectionChange, onSelectionModeChange }) => {
+// Helper function to calculate bearing between two points
+function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const lat1Rad = lat1 * Math.PI / 180;
+    const lat2Rad = lat2 * Math.PI / 180;
+
+    const y = Math.sin(dLon) * Math.cos(lat2Rad);
+    const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+
+    let bearing = Math.atan2(y, x) * 180 / Math.PI;
+    return (bearing + 360) % 360; // Normalize to 0-360
+}
+
+// Helper function to find junctions (significant direction changes)
+function findNearestJunctions(route: [number, number, number?, number?][], startIndex: number): [number, number] {
+    const BEARING_THRESHOLD = 45; // degrees
+    const MIN_SEGMENT_LENGTH = 3; // minimum points before we look for a junction
+
+    let leftJunction = 0;
+    let rightJunction = route.length - 1;
+
+    // Scan left
+    for (let i = startIndex - 1; i >= MIN_SEGMENT_LENGTH; i--) {
+        const prevBearing = calculateBearing(route[i - 1][1], route[i - 1][0], route[i][1], route[i][0]);
+        const currBearing = calculateBearing(route[i][1], route[i][0], route[i + 1][1], route[i + 1][0]);
+        const bearingChange = Math.abs(currBearing - prevBearing);
+        const normalizedChange = Math.min(bearingChange, 360 - bearingChange);
+
+        if (normalizedChange > BEARING_THRESHOLD) {
+            leftJunction = i;
+            break;
+        }
+    }
+
+    // Scan right  
+    for (let i = startIndex + 1; i < route.length - MIN_SEGMENT_LENGTH; i++) {
+        const prevBearing = calculateBearing(route[i - 1][1], route[i - 1][0], route[i][1], route[i][0]);
+        const currBearing = calculateBearing(route[i][1], route[i][0], route[i + 1][1], route[i + 1][0]);
+        const bearingChange = Math.abs(currBearing - prevBearing);
+        const normalizedChange = Math.min(bearingChange, 360 - bearingChange);
+
+        if (normalizedChange > BEARING_THRESHOLD) {
+            rightJunction = i;
+            break;
+        }
+    }
+
+    return [leftJunction, rightJunction];
+}
+
+function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?, number?][], onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void }) {
+    const map = useMap();
+
+    React.useEffect(() => {
+        if (!route || !onRouteUpdate) return;
+
+        const handleClick = (e: L.LeafletMouseEvent) => {
+            const clickPoint = e.latlng;
+
+            // Find closest point on route
+            let closestIndex = 0;
+            let minDistance = Infinity;
+
+            route.forEach((p, idx) => {
+                const pointLatLng = L.latLng(p[1], p[0]);
+                const dist = clickPoint.distanceTo(pointLatLng);
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestIndex = idx;
+                }
+            });
+
+            // Only erase if click was reasonably close to the route (within 50 pixels)
+            const clickPointPx = map.latLngToContainerPoint(clickPoint);
+            const routePointPx = map.latLngToContainerPoint(L.latLng(route[closestIndex][1], route[closestIndex][0]));
+            const pixelDist = clickPointPx.distanceTo(routePointPx);
+
+            if (pixelDist > 50) return;
+
+            // Find junctions
+            const [leftJunction, rightJunction] = findNearestJunctions(route, closestIndex);
+
+            // Remove segment between junctions
+            const newRoute = [
+                ...route.slice(0, leftJunction + 1),
+                ...route.slice(rightJunction)
+            ];
+
+            onRouteUpdate(newRoute.length > 1 ? newRoute : null);
+        };
+
+        map.on('click', handleClick);
+
+        // Change cursor
+        const container = map.getContainer();
+        container.style.cursor = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\'><path fill=\'%23dc2626\' stroke=\'white\' stroke-width=\'1\' d=\'M13 3l3.293 3.293-7 7 1.414 1.414 7-7L21 11V3z\'/><path fill=\'%23dc2626\' stroke=\'white\' stroke-width=\'1\' d=\'M19 14l-4.5 6.5-2.5-2.5-5.5 5.5H3l6.5-6.5-2.5-2.5L13 8z\'/></svg>") 12 12, auto';
+
+        return () => {
+            map.off('click', handleClick);
+            container.style.cursor = '';
+        };
+    }, [map, route, onRouteUpdate]);
+
+    return null;
+}
+
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBox, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
     const handleMapClick = useCallback((latlng: L.LatLng) => {
-        if (isSelectionMode) return;
+        if (isSelectionMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
-    }, [onPointAdd, isSelectionMode]);
+    }, [onPointAdd, isSelectionMode, isEraserMode]);
 
     const flatManualRoute = React.useMemo(() => {
         return manualRoute.reduce((acc, seg, i) => {
@@ -240,6 +348,11 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onSelectionModeChange={onSelectionModeChange}
                 />
 
+                {/* Eraser Tool */}
+                {isEraserMode && route && (
+                    <EraserTool route={route} onRouteUpdate={onRouteUpdate} />
+                )}
+
                 {/* Visible Selection Rectangle */}
                 {selectionBox && (
                     <Rectangle
@@ -316,12 +429,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             color: '#3B82F6',
                             weight: 15,
                             opacity: 0, // Totally invisible, but interactive
-                            interactive: true,
+                            interactive: !isEraserMode,
                             bubblingMouseEvents: true,
                             className: 'road-hitbox'
                         }}
                         eventHandlers={{
-                            click: (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
+                            click: isEraserMode ? undefined : (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
                         }}
                     />
                 ))}
