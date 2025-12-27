@@ -19,6 +19,14 @@ interface EdgeData {
     name?: string;
     isVirtual?: boolean;
     isRidden?: boolean;
+    isAvoided?: boolean;
+    highway?: string;
+}
+
+export interface RoutingOptions {
+    avoidGravel?: boolean;
+    avoidHighways?: boolean;
+    avoidTrails?: boolean;
 }
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -29,8 +37,9 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 export class StreetGraph {
     graph: Graph<NodeData, EdgeData>;
 
-    public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse): StreetGraph {
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}`;
+    public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions): StreetGraph {
+        const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}`;
         const now = Date.now();
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {
@@ -38,7 +47,7 @@ export class StreetGraph {
             return cached.graph;
         }
         const newGraph = new StreetGraph();
-        newGraph.buildFromOSM(data);
+        newGraph.buildFromOSM(data, riddenRoads, options);
         GRAPH_CACHE.set(key, { graph: newGraph, timestamp: now });
         return newGraph;
     }
@@ -47,7 +56,8 @@ export class StreetGraph {
         this.graph = createGraph({ multigraph: true });
     }
 
-    public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null) {
+    public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions) {
+        console.log(`${ts()} Building graph with options:`, options);
         const nodesMap = new Map<number, { lat: number, lon: number }>();
 
         // 1. First pass: Collect any top-level node elements (for backward compatibility/tests)
@@ -63,6 +73,27 @@ export class StreetGraph {
             if (elem.type === 'way') {
                 const way = elem as OSMWay;
                 if (!way.nodes) continue;
+
+                const highway = way.tags?.highway;
+                const surface = way.tags?.surface;
+                let isAvoided = false;
+
+                // Determine if this way should be avoided
+                const majorHighways = ['motorway', 'trunk', 'primary', 'secondary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link'];
+                if (options?.avoidHighways && majorHighways.includes(highway || '')) {
+                    isAvoided = true;
+                }
+                if (!isAvoided && options?.avoidTrails && ['path', 'track', 'footway', 'cycleway'].includes(highway || '')) {
+                    isAvoided = true;
+                }
+                if (!isAvoided && options?.avoidGravel) {
+                    const gravelSurfaces = ['gravel', 'dirt', 'unpaved', 'sand', 'compacted', 'fine_gravel', 'earth', 'ground', 'woodchips', 'grass', 'mud'];
+                    if (surface && gravelSurfaces.includes(surface)) {
+                        isAvoided = true;
+                    } else if (highway === 'track' && !surface) {
+                        isAvoided = true;
+                    }
+                }
 
                 for (let i = 0; i < way.nodes.length - 1; i++) {
                     const uId = way.nodes[i];
@@ -83,20 +114,27 @@ export class StreetGraph {
                             this.graph.addNode(vIdStr, { lat: vCoord.lat, lon: vCoord.lon, degree: 0 });
                         }
 
-                        const dist = this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon);
+                        let dist = this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon);
+                        // Multiply distance for avoided roads to discourage their use in routing
+                        if (isAvoided) {
+                            dist *= 100;
+                        }
                         const isRidden = this.checkIfRidden(uCoord, vCoord, riddenRoads);
 
                         this.graph.addLink(uIdStr, vIdStr, {
                             id: way.id.toString(),
                             weight: dist,
                             name: way.tags?.name,
-                            isRidden
+                            highway: highway, // Store highway type for debugging/filtering
+                            isRidden,
+                            isAvoided
                         });
                         this.graph.addLink(vIdStr, uIdStr, {
                             id: way.id.toString(),
                             weight: dist,
                             name: way.tags?.name,
-                            isRidden
+                            isRidden,
+                            isAvoided
                         });
                     }
                 }
@@ -309,20 +347,24 @@ export class StreetGraph {
     }
 
     public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBox?: { north: number, south: number, east: number, west: number } | null): { lat: number, lon: number }[] {
-        console.log(`${ts()} Starting RPP Solver...`);
+        console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBox=${!!selectionBox}`);
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
         const unriddenNodes = new Set<string>();
         const allowedLinks = new Set<string>();
 
         if (manualRoute && manualRoute.length > 1) {
-            console.log(`${ts()} Constraining routing to ${manualRoute.length} manual points.`);
+            console.log(`${ts()} Identifying mandatory segments from ${manualRoute.length} manual points.`);
             for (let i = 0; i < manualRoute.length - 1; i++) {
                 const p1 = manualRoute[i];
                 const p2 = manualRoute[i + 1];
+                // Points are [lon, lat]
                 const u = this.findClosestNode(p1[1], p1[0]);
                 const v = this.findClosestNode(p2[1], p2[0]);
                 if (u && v && u !== v) {
+                    // Critical fix: We must find the EXACT link between these nodes
+                    // if it exists, as manualRoute points are typically consecutive
+                    // nodes from an OSM way.
                     const link = this.graph.getLink(u, v);
                     if (link) {
                         allowedLinks.add(link.id);
@@ -332,6 +374,10 @@ export class StreetGraph {
                             unriddenNodes.add(u);
                             unriddenNodes.add(v);
                         }
+                    } else {
+                        // If no direct link, we still keep the nodes to ensure they are bridge-able
+                        unriddenNodes.add(u);
+                        unriddenNodes.add(v);
                     }
                 }
             }
@@ -339,17 +385,33 @@ export class StreetGraph {
 
         // Add all roads that fall within the selection box to required edges
         if (selectionBox) {
-            console.log(`${ts()} Identifying roads in selection box...`);
+            console.log(`${ts()} Identifying roads in selection box... ${JSON.stringify(selectionBox)}`);
+            let totalLinks = 0;
+            let insideLinks = 0;
+            let avoidedLinks = 0;
+
+            let avoidedCounts: { [key: string]: number } = {};
+
             this.graph.forEachLink((link: any) => {
+                totalLinks++;
+                if (link.data.isAvoided) {
+                    avoidedLinks++;
+                    const type = link.data.highway || 'unknown';
+                    avoidedCounts[type] = (avoidedCounts[type] || 0) + 1;
+                    return;
+                }
                 const u = this.graph.getNode(link.fromId);
                 const v = this.graph.getNode(link.toId);
                 if (u && v) {
-                    const midLat = (u.data.lat + v.data.lat) / 2;
-                    const midLon = (u.data.lon + v.data.lon) / 2;
+                    // Check endpoints instead of midpoint for robustness
+                    const uIn = u.data.lat <= selectionBox.north && u.data.lat >= selectionBox.south &&
+                        u.data.lon <= selectionBox.east && u.data.lon >= selectionBox.west;
+                    const vIn = v.data.lat <= selectionBox.north && v.data.lat >= selectionBox.south &&
+                        v.data.lon <= selectionBox.east && v.data.lon >= selectionBox.west;
 
-                    if (midLat <= selectionBox.north && midLat >= selectionBox.south &&
-                        midLon <= selectionBox.east && midLon >= selectionBox.west) {
+                    if (uIn || vIn) {
 
+                        insideLinks++;
                         allowedLinks.add(link.id);
                         const exists = requiredEdges.find(re => (re.u === link.fromId && re.v === link.toId) || (re.u === link.toId && re.v === link.fromId));
                         if (!exists) {
@@ -362,10 +424,10 @@ export class StreetGraph {
             });
         }
 
-        if (!manualRoute && !selectionBox) {
+        if ((!manualRoute || manualRoute.length === 0) && !selectionBox) {
             this.graph.forEachLink((link: any) => {
                 if (link.fromId < link.toId) {
-                    if (!link.data.isRidden) {
+                    if (!link.data.isRidden && !link.data.isAvoided) {
                         requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
                         unriddenNodes.add(link.fromId.toString());
                         unriddenNodes.add(link.toId.toString());
@@ -411,8 +473,8 @@ export class StreetGraph {
             const island = components[i];
             let bestResult: any = null;
             let minW = Infinity;
-            // Increase search limit for bridging large components
-            const searchLimit = Math.min(island.length, 20);
+            // Increase search limit for bridging components to 1000 (effectively infinite for local chunks)
+            const searchLimit = Math.min(island.length, 1000);
             for (let j = 0; j < searchLimit; j++) {
                 // IMPORTANT: When connecting islands, we allow using ANY link in the graph (not just allowedLinks)
                 const res = this.findClosestTarget(island[j], reachableNodes);
@@ -425,7 +487,11 @@ export class StreetGraph {
                 island.forEach(n => reachableNodes.add(n));
                 bestResult.path.forEach((p: any) => {
                     const link = this.graph.getLink(p.id, p.idNext);
-                    if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                    if (link) {
+                        edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                        reachableNodes.add(p.id);
+                        reachableNodes.add(p.idNext);
+                    }
                 });
             } else {
                 console.warn(`${ts()} Warning: Could not bridge component of size ${island.length}. Some roads may be omitted.`);
@@ -458,38 +524,150 @@ export class StreetGraph {
         const remainingOdd = new Set(nodesToFlip);
         while (remainingOdd.size > 0) {
             const u = Array.from(remainingOdd)[0];
+            remainingOdd.delete(u);
             const targets = new Set(remainingOdd);
-            targets.delete(u);
+            if (targets.size === 0) break;
+
             // Allow matching across ANY link
             const res = this.findClosestTarget(u, targets);
             if (res) {
-                remainingOdd.delete(u);
                 remainingOdd.delete(res.targetId);
                 res.path.forEach(p => {
                     const link = this.graph.getLink(p.id, p.idNext);
                     if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
                 });
             } else {
-                const node = Array.from(remainingOdd)[0];
-                remainingOdd.delete(node);
-                console.error("Could not match odd node", node);
+                console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge to main component.`);
+                // Forced bridge: find ANY closest node in reachable set to avoid Eulerian failure
+                const forced = this.findClosestTarget(u, reachableNodes);
+                if (forced) {
+                    forced.path.forEach(p => {
+                        const link = this.graph.getLink(p.id, p.idNext);
+                        if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                    });
+                }
             }
         }
 
         try {
             const finalEdges: [string, string][] = edgesInFinalGraph.map(e => [e.u, e.v]);
-            let trail: string[];
+            let trail: string[] = [];
             try {
+                // If the graph is disconnected, eulerianTrail often returns a path for just ONE component
+                // and ignores the rest. We must verify coverage.
                 trail = eulerianTrail({ edges: finalEdges, startNode: startNode || undefined });
+
+                // Coverage Check: If we have many edges but trail is short, we likely missed components.
+                // A simple Eulerian trail visits every edge at least once.
+                // Trail length should be >= finalEdges.length.
+                if (trail.length < finalEdges.length && !startNode && (!manualRoute || manualRoute.length === 0)) {
+                    // Only enforce this strictly for area-only monitoring where we expect full coverage
+                    console.warn(`${ts()} Partial solution detected (Trail=${trail.length}, Edges=${finalEdges.length}). Triggering repair.`);
+                    throw new Error("Partial solution - disconnected graph detected.");
+                }
+
             } catch (err) {
-                console.warn(`${ts()} Eulerian trail discovery failed. Falling back to simple edge list.`, err);
-                // Fallback: return nodes of all edges in sequence (not a perfect path, but better than nothing)
-                const fallbackNodes: string[] = [];
-                edgesInFinalGraph.forEach(e => {
-                    if (fallbackNodes.length === 0 || fallbackNodes[fallbackNodes.length - 1] !== e.u) fallbackNodes.push(e.u);
-                    fallbackNodes.push(e.v);
-                });
-                trail = fallbackNodes;
+                console.warn(`${ts()} Eulerian trail failed. Attempting emergency repair (bridging disconnected components)...`, err);
+                let repairSuccess = false;
+
+                try {
+                    // EMERGENCY REPAIR logic
+                    const adj = new Map<string, string[]>();
+                    edgesInFinalGraph.forEach(e => {
+                        if (!adj.has(e.u)) adj.set(e.u, []);
+                        if (!adj.has(e.v)) adj.set(e.v, []);
+                        adj.get(e.u)!.push(e.v);
+                        adj.get(e.v)!.push(e.u);
+                    });
+
+                    const visited = new Set<string>();
+                    const repairComponents: string[][] = [];
+                    for (const node of Array.from(adj.keys())) {
+                        if (!visited.has(node)) {
+                            const comp: string[] = [];
+                            const stack = [node];
+                            visited.add(node);
+                            while (stack.length > 0) {
+                                const u = stack.pop()!;
+                                comp.push(u);
+                                adj.get(u)?.forEach(v => {
+                                    if (!visited.has(v)) { visited.add(v); stack.push(v); }
+                                });
+                            }
+                            repairComponents.push(comp);
+                        }
+                    }
+
+                    if (repairComponents.length > 1) {
+                        console.log(`${ts()} Found ${repairComponents.length} disconnected components during repair. Bridging...`);
+                        const mainComp = new Set(repairComponents[0]);
+                        for (let i = 1; i < repairComponents.length; i++) {
+                            const island = repairComponents[i];
+                            let bestRepair: any = null;
+                            let minW = Infinity;
+                            const limit = Math.min(island.length, 1000);
+                            for (let j = 0; j < limit; j++) {
+                                const res = this.findClosestTarget(island[j], mainComp);
+                                if (res) {
+                                    const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
+                                    if (w < minW) { minW = w; bestRepair = res; }
+                                }
+                            }
+
+                            if (bestRepair) {
+                                island.forEach(n => mainComp.add(n));
+                                bestRepair.path.forEach((p: any) => {
+                                    const link = this.graph.getLink(p.id, p.idNext);
+                                    if (link) {
+                                        edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                                        edgesInFinalGraph.push({ u: p.idNext, v: p.id, data: { ...link.data, isVirtual: true } });
+                                        mainComp.add(p.id);
+                                        mainComp.add(p.idNext);
+                                    }
+                                });
+                            }
+                        }
+
+                        const repairedEdges: [string, string][] = edgesInFinalGraph.map(e => [e.u, e.v]);
+                        trail = eulerianTrail({ edges: repairedEdges, startNode: startNode || undefined });
+                        console.log(`${ts()} Emergency repair successful!`);
+                        repairSuccess = true;
+                    }
+                } catch (repairErr) {
+                    console.warn(`${ts()} Repair failed.`, repairErr);
+                }
+
+                if (!repairSuccess) {
+                    console.warn(`${ts()} Falling back to greedy edge follower.`);
+                    const fallbackNodes: string[] = [];
+                    const remainingEdges = new Set(edgesInFinalGraph.map((e, idx) => idx));
+                    let current = startNode || edgesInFinalGraph[0].u;
+                    fallbackNodes.push(current);
+
+                    while (remainingEdges.size > 0) {
+                        let bestIdx = -1;
+                        let flip = false;
+                        for (const idx of remainingEdges) {
+                            const e = edgesInFinalGraph[idx];
+                            if (e.u === current) { bestIdx = idx; flip = false; break; }
+                            if (e.v === current) { bestIdx = idx; flip = true; break; }
+                        }
+
+                        if (bestIdx !== -1) {
+                            const e = edgesInFinalGraph[bestIdx];
+                            current = flip ? e.u : e.v;
+                            fallbackNodes.push(current);
+                            remainingEdges.delete(bestIdx);
+                        } else {
+                            const nextIdx = Array.from(remainingEdges)[0];
+                            const e = edgesInFinalGraph[nextIdx];
+                            fallbackNodes.push(e.u, e.v);
+                            current = e.v;
+                            remainingEdges.delete(nextIdx);
+                        }
+                    }
+                    trail = fallbackNodes;
+                }
             }
 
             if (startNode) {

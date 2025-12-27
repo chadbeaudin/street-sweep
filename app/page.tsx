@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2 } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown } from 'lucide-react';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -25,6 +25,12 @@ export default function Home() {
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
     const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
+    const [routingOptions, setRoutingOptions] = useState({
+        avoidGravel: false,
+        avoidHighways: false,
+        avoidTrails: false
+    });
+    const [showOptions, setShowOptions] = useState(false);
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectionBox, setSelectionBox] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
@@ -94,25 +100,23 @@ export default function Home() {
         setLoading(true);
         setError(null);
         try {
+            const payload = {
+                bbox,
+                riddenRoads: stravaRoads,
+                selectedPoints,
+                selectionBox,
+                routingOptions,
+                // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
+                // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
+                manualRoute: (selectedPoints.length >= 2) ? manualRoute.flat() : []
+            };
+
+            console.log('[handleGenerate] Sending request to build route...');
+
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    bbox,
-                    riddenRoads: stravaRoads,
-                    selectedPoints,
-                    selectionBox,
-                    manualRoute: manualRoute.reduce((acc, seg, i) => {
-                        if (i === 0) return seg;
-                        // Avoid duplicate points at segment boundaries
-                        const lastPoint = acc[acc.length - 1];
-                        const firstPoint = seg[0];
-                        if (lastPoint && firstPoint && lastPoint[0] === firstPoint[0] && lastPoint[1] === firstPoint[1]) {
-                            return [...acc, ...seg.slice(1)];
-                        }
-                        return [...acc, ...seg];
-                    }, [] as [number, number][])
-                })
+                body: JSON.stringify(payload)
             });
 
             const data = await res.json();
@@ -120,7 +124,6 @@ export default function Home() {
                 throw new Error(JSON.stringify(data));
             }
 
-            // Extract coordinates and profile from the first feature
             if (data.features && data.features.length > 0) {
                 const feature = data.features[0];
                 setRoute(feature.geometry.coordinates);
@@ -147,7 +150,7 @@ export default function Home() {
         } finally {
             setLoading(false);
         }
-    }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBox]);
+    }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBox, routingOptions]);
 
     const downloadGPX = () => {
         if (!route) return;
@@ -413,7 +416,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
     return (
         <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
-            <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-20">
+            <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-[1000]">
                 <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
                         <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -438,6 +441,69 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </svg>
                             {isSelectionMode ? 'Area Selection' : 'Point Mode'}
                         </button>
+                    </div>
+
+                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowOptions(!showOptions)}
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border shadow-sm ${showOptions
+                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                title="Routing Options"
+                            >
+                                <Settings2 className="w-4 h-4" />
+                                <span>Options</span>
+                                <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${showOptions ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {showOptions && (
+                                <>
+                                    <div
+                                        className="fixed inset-0 z-[1001]"
+                                        onClick={() => setShowOptions(false)}
+                                    ></div>
+                                    <div className="absolute left-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-left overflow-hidden ring-1 ring-black ring-opacity-5">
+                                        <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 border-b border-gray-100">
+                                            Routing Preferences
+                                        </div>
+                                        <div className="p-1.5 space-y-1">
+                                            <button
+                                                onClick={() => setRoutingOptions({ ...routingOptions, avoidGravel: !routingOptions.avoidGravel })}
+                                                className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidGravel ? 'bg-amber-50 text-amber-900' : 'text-gray-700 hover:bg-gray-100'}`}
+                                            >
+                                                <div className="flex items-center gap-2 text-left">
+                                                    <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${routingOptions.avoidGravel ? 'bg-amber-500' : 'bg-gray-200'}`}></div>
+                                                    <span>Avoid Gravel</span>
+                                                </div>
+                                                {routingOptions.avoidGravel && <Check className="w-4 h-4 text-amber-600" />}
+                                            </button>
+                                            <button
+                                                onClick={() => setRoutingOptions({ ...routingOptions, avoidHighways: !routingOptions.avoidHighways })}
+                                                className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidHighways ? 'bg-red-50 text-red-900' : 'text-gray-700 hover:bg-gray-100'}`}
+                                            >
+                                                <div className="flex items-center gap-2 text-left">
+                                                    <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${routingOptions.avoidHighways ? 'bg-red-500' : 'bg-gray-200'}`}></div>
+                                                    <span>Avoid Highways</span>
+                                                </div>
+                                                {routingOptions.avoidHighways && <Check className="w-4 h-4 text-red-600" />}
+                                            </button>
+                                            <button
+                                                onClick={() => setRoutingOptions({ ...routingOptions, avoidTrails: !routingOptions.avoidTrails })}
+                                                className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidTrails ? 'bg-green-50 text-green-900' : 'text-gray-700 hover:bg-gray-100'}`}
+                                            >
+                                                <div className="flex items-center gap-2 text-left">
+                                                    <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${routingOptions.avoidTrails ? 'bg-green-500' : 'bg-gray-200'}`}></div>
+                                                    <span>Avoid Trails</span>
+                                                </div>
+                                                {routingOptions.avoidTrails && <Check className="w-4 h-4 text-green-600" />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
@@ -489,12 +555,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             {stravaRoads.length} Rides
                         </div>
                     )}
-                    {(selectedPoints.length > 0 || route) && (
+                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBox) && (
                         <button
                             onClick={clearPoints}
                             className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
                         >
-                            {route ? 'Start Over' : 'Clear Points'}
+                            {(route || selectionBox) ? 'Start Over' : 'Clear Workspace'}
                         </button>
                     )}
                     <button

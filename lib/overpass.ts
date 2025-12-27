@@ -67,7 +67,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
   const requestPromise = (async () => {
     const bikeQuery = `
       [out:json][timeout:90];
-      way["highway"~"residential|tertiary|secondary|primary|unclassified|living_street"]
+      way["highway"~"motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|track|path|cycleway|footway"]
          ["access"!~"private|no"]
          (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
       out geom;

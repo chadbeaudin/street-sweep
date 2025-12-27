@@ -7,7 +7,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, routingOptions } = await request.json();
 
         if (!bbox || !bbox.north || !bbox.south || !bbox.east || !bbox.west) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
@@ -60,8 +60,7 @@ export async function POST(request: Request) {
         const osmData = await fetchOSMData(bufferedBbox);
         console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
-        const graph = new StreetGraph();
-        graph.buildFromOSM(osmData, riddenRoads);
+        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads, routingOptions);
 
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;

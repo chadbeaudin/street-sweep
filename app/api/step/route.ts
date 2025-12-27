@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
         };
 
         const osmData = await fetchOSMData(bufferedBbox);
+        // Note: Step API doesn't currently support routing options or ridden roads context,
+        // so it uses the default matching behavior (snap to any road).
         const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData);
 
         const snappedData = graph.findClosestPointOnEdge(point.lat, point.lon);

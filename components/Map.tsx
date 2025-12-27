@@ -146,8 +146,10 @@ const SelectionTool: React.FC<{
             if (!isSelectionMode) return;
             map.dragging.enable();
             setStartPos(null);
-            // Revert to point mode after selection is complete
-            onSelectionModeChange?.(false);
+            // Delay reverting to point mode to swallow the subsequent click event
+            setTimeout(() => {
+                onSelectionModeChange?.(false);
+            }, 100);
         }
     });
 
