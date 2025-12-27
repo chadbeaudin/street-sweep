@@ -14,7 +14,7 @@ import { ElevationProfile } from '@/components/ElevationProfile';
 
 export default function Home() {
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
-    const [route, setRoute] = useState<[number, number, number?][] | null>(null);
+    const [route, setRoute] = useState<[number, number, number?, number?][] | null>(null);
     const [elevationData, setElevationData] = useState<any[] | null>(null);
     const [totalDistance, setTotalDistance] = useState<string | null>(null);
     const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
@@ -583,6 +583,17 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             </header>
 
             <div className="flex-1 flex flex-col relative min-h-0">
+                {/* Construction Warning */}
+                {route && route.some(p => p.length > 3 && p[3] === 1) && (
+                    <div className="bg-amber-50 border-l-4 border-amber-400 px-6 py-3 flex items-center gap-3 shadow-sm">
+                        <svg className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <span className="text-sm font-medium text-amber-800">
+                            This route may have construction happening
+                        </span>
+                    </div>
+                )}
                 <Map
                     bbox={bbox}
                     onBBoxChange={handleBBoxChange}

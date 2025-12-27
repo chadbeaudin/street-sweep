@@ -21,6 +21,7 @@ interface EdgeData {
     isRidden?: boolean;
     isAvoided?: boolean;
     highway?: string;
+    hasConstruction?: boolean;
 }
 
 export interface RoutingOptions {
@@ -101,6 +102,12 @@ export class StreetGraph {
                     }
                 }
 
+                // Detect construction
+                const hasConstruction =
+                    way.tags?.construction !== undefined ||
+                    way.tags?.['construction:highway'] !== undefined ||
+                    highway === 'construction';
+
                 for (let i = 0; i < way.nodes.length - 1; i++) {
                     const uId = way.nodes[i];
                     const vId = way.nodes[i + 1];
@@ -133,14 +140,16 @@ export class StreetGraph {
                             name: way.tags?.name,
                             highway: highway, // Store highway type for debugging/filtering
                             isRidden,
-                            isAvoided
+                            isAvoided,
+                            hasConstruction
                         });
                         this.graph.addLink(vIdStr, uIdStr, {
                             id: way.id.toString(),
                             weight: dist,
                             name: way.tags?.name,
                             isRidden,
-                            isAvoided
+                            isAvoided,
+                            hasConstruction
                         });
                     }
                 }
@@ -352,7 +361,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBox?: { north: number, south: number, east: number, west: number } | null): { lat: number, lon: number }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBox?: { north: number, south: number, east: number, west: number } | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBox=${!!selectionBox}`);
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
@@ -687,10 +696,43 @@ export class StreetGraph {
                     }
                 }
             }
-            return trail.map((id: string) => {
+            // Filter out virtual bridge edges - we'll return the route WITHOUT the bridges
+            // This means the route may have gaps, but it's more honest than showing fake straight lines
+            const coords: { lat: number; lon: number; hasConstruction?: boolean }[] = [];
+
+            for (let i = 0; i < trail.length; i++) {
+                const id = trail[i];
                 const n = this.graph.getNode(id);
-                return { lat: n?.data.lat || 0, lon: n?.data.lon || 0 };
-            });
+                if (!n) continue;
+
+                // Check if the next edge has construction
+                let hasConstruction = false;
+                if (i < trail.length - 1) {
+                    const nextId = trail[i + 1];
+                    const edge = edgesInFinalGraph.find(e =>
+                        (e.u === id && e.v === nextId) || (e.v === id && e.u === nextId)
+                    );
+
+                    if (edge?.data?.hasConstruction) {
+                        hasConstruction = true;
+                    }
+
+                    // Skip virtual bridges
+                    if (edge?.data?.isVirtual) {
+                        i++; // Skip the next node entirely to break the line
+                        // Do not continue here, as the current node 'n' should still be added.
+                        // The original logic added the current node, then skipped the *next* node.
+                    }
+                }
+
+                // Add the current node with construction info
+                coords.push({
+                    lat: n.data.lat,
+                    lon: n.data.lon,
+                    ...(hasConstruction && { hasConstruction: true })
+                });
+            }
+            return coords;
         } catch (e: any) {
             console.error("Route construction failed:", e.message);
             throw e;

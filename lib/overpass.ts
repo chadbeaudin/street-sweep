@@ -28,7 +28,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
   // Guard against excessively large bounding boxes that crash mirrors
   const latSpan = Math.abs(bbox.north - bbox.south);
   const lonSpan = Math.abs(bbox.east - bbox.west);
-  if (latSpan > 0.3 || lonSpan > 0.3) {
+  if (latSpan > 0.5 || lonSpan > 0.5) {
     console.warn(`${ts()} Bounding box too large (${latSpan.toFixed(3)}x${lonSpan.toFixed(3)}), skipping request.`);
     return {
       version: 0.6,

@@ -17,7 +17,7 @@ L.Icon.Default.mergeOptions({
 interface MapProps {
     bbox: { south: number; west: number; north: number; east: number } | null;
     onBBoxChange: (bbox: { south: number; west: number; north: number; east: number }) => void;
-    route: [number, number, number?][] | null;
+    route: [number, number, number?, number?][] | null;
     hoveredPoint: { lat: number; lon: number } | null;
     stravaRoads: [number, number][][] | null;
     selectedPoints: { lat: number; lon: number; id: string }[];
@@ -61,7 +61,7 @@ function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => 
     return null;
 }
 
-function RecenterMap({ route }: { route: [number, number, number?][] | null }) {
+function RecenterMap({ route }: { route: [number, number, number?, number?][] | null }) {
     const map = useMap();
     useEffect(() => {
         if (route && route.length > 0) {
@@ -174,6 +174,51 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         }, [] as [number, number][]);
     }, [manualRoute]);
 
+    // Split route into normal and construction segments
+    const { normalSegments, constructionSegments, hasConstruction } = React.useMemo(() => {
+        if (!route || route.length === 0) {
+            return { normalSegments: [], constructionSegments: [], hasConstruction: false };
+        }
+
+        const normal: [number, number][][] = [];
+        const construction: [number, number][][] = [];
+        let currentNormal: [number, number][] = [];
+        let currentConstruction: [number, number][] = [];
+        let hasAnyConstruction = false;
+
+        for (let i = 0; i < route.length; i++) {
+            const point = route[i];
+            const latLng: [number, number] = [point[1], point[0]];
+
+            // Check if this point or the next segment has construction
+            // Construction flag would be on the 4th element if present
+            const hasConstructionFlag = point.length > 3 && point[3] === 1;
+
+            if (hasConstructionFlag) {
+                hasAnyConstruction = true;
+                // If we were building a normal segment, save it
+                if (currentNormal.length > 0) {
+                    normal.push(currentNormal);
+                    currentNormal = [];
+                }
+                currentConstruction.push(latLng);
+            } else {
+                // If we were building a construction segment, save it
+                if (currentConstruction.length > 0) {
+                    construction.push(currentConstruction);
+                    currentConstruction = [];
+                }
+                currentNormal.push(latLng);
+            }
+        }
+
+        // Save any remaining segments
+        if (currentNormal.length > 0) normal.push(currentNormal);
+        if (currentConstruction.length > 0) construction.push(currentConstruction);
+
+        return { normalSegments: normal, constructionSegments: construction, hasConstruction: hasAnyConstruction };
+    }, [route]);
+
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
@@ -237,16 +282,30 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 )}
 
-                {/* Generated route */}
-                {route && route.length > 0 && (
+                {/* Generated route - Normal segments */}
+                {normalSegments.map((segment, idx) => (
                     <Polyline
-                        positions={route.map(p => [p[1], p[0]] as [number, number])}
+                        key={`route-normal-${idx}`}
+                        positions={segment}
                         color="#B4491E"
                         weight={5}
                         opacity={0.8}
                         interactive={false}
                     />
-                )}
+                ))}
+
+                {/* Generated route - Construction segments */}
+                {constructionSegments.map((segment, idx) => (
+                    <Polyline
+                        key={`route-construction-${idx}`}
+                        positions={segment}
+                        color="#F59E0B" // Orange/amber for construction
+                        weight={5}
+                        opacity={0.9}
+                        interactive={false}
+                        dashArray="10, 10"
+                    />
+                ))}
 
                 {/* Invisible interactive layer for cursor and snapping - Rendered AFTER visual lines to be on top of them */}
                 {allRoads && !isSelectionMode && allRoads.map((road, idx) => (

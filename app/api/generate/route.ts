@@ -104,7 +104,14 @@ export async function POST(request: Request) {
                     },
                     geometry: {
                         type: 'LineString',
-                        coordinates: sampledCoords.map((c, i) => [c[0], c[1], Math.round(elevations[i] * 3.28084)])
+                        coordinates: sampledCoords.map((c, i) => {
+                            // Find corresponding circuit point to check construction
+                            const circuitPoint = circuit.find(p =>
+                                Math.abs(p.lon - c[0]) < 0.00001 && Math.abs(p.lat - c[1]) < 0.00001
+                            );
+                            const construction = circuitPoint?.hasConstruction ? 1 : 0;
+                            return [c[0], c[1], Math.round(elevations[i] * 3.28084), construction];
+                        })
                     }
                 }
             ]
