@@ -56,7 +56,7 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
         totalMiles += distance(point(coordinates[i - 1]), point(coordinates[i]), { units: 'miles' });
     }
 
-    const pointsPerMile = 99;
+    const pointsPerMile = 200; // Doubled from 99 for more granular hover tracking
     let targetPoints = Math.max(50, Math.min(1000, Math.round(totalMiles * pointsPerMile)));
     targetPoints = Math.min(targetPoints, coordinates.length);
 
