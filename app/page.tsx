@@ -546,14 +546,6 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </button>
                         </>
                     )}
-                    {stravaRoads && (
-                        <div className="px-3 py-1.5 bg-blue-50 border border-blue-100 rounded-md text-sm font-medium text-blue-700 flex items-center gap-2">
-                            <svg className="w-4 h-4 text-blue-500" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l7 13.828h4.172L14.562 2.498" />
-                            </svg>
-                            {stravaRoads.length} Rides
-                        </div>
-                    )}
                     {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBox) && (
                         <button
                             onClick={clearPoints}
