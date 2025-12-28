@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>StreetSweep</Name>
+  <Repository>bigtimber/street-sweep:latest</Repository>
+  <Registry>https://hub.docker.com/r/bigtimber/street-sweep/</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/bigtimber/StreetSweep/issues</Support>
+  <Project>https://github.com/bigtimber/StreetSweep</Project>
+  <Overview>StreetSweep is an application for generating optimized bike routes to ensure 100% street coverage within a specified area with minimal backtracking and redundancy.</Overview>
+  <Category>Tools:Utilities Network:Web</Category>
+  <WebUI>http://[IP]:[PORT:3000]</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/bigtimber/StreetSweep/main/app/icon.svg</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Efficient Bike Route Mapping</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>3000</HostPort>
+        <ContainerPort>3000</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data/>
+  <Environment/>
+  <Labels/>
+  <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp" Description="The port the web interface is accessible on." Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+</Container>
