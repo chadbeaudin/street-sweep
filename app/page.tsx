@@ -455,8 +455,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         )}
                     </div>
 
-                    {/* Eraser Tool */}
-                    {route && (
+                    {/* Eraser Tool - DISABLED: creates straight line artifacts when removing segments */}
+                    {/* {route && (
                         <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                             <button
                                 onClick={() => setIsEraserMode(!isEraserMode)}
@@ -470,7 +470,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 {isEraserMode && 'Eraser Active'}
                             </button>
                         </div>
-                    )}
+                    )} */}
 
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <div className="relative">
