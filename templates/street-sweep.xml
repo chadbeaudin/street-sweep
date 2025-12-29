@@ -11,7 +11,7 @@
   <Project>https://github.com/bigtimber/StreetSweep</Project>
   <Overview>StreetSweep is an application for generating optimized bike routes to ensure 100% street coverage within a specified area with minimal backtracking and redundancy.</Overview>
   <Category>Tools:Utilities Network:Web</Category>
-  <WebUI>http://[IP]:[PORT:3000]</WebUI>
+  <WebUI>http://[IP]:[PORT:3888]</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/bigtimber/StreetSweep/main/app/icon.svg</Icon>
   <ExtraParams/>
@@ -25,7 +25,7 @@
     <Mode>bridge</Mode>
     <Publish>
       <Port>
-        <HostPort>3000</HostPort>
+        <HostPort>3888</HostPort>
         <ContainerPort>3000</ContainerPort>
         <Protocol>tcp</Protocol>
       </Port>
@@ -34,5 +34,5 @@
   <Data/>
   <Environment/>
   <Labels/>
-  <Config Name="WebUI Port" Target="3000" Default="3000" Mode="tcp" Description="The port the web interface is accessible on." Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="WebUI Port" Target="3000" Default="3888" Mode="tcp" Description="The port the web interface is accessible on." Type="Port" Display="always" Required="true" Mask="false">3888</Config>
 </Container>
