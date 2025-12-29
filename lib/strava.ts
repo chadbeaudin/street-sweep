@@ -7,13 +7,13 @@ export interface StravaActivity {
     start_date: string;
 }
 
-export async function getStravaAccessToken() {
-    const clientId = process.env.STRAVA_CLIENT_ID;
-    const clientSecret = process.env.STRAVA_CLIENT_SECRET;
-    const refreshToken = process.env.STRAVA_REFRESH_TOKEN;
+export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {
+    const clientId = creds?.clientId || process.env.STRAVA_CLIENT_ID;
+    const clientSecret = creds?.clientSecret || process.env.STRAVA_CLIENT_SECRET;
+    const refreshToken = creds?.refreshToken || process.env.STRAVA_REFRESH_TOKEN;
 
     if (!clientId || !clientSecret || !refreshToken) {
-        throw new Error('Missing Strava credentials in environment variables');
+        throw new Error('Missing Strava credentials. Please configure them in Settings.');
     }
 
     const response = await fetch('https://www.strava.com/oauth/token', {
@@ -38,8 +38,8 @@ export async function getStravaAccessToken() {
     return data.access_token;
 }
 
-export async function fetchAllStravaActivities(): Promise<StravaActivity[]> {
-    const accessToken = await getStravaAccessToken();
+export async function fetchAllStravaActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<StravaActivity[]> {
+    const accessToken = await getStravaAccessToken(creds);
     let page = 1;
     const perPage = 200;
     const allActivities: StravaActivity[] = [];

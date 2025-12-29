@@ -3,7 +3,8 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings } from 'lucide-react';
+import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -35,6 +36,9 @@ export default function Home() {
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [selectionBox, setSelectionBox] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [isEraserMode, setIsEraserMode] = useState(false);
+    const [showStravaSettings, setShowStravaSettings] = useState(false);
+    const [stravaCredentials, setStravaCredentials] = useState<any>(null);
+    const [stravaError, setStravaError] = useState<string | null>(null);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number; id: string }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
@@ -48,15 +52,30 @@ export default function Home() {
     }, [bbox]);
 
     useEffect(() => {
-        fetch('/api/strava/activities')
+        const saved = localStorage.getItem('strava_settings');
+        if (saved) setStravaCredentials(JSON.parse(saved));
+    }, []);
+
+    useEffect(() => {
+        setStravaError(null);
+        fetch('/api/strava/activities', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stravaCredentials })
+        })
             .then(res => res.json())
             .then(data => {
                 if (data.riddenRoads) {
                     setStravaRoads(data.riddenRoads);
+                } else if (data.error) {
+                    setStravaError(data.error);
                 }
             })
-            .catch(err => console.error('Failed to fetch Strava roads:', err));
-    }, []);
+            .catch(err => {
+                console.error('Failed to fetch Strava roads:', err);
+                setStravaError(err.message);
+            });
+    }, [stravaCredentials]);
 
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
         setBbox(prev => {
@@ -473,6 +492,21 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     )} */}
 
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                        <button
+                            onClick={() => setShowStravaSettings(true)}
+                            className={`flex items-center justify-center w-9 h-9 rounded-md transition-all border shadow-sm ${stravaRoads && stravaRoads.length > 0 && !stravaError
+                                ? 'bg-[#FC4C02] border-[#e34402] hover:bg-[#e34402]'
+                                : 'bg-white border-gray-300 hover:bg-gray-50'
+                                }`}
+                            title={stravaError ? `Strava Error: ${stravaError}` : "Strava Settings"}
+                        >
+                            <svg className={`w-5 h-5 fill-current ${stravaRoads && stravaRoads.length > 0 && !stravaError ? 'text-white' : 'text-gray-400'}`} viewBox="0 0 24 24">
+                                <path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <div className="relative">
                             <button
                                 onClick={() => setShowOptions(!showOptions)}
@@ -639,6 +673,15 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         onHover={setHoveredPoint}
                     />
                 )}
+
+                <StravaSettingsDialog
+                    isOpen={showStravaSettings}
+                    onClose={() => setShowStravaSettings(false)}
+                    onSave={(creds) => {
+                        setStravaCredentials(creds);
+                        // No need to close, let them see the "Saved!" state
+                    }}
+                />
             </div>
         </main>
     );

@@ -2,9 +2,12 @@ import { NextResponse } from 'next/server';
 import { fetchAllStravaActivities } from '@/lib/strava';
 import polyline from '@mapbox/polyline';
 
-export async function GET() {
+export async function POST(req: Request) {
     try {
-        const activities = await fetchAllStravaActivities();
+        const body = await req.json();
+        const { stravaCredentials } = body;
+
+        const activities = await fetchAllStravaActivities(stravaCredentials);
 
         // Transform activities into simple coordinate arrays
         const riddenRoads = activities.map(activity => {
