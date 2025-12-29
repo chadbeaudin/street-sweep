@@ -26,7 +26,7 @@
     <Publish>
       <Port>
         <HostPort>3888</HostPort>
-        <ContainerPort>3000</ContainerPort>
+        <ContainerPort>3888</ContainerPort>
         <Protocol>tcp</Protocol>
       </Port>
     </Publish>
@@ -34,5 +34,5 @@
   <Data/>
   <Environment/>
   <Labels/>
-  <Config Name="WebUI Port" Target="3000" Default="3888" Mode="tcp" Description="The port the web interface is accessible on." Type="Port" Display="always" Required="true" Mask="false">3888</Config>
+  <Config Name="WebUI Port" Target="3888" Default="3888" Mode="tcp" Description="The port the web interface is accessible on." Type="Port" Display="always" Required="true" Mask="false">3888</Config>
 </Container>

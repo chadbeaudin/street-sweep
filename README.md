@@ -37,7 +37,7 @@ Start the development server:
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:3888](http://localhost:3888) in your browser.
 
 1.  **Move the map** to center on the neighborhood you want to sweep.
 2.  Click **Generate Route**.
