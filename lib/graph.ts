@@ -425,6 +425,8 @@ export class StreetGraph {
                         v.data.lon <= selectionBox.east && v.data.lon >= selectionBox.west;
 
                     if (uIn || vIn) {
+                        // Skip roads that have already been ridden to minimize backtracking
+                        if (link.data.isRidden) return;
 
                         insideLinks++;
                         allowedLinks.add(link.id);
@@ -537,26 +539,50 @@ export class StreetGraph {
         }
 
         const remainingOdd = new Set(nodesToFlip);
-        while (remainingOdd.size > 0) {
-            const u = Array.from(remainingOdd)[0];
-            remainingOdd.delete(u);
-            const targets = new Set(remainingOdd);
-            if (targets.size === 0) break;
+        const pairs: { u: string, v: string, path: any[], weight: number }[] = [];
 
-            // Allow matching across ANY link
-            const res = this.findClosestTarget(u, targets);
-            if (res) {
-                remainingOdd.delete(res.targetId);
-                res.path.forEach(p => {
+        console.log(`${ts()} Matching ${remainingOdd.size} odd nodes using global min-weight greedy approach...`);
+
+        while (remainingOdd.size > 1) {
+            let bestPair: any = null;
+            let minWeight = Infinity;
+
+            const oddArray = Array.from(remainingOdd);
+            // Limit search for massive graphs if necessary, but usually odd nodes are few
+            const searchLimit = Math.min(oddArray.length, 100);
+
+            for (let i = 0; i < searchLimit; i++) {
+                const u = oddArray[i];
+                const targets = new Set(remainingOdd);
+                targets.delete(u);
+
+                const res = this.findClosestTarget(u, targets);
+                if (res) {
+                    const weight = res.path.reduce((sum, p) => sum + p.weight, 0);
+                    if (weight < minWeight) {
+                        minWeight = weight;
+                        bestPair = { u, v: res.targetId, path: res.path, weight };
+                    }
+                }
+                // If we found a very close match, we can stop early to speed up
+                if (minWeight < 10) break;
+            }
+
+            if (bestPair) {
+                remainingOdd.delete(bestPair.u);
+                remainingOdd.delete(bestPair.v);
+                bestPair.path.forEach((p: any) => {
                     const link = this.graph.getLink(p.id, p.idNext);
                     if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
                 });
             } else {
-                console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge to main component.`);
-                // Forced bridge: find ANY closest node in reachable set to avoid Eulerian failure
+                // Should not happen in a connected component, but for safety:
+                const u = oddArray[0];
+                remainingOdd.delete(u);
+                console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge.`);
                 const forced = this.findClosestTarget(u, reachableNodes);
                 if (forced) {
-                    forced.path.forEach(p => {
+                    forced.path.forEach((p: any) => {
                         const link = this.graph.getLink(p.id, p.idNext);
                         if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
                     });
@@ -717,12 +743,9 @@ export class StreetGraph {
                         hasConstruction = true;
                     }
 
-                    // Skip virtual bridges
-                    if (edge?.data?.isVirtual) {
-                        i++; // Skip the next node entirely to break the line
-                        // Do not continue here, as the current node 'n' should still be added.
-                        // The original logic added the current node, then skipped the *next* node.
-                    }
+                    // NO LONGER SKIPPING VIRTUAL BRIDGES
+                    // We want a continuous path for the user to follow, even if it includes backtracking.
+                    // This prevents "jumps" on the map and fragmented GPX files.
                 }
 
                 // Add the current node with construction info
