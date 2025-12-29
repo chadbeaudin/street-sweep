@@ -67,8 +67,16 @@ function RecenterMap({ route }: { route: [number, number, number?, number?][] | 
     const map = useMap();
     useEffect(() => {
         if (route && route.length > 0) {
+            // Force leaflet to re-calculate container size before fitting bounds
+            // This ensures it accounts for the shrunk height when the elevation profile is active
+            map.invalidateSize();
+
             const bounds = L.latLngBounds(route.map(p => [p[1], p[0]]));
-            map.fitBounds(bounds, { padding: [50, 50] });
+            map.fitBounds(bounds, {
+                padding: [15, 15],
+                maxZoom: 18, // Don't zoom in to the point of being useless for very tiny routes
+                animate: true
+            });
         }
     }, [route, map]);
     return null;
@@ -332,6 +340,8 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             <MapContainer
                 center={[39.02, -104.7]}
                 zoom={13}
+                zoomSnap={0.25}
+                zoomDelta={0.25}
                 className="absolute inset-0"
             >
                 <TileLayer
