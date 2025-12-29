@@ -16,6 +16,8 @@ RUN npm run build
 FROM node:20-slim AS runner
 WORKDIR /app
 
+ARG VERSION
+ENV APP_VERSION=$VERSION
 ENV NODE_ENV production
 
 RUN groupadd --system --gid 1001 nodejs
