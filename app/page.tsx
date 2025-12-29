@@ -437,14 +437,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
     return (
         <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-[1000]">
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+                <a href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer group">
+                    <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-700 transition-colors">
                         <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A2 2 0 013 15.414V5.586a2 2 0 012.316-1.97l5.447 1.258a2 2 0 001.374 0l5.447-1.258A2 2 0 0121 5.586v9.828a2 2 0 01-1.236 1.861L15 20l-6-2.586L9 20z" />
                         </svg>
                     </div>
                     <h1 className="text-xl font-bold text-gray-900 tracking-tight">StreetSweep</h1>
-                </div>
+                </a>
 
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
@@ -510,14 +510,13 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         <div className="relative">
                             <button
                                 onClick={() => setShowOptions(!showOptions)}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors border shadow-sm ${showOptions
+                                className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-sm font-medium transition-colors border shadow-sm ${showOptions
                                     ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
                                     : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                     }`}
                                 title="Routing Options"
                             >
                                 <Settings2 className="w-4 h-4" />
-                                <span>Options</span>
                                 <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${showOptions ? 'rotate-180' : ''}`} />
                             </button>
 
