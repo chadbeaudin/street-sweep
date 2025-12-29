@@ -72,7 +72,7 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                                 <li>
                                     Go to the <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener" className="inline-flex items-center gap-1 font-bold underline hover:text-indigo-700">Strava API Settings <ExternalLink className="w-3 h-3" /></a>
                                 </li>
-                                <li> Create an application (if you haven't yet). Use "StreetSweep" as the name and "localhost" as the Authorization Callback Domain.</li>
+                                <li> Create an application (if you haven&apos;t yet). Use &quot;StreetSweep&quot; as the name and &quot;localhost&quot; as the Authorization Callback Domain.</li>
                                 <li> Copy your <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below.</li>
                                 <li>
                                     To get your <strong>Refresh Token</strong>, visit this URL in your browser (replace <code>YOUR_CLIENT_ID</code> with yours):
