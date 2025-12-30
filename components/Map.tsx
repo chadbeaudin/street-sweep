@@ -342,7 +342,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 zoom={13}
                 zoomSnap={0.25}
                 zoomDelta={0.25}
-                className="absolute inset-0"
+                className={`absolute inset-0 ${isSelectionMode ? 'selection-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''}`}
             >
                 <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -503,10 +503,19 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 .leaflet-container {
                     cursor: grab !important;
                 }
+                .leaflet-container.selection-mode,
+                .leaflet-container.selection-mode path,
+                .leaflet-container.selection-mode .road-hitbox {
+                    cursor: crosshair !important;
+                }
                 /* Use specific class for roads to avoid overriding markers */
                 .leaflet-container .road-hitbox {
                     cursor: crosshair !important;
                     pointer-events: auto !important;
+                }
+                /* Use a specific class for the eraser cursor if needed, but EraserTool.tsx already sets it on the container */
+                .leaflet-container.eraser-mode {
+                    /* cursor is set via JS in EraserTool */
                 }
                 /* Markers should show pointer/grab when draggable */
                 .leaflet-container .leaflet-marker-icon.leaflet-interactive {
