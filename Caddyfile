@@ -1,7 +1,0 @@
-{
-    email {$EMAIL}
-}
-
-{$DOMAIN} {
-    reverse_proxy app:3888
-}

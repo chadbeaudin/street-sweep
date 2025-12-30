@@ -49,22 +49,6 @@ npm run build
 npm start
 ```
 
-## Production Deployment (with HTTPS)
-
-StreetSweep includes a `docker-compose.yml` and `Caddyfile` for easy deployment with automatic HTTPS via Let's Encrypt.
-
-1.  **Configure environment**: Create a `.env` file or set environment variables:
-    ```bash
-    DOMAIN=streetsweep.example.com
-    EMAIL=your-email@example.com
-    ```
-2.  **Start the application**:
-    ```bash
-    docker-compose up -d
-    ```
-
-Caddy will automatically handle fetching and renewing SSL certificates for your domain. Ensure ports 80 and 443 are open and your domain points to the server's IP.
-
 ## Elevation Data
 
 StreetSweep uses a multi-provider fallback system to ensure reliable elevation data fetching:
