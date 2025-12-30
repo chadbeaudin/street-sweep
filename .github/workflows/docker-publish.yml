@@ -99,7 +99,7 @@ jobs:
           build-args: |
             VERSION=v${{ steps.version.outputs.version }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha
 
       - name: Image info
         run: docker manifest inspect docker.io/bigtimber/street-sweep:latest || true

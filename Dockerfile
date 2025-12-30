@@ -1,16 +1,16 @@
 # Install dependencies only when needed
 FROM node:20-slim AS deps
-RUN apt-get update && apt-get install -y libc6-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libc6-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 # Rebuild the source code only when needed
 FROM node:20-slim AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 # Production image, copy all the files and run next
 FROM node:20-slim AS runner
