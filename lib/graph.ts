@@ -361,8 +361,8 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBox?: { north: number, south: number, east: number, west: number } | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
-        console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBox=${!!selectionBox}`);
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
+        console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
         const unriddenNodes = new Set<string>();
@@ -398,37 +398,27 @@ export class StreetGraph {
             }
         }
 
-        // Add all roads that fall within the selection box to required edges
-        if (selectionBox) {
-            console.log(`${ts()} Identifying roads in selection box... ${JSON.stringify(selectionBox)}`);
-            let totalLinks = 0;
-            let insideLinks = 0;
-            let avoidedLinks = 0;
-
-            let avoidedCounts: { [key: string]: number } = {};
+        // Add all roads that fall within any of the selection boxes to required edges
+        if (selectionBoxes && selectionBoxes.length > 0) {
+            console.log(`${ts()} Identifying roads in ${selectionBoxes.length} selection boxes...`);
 
             this.graph.forEachLink((link: any) => {
-                totalLinks++;
-                if (link.data.isAvoided) {
-                    avoidedLinks++;
-                    const type = link.data.highway || 'unknown';
-                    avoidedCounts[type] = (avoidedCounts[type] || 0) + 1;
-                    return;
-                }
+                if (link.data.isAvoided) return;
+                if (link.data.isRidden) return;
+
                 const u = this.graph.getNode(link.fromId);
                 const v = this.graph.getNode(link.toId);
+
                 if (u && v) {
-                    // Check endpoints instead of midpoint for robustness
-                    const uIn = u.data.lat <= selectionBox.north && u.data.lat >= selectionBox.south &&
-                        u.data.lon <= selectionBox.east && u.data.lon >= selectionBox.west;
-                    const vIn = v.data.lat <= selectionBox.north && v.data.lat >= selectionBox.south &&
-                        v.data.lon <= selectionBox.east && v.data.lon >= selectionBox.west;
+                    const isRequired = selectionBoxes.some(box => {
+                        const uIn = u.data.lat <= box.north && u.data.lat >= box.south &&
+                            u.data.lon <= box.east && u.data.lon >= box.west;
+                        const vIn = v.data.lat <= box.north && v.data.lat >= box.south &&
+                            v.data.lon <= box.east && v.data.lon >= box.west;
+                        return uIn || vIn;
+                    });
 
-                    if (uIn || vIn) {
-                        // Skip roads that have already been ridden to minimize backtracking
-                        if (link.data.isRidden) return;
-
-                        insideLinks++;
+                    if (isRequired) {
                         allowedLinks.add(link.id);
                         const exists = requiredEdges.find(re => (re.u === link.fromId && re.v === link.toId) || (re.u === link.toId && re.v === link.fromId));
                         if (!exists) {
@@ -441,7 +431,7 @@ export class StreetGraph {
             });
         }
 
-        if ((!manualRoute || manualRoute.length === 0) && !selectionBox) {
+        if ((!manualRoute || manualRoute.length === 0) && (!selectionBoxes || selectionBoxes.length === 0)) {
             this.graph.forEachLink((link: any) => {
                 if (link.fromId < link.toId) {
                     if (!link.data.isRidden && !link.data.isAvoided) {

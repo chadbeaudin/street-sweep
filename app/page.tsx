@@ -35,7 +35,7 @@ export default function Home() {
     const [showOptions, setShowOptions] = useState(false);
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
-    const [selectionBox, setSelectionBox] = useState<{ north: number; south: number; east: number; west: number } | null>(null);
+    const [selectionBoxes, setSelectionBoxes] = useState<{ north: number; south: number; east: number; west: number }[]>([]);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(null);
@@ -125,7 +125,7 @@ export default function Home() {
                 bbox,
                 riddenRoads: stravaRoads,
                 selectedPoints,
-                selectionBox,
+                selectionBoxes,
                 routingOptions,
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
@@ -171,7 +171,7 @@ export default function Home() {
         } finally {
             setLoading(false);
         }
-    }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBox, routingOptions]);
+    }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBoxes, routingOptions]);
 
     const downloadGPX = () => {
         if (!route) return;
@@ -387,7 +387,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setRoute(null);
         setElevationData(null);
         setTotalDistance(null);
-        setSelectionBox(null);
+        setSelectionBoxes([]);
     }, []);
 
     const handleUndo = useCallback(() => {
@@ -462,9 +462,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </svg>
                             {isSelectionMode ? 'Area Selection' : 'Point Mode'}
                         </button>
-                        {selectionBox && (
+                        {selectionBoxes.length > 0 && (
                             <button
-                                onClick={() => setSelectionBox(null)}
+                                onClick={() => setSelectionBoxes([])}
                                 className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors"
                                 title="Clear selection area"
                             >
@@ -609,12 +609,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </button>
                         </>
                     )}
-                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBox) && (
+                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0) && (
                         <button
                             onClick={clearPoints}
                             className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
                         >
-                            {(route || selectionBox) ? 'Start Over' : 'Clear Workspace'}
+                            {(route || selectionBoxes.length > 0) ? 'Start Over' : 'Clear Workspace'}
                         </button>
                     )}
                     <button
@@ -660,8 +660,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     manualRoute={manualRoute}
                     allRoads={allRoads}
                     isSelectionMode={isSelectionMode}
-                    selectionBox={selectionBox}
-                    onSelectionChange={setSelectionBox}
+                    selectionBoxes={selectionBoxes}
+                    onSelectionChange={(box: { north: number; south: number; east: number; west: number } | null) => box ? setSelectionBoxes(prev => [...prev, box]) : setSelectionBoxes([])}
                     onSelectionModeChange={setIsSelectionMode}
                     isEraserMode={isEraserMode}
                     onRouteUpdate={setRoute}

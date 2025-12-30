@@ -28,7 +28,7 @@ interface MapProps {
     manualRoute: [number, number][][];
     allRoads: [number, number][][];
     isSelectionMode?: boolean;
-    selectionBox: { north: number; south: number; east: number; west: number } | null;
+    selectionBoxes: { north: number; south: number; east: number; west: number }[];
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
     onSelectionModeChange?: (isSelectionMode: boolean) => void;
     isEraserMode?: boolean;
@@ -114,8 +114,10 @@ const SelectionTool: React.FC<{
     isSelectionMode: boolean;
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
     onSelectionModeChange?: (isSelectionMode: boolean) => void;
-}> = ({ isSelectionMode, onSelectionChange, onSelectionModeChange }) => {
+    onDrawingChange?: (box: { north: number; south: number; east: number; west: number } | null) => void;
+}> = ({ isSelectionMode, onSelectionChange, onSelectionModeChange, onDrawingChange }) => {
     const [startPos, setStartPos] = React.useState<L.LatLng | null>(null);
+    const currentBoxRef = React.useRef<{ north: number; south: number; east: number; west: number } | null>(null);
     const map = useMap();
 
     useEffect(() => {
@@ -145,16 +147,25 @@ const SelectionTool: React.FC<{
         },
         mousemove: (e) => {
             if (!isSelectionMode || !startPos) return;
-            onSelectionChange({
+            const box = {
                 north: Math.max(startPos.lat, e.latlng.lat),
                 south: Math.min(startPos.lat, e.latlng.lat),
                 east: Math.max(startPos.lng, e.latlng.lng),
                 west: Math.min(startPos.lng, e.latlng.lng)
-            });
+            };
+            currentBoxRef.current = box;
+            onDrawingChange?.(box);
         },
         mouseup: (e) => {
             if (!isSelectionMode) return;
             map.dragging.enable();
+
+            if (currentBoxRef.current) {
+                onSelectionChange(currentBoxRef.current);
+                currentBoxRef.current = null;
+                onDrawingChange?.(null);
+            }
+
             setStartPos(null);
             // Delay reverting to point mode to swallow the subsequent click event
             setTimeout(() => {
@@ -272,7 +283,9 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBox, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
+    const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
+
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isSelectionMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
@@ -356,6 +369,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     isSelectionMode={isSelectionMode}
                     onSelectionChange={onSelectionChange}
                     onSelectionModeChange={onSelectionModeChange}
+                    onDrawingChange={setDrawingBox}
                 />
 
                 {/* Eraser Tool */}
@@ -363,12 +377,13 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <EraserTool route={route} onRouteUpdate={onRouteUpdate} />
                 )}
 
-                {/* Visible Selection Rectangle */}
-                {selectionBox && (
+                {/* Visible Selection Rectangles - hide when route is present unless in selection mode */}
+                {(isSelectionMode || !route) && selectionBoxes.map((box, idx) => (
                     <Rectangle
+                        key={`selection-box-${idx}`}
                         bounds={[
-                            [selectionBox.south, selectionBox.west],
-                            [selectionBox.north, selectionBox.east]
+                            [box.south, box.west],
+                            [box.north, box.east]
                         ]}
                         pathOptions={{
                             color: '#F59E0B',
@@ -376,6 +391,23 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             fillColor: '#F59E0B',
                             fillOpacity: 0.2,
                             dashArray: '5, 5'
+                        }}
+                    />
+                ))}
+
+                {/* Currently drawing box */}
+                {drawingBox && (
+                    <Rectangle
+                        bounds={[
+                            [drawingBox.south, drawingBox.west],
+                            [drawingBox.north, drawingBox.east]
+                        ]}
+                        pathOptions={{
+                            color: '#F59E0B',
+                            weight: 2,
+                            fillColor: '#F59E0B',
+                            fillOpacity: 0.1,
+                            dashArray: '2, 2'
                         }}
                     />
                 )}

@@ -7,7 +7,10 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, routingOptions } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, routingOptions } = await request.json();
+
+        // Backward compatibility: Convert single selectionBox to array if present
+        const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
 
         if (!bbox || !bbox.north || !bbox.south || !bbox.east || !bbox.west) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
@@ -41,12 +44,14 @@ export async function POST(request: Request) {
             });
         }
 
-        // Expand to include selection box
-        if (selectionBox) {
-            minLat = Math.min(minLat, selectionBox.south);
-            maxLat = Math.max(maxLat, selectionBox.north);
-            minLon = Math.min(minLon, selectionBox.west);
-            maxLon = Math.max(maxLon, selectionBox.east);
+        // Expand to include all selection boxes
+        if (selectionBoxes && selectionBoxes.length > 0) {
+            selectionBoxes.forEach((box: any) => {
+                minLat = Math.min(minLat, box.south);
+                maxLat = Math.max(maxLat, box.north);
+                minLon = Math.min(minLon, box.west);
+                maxLon = Math.max(maxLon, box.east);
+            });
         }
 
         const bufferedBbox = {
@@ -65,7 +70,7 @@ export async function POST(request: Request) {
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
         const endPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[selectedPoints.length - 1] : undefined;
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBox);
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {
