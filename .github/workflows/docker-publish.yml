@@ -51,14 +51,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Calculate Semantic Version
+      - name: Get version from package.json
         id: version
-        uses: paulhatch/semantic-version@v5.4.0
-        with:
-          tag_prefix: "v"
-          major_pattern: "(MAJOR)"
-          minor_pattern: "(feat)"
-          version_format: "${major}.${minor}.${patch}"
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
           
       - name: Tag Repository
         run: |
