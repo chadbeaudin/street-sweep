@@ -35,9 +35,6 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Build
-        run: npm run build
-
   build-and-push:
     needs: test
     runs-on: ubuntu-latest
@@ -101,6 +98,8 @@ jobs:
             docker.io/bigtimber/street-sweep:v${{ steps.version.outputs.version }}
           build-args: |
             VERSION=v${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Image info
         run: docker manifest inspect docker.io/bigtimber/street-sweep:latest || true
