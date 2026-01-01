@@ -1,12 +1,12 @@
 # StreetSweep
 
-**StreetSweep** is a web application designed to help runners and cyclists achieve 100% street coverage in a given area. It generates optimized routes that traverse every accessible street within a selected area with minimal backtracking, effectively solving the Chinese Postman Problem for custom bounding boxes.  It will pull in all of your rides from Strava and show you which streets you have already ridden and which streets you still need to ride.
+**StreetSweep** helps cyclists and runners explore new areas they have not previously ridden.  Connect your Strava account to import all your rides which will be displayed on a single map to highlight areas you have not previously ridden.  StreetSweep  will then help you generate optimized routes untraveled by you minimal backtracking.  For the nerds out there StreetSweep effectively solves the Chinese Postman Problem for custom bounding boxes.  
 
 ## Features
 
 - **Interactive Map**: Select your target area visually using a dynamic map interface (Leaflet).
 - **Optimized Routing**: Uses the **Chinese Postman Algorithm** to calculate the most efficient path to cover all streets.
-- **Elevation Profiles**: Rich 3D elevation data for every route, powered by a multi-provider fallback system.
+- **Elevation Profiles**: 3D elevation data for every route.
 - **GPX Export**: Download the generated route as a GPX file to use with Garmin, Wahoo, or other GPS devices.
 - **Stack**: Built with Next.js 14, TypeScript, and TailwindCSS for a fast, responsive user experience.
 
