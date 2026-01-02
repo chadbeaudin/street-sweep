@@ -16,25 +16,37 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
         throw new Error('Missing Strava credentials. Please configure them in Settings.');
     }
 
+    const params = new URLSearchParams();
+    params.append('client_id', clientId);
+    params.append('client_secret', clientSecret);
+    params.append('refresh_token', refreshToken);
+    params.append('grant_type', 'refresh_token');
+
     const response = await fetch('https://www.strava.com/oauth/token', {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/x-www-form-urlencoded'
         },
-        body: JSON.stringify({
-            client_id: clientId,
-            client_secret: clientSecret,
-            refresh_token: refreshToken,
-            grant_type: 'refresh_token'
-        })
+        body: params.toString()
     });
 
     if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Failed to refresh Strava token: ${error}`);
+        const errorText = await response.text();
+        let errorMessage = `Failed to refresh Strava token: ${response.status} ${response.statusText}`;
+        try {
+            const errorJson = JSON.parse(errorText);
+            if (errorJson.message) errorMessage += ` - ${errorJson.message}`;
+            if (errorJson.errors) errorMessage += ` (${JSON.stringify(errorJson.errors)})`;
+        } catch {
+            errorMessage += ` - ${errorText.substring(0, 500)}`;
+        }
+        throw new Error(errorMessage);
     }
 
     const data = await response.json();
+    if (!data.access_token) {
+        throw new Error('Strava token refresh response did not contain an access_token');
+    }
     return data.access_token;
 }
 
@@ -53,7 +65,16 @@ export async function fetchAllStravaActivities(creds?: { clientId?: string; clie
         });
 
         if (!response.ok) {
-            throw new Error(`Strava API error: ${response.status} ${response.statusText}`);
+            const errorText = await response.text();
+            let errorMessage = `Strava API error: ${response.status} ${response.statusText}`;
+            try {
+                const errorJson = JSON.parse(errorText);
+                if (errorJson.message) errorMessage += ` - ${errorJson.message}`;
+                if (errorJson.errors) errorMessage += ` (${JSON.stringify(errorJson.errors)})`;
+            } catch {
+                errorMessage += ` - ${errorText.substring(0, 500)}`;
+            }
+            throw new Error(errorMessage);
         }
 
         const activities = await response.json() as StravaActivity[];
