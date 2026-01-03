@@ -7,6 +7,18 @@ export async function POST(req: Request) {
         const body = await req.json();
         const { stravaCredentials } = body;
 
+        if (stravaCredentials) {
+            console.log(`[API/Strava] Received credentials in request. Keys: ${Object.keys(stravaCredentials).join(', ')}`);
+            // Trim values if they exist
+            if (stravaCredentials.clientId) stravaCredentials.clientId = String(stravaCredentials.clientId).trim();
+            if (stravaCredentials.clientSecret) stravaCredentials.clientSecret = String(stravaCredentials.clientSecret).trim();
+            if (stravaCredentials.refreshToken) stravaCredentials.refreshToken = String(stravaCredentials.refreshToken).trim();
+
+            console.log(`[API/Strava] ClientID provided: ${stravaCredentials.clientId?.substring(0, 5)}...`);
+        } else {
+            console.log('[API/Strava] No credentials in request body, will fallback to server-side ENV.');
+        }
+
         const activities = await fetchAllStravaActivities(stravaCredentials);
 
         // Transform activities into simple coordinate arrays
