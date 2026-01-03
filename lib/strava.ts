@@ -8,12 +8,18 @@ export interface StravaActivity {
 }
 
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {
-    const clientId = creds?.clientId || process.env.STRAVA_CLIENT_ID;
-    const clientSecret = creds?.clientSecret || process.env.STRAVA_CLIENT_SECRET;
-    const refreshToken = creds?.refreshToken || process.env.STRAVA_REFRESH_TOKEN;
+    // Check if we received any non-empty credentials in the UI object
+    const hasUICreds = !!(creds && (creds.clientId || creds.clientSecret || creds.refreshToken));
+
+    const clientId = (creds?.clientId) || process.env.STRAVA_CLIENT_ID;
+    const clientSecret = (creds?.clientSecret) || process.env.STRAVA_CLIENT_SECRET;
+    const refreshToken = (creds?.refreshToken) || process.env.STRAVA_REFRESH_TOKEN;
+
+    const source = hasUICreds ? 'UI' : 'ENV';
+    console.log(`[Strava] Attempting token refresh. Source: ${source}, ClientID: ${clientId?.substring(0, 5)}..., Token: ${refreshToken?.substring(0, 8)}...`);
 
     if (!clientId || !clientSecret || !refreshToken) {
-        throw new Error('Missing Strava credentials. Please configure them in Settings.');
+        throw new Error(`Missing Strava credentials (${source}). Please configure them in Settings or your environment variables.`);
     }
 
     const params = new URLSearchParams();
@@ -44,9 +50,18 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
     }
 
     const data = await response.json();
+    const scopes = data.scope || 'NOT_RETURNED';
+    console.log(`[Strava] Refresh successful. Scopes received: ${scopes}. Response keys: ${Object.keys(data).join(', ')}`);
+
     if (!data.access_token) {
         throw new Error('Strava token refresh response did not contain an access_token');
     }
+
+    // Check for activity read permission in the scopes
+    if (scopes !== 'NOT_RETURNED' && !scopes.includes('activity:read')) {
+        console.warn(`[Strava] WARNING: Token refreshed but missing 'activity:read' scope. Current permitted scopes: ${scopes}`);
+    }
+
     return data.access_token;
 }
 

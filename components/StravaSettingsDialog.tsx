@@ -80,6 +80,10 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                                         https://www.strava.com/oauth/authorize?client_id=YOUR_CLIENT_ID&amp;response_type=code&amp;redirect_uri=http://localhost&amp;approval_prompt=force&amp;scope=read,activity:read_all
                                     </div>
                                 </li>
+                                <li className="text-amber-800 font-semibold bg-amber-50 p-2 rounded border border-amber-100">
+                                    <Check className="w-3 h-3 inline mr-1" />
+                                    IMPORTANT: On the authorization page, you MUST check all the boxes (especially &quot;View data about your activities&quot; and &quot;View data about your private activities&quot;) or the app will not be able to fetch your data.
+                                </li>
                                 <li> Authorize the app, then you will be redirected to a localhost URL. Copy the <code>code</code> parameter from the URL.</li>
                                 <li> Run this command in your terminal (mac/linux) to get the refresh token:
                                     <div className="mt-2 p-2 bg-indigo-100/50 rounded font-mono text-[10px] break-all border border-indigo-200 overflow-x-auto whitespace-pre">

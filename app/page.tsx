@@ -70,11 +70,13 @@ export default function Home() {
                     setStravaRoads(data.riddenRoads);
                 } else if (data.error) {
                     setStravaError(data.error);
+                    setError({ message: data.error, trace: data.trace });
                 }
             })
             .catch(err => {
                 console.error('Failed to fetch Strava roads:', err);
                 setStravaError(err.message);
+                setError({ message: `Strava Connection Failed: ${err.message}` });
             });
     }, [stravaCredentials]);
 
@@ -682,6 +684,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         // No need to close, let them see the "Saved!" state
                     }}
                 />
+
+                {error && (
+                    <ErrorDialog
+                        message={error.message}
+                        trace={error.trace}
+                        onClose={() => setError(null)}
+                    />
+                )}
             </div>
         </main>
     );
