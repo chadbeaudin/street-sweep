@@ -377,14 +377,15 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <EraserTool route={route} onRouteUpdate={onRouteUpdate} />
                 )}
 
-                {/* Visible Selection Rectangles - hide when route is present unless in selection mode */}
-                {(isSelectionMode || !route) && selectionBoxes.map((box, idx) => (
+                {/* Visible Selection Rectangles - Always visible once selected */}
+                {selectionBoxes.map((box, idx) => (
                     <Rectangle
                         key={`selection-box-${idx}`}
                         bounds={[
                             [box.south, box.west],
                             [box.north, box.east]
                         ]}
+                        interactive={false}
                         pathOptions={{
                             color: '#F59E0B',
                             weight: 2,
@@ -402,6 +403,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             [drawingBox.south, drawingBox.west],
                             [drawingBox.north, drawingBox.east]
                         ]}
+                        interactive={false}
                         pathOptions={{
                             color: '#F59E0B',
                             weight: 2,
