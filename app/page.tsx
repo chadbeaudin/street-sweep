@@ -38,7 +38,7 @@ export default function Home() {
     const [selectionBoxes, setSelectionBoxes] = useState<{ north: number; south: number; east: number; west: number }[]>([]);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [showStravaSettings, setShowStravaSettings] = useState(false);
-    const [stravaCredentials, setStravaCredentials] = useState<any>(null);
+    const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number; id: string }[]>([]);
@@ -54,10 +54,28 @@ export default function Home() {
 
     useEffect(() => {
         const saved = localStorage.getItem('strava_settings');
-        if (saved) setStravaCredentials(JSON.parse(saved));
+        if (saved) {
+            setStravaCredentials(JSON.parse(saved));
+        } else {
+            setStravaCredentials({}); // Set to empty object to signal we've checked localStorage
+        }
     }, []);
 
     useEffect(() => {
+        // Don't fetch until we've at least tried to load from localStorage
+        if (stravaCredentials === undefined) return;
+
+        // If we have no credentials in UI and no ENV vars are expected, 
+        // we can skip the fetch to avoid log noise.
+        const hasRequired = stravaCredentials.clientId &&
+            stravaCredentials.clientSecret &&
+            stravaCredentials.refreshToken;
+
+        if (!hasRequired) {
+            console.log('[Strava] No UI credentials configured, skipping initial fetch.');
+            return;
+        }
+
         setStravaError(null);
         fetch('/api/strava/activities', {
             method: 'POST',
@@ -69,8 +87,12 @@ export default function Home() {
                 if (data.riddenRoads) {
                     setStravaRoads(data.riddenRoads);
                 } else if (data.error) {
+                    // Only show the main ErrorDialog if this isn't just a "missing credentials" case
+                    // which can happen if someone hasn't configured anything yet.
                     setStravaError(data.error);
-                    setError({ message: data.error, trace: data.trace });
+                    if (!data.error.includes('Missing Strava credentials')) {
+                        setError({ message: data.error, trace: data.trace });
+                    }
                 }
             })
             .catch(err => {
