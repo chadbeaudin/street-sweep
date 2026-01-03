@@ -10,8 +10,8 @@
   <Support>https://github.com/bigtimber/StreetSweep/issues</Support>
   <Project>https://github.com/bigtimber/StreetSweep</Project>
   <Overview>StreetSweep is an application for generating optimized bike routes to ensure 100% street coverage within a specified area with minimal backtracking and redundancy.</Overview>
-  <Category>Tools:Utilities Network:Web</Category>
-  <WebUI>http://[IP]:[PORT:3888]</WebUI>
+  <Category>Tools:Utilities Network:Web Mapper:Biking</Category>
+  <WebUI>http://[IP]:[PORT:3888]/</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/bigtimber/StreetSweep/main/app/icon.svg</Icon>
   <ExtraParams/>
@@ -20,7 +20,7 @@
   <DateInstalled/>
   <DonateText/>
   <DonateLink/>
-  <Description>Efficient Bike Route Mapping</Description>
+  <Description>Efficient Bike Route Mapping v0.4.1</Description>
   <Networking>
     <Mode>bridge</Mode>
     <Publish>
