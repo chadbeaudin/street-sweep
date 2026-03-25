@@ -82,6 +82,13 @@ function RecenterMap({ route }: { route: [number, number, number?, number?][] | 
     return null;
 }
 
+import { useGeolocateOnMount } from '../lib/useGeolocate';
+
+function GeolocateOnMount() {
+    useGeolocateOnMount();
+    return null;
+}
+
 function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) {
     if (!point) return null;
 
@@ -362,6 +369,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
+                <GeolocateOnMount />
                 <RecenterMap route={route} />
 
                 {/* Selection Box Drawing Tool */}
