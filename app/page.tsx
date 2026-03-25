@@ -651,6 +651,29 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             </header>
 
             <div className="flex-1 flex flex-col relative min-h-0">
+                {/* First-Time User Welcome Overlay */}
+                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && (
+                    <div className="absolute inset-0 z-[500] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
+                        <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md text-center border border-gray-100 animate-in fade-in zoom-in duration-300">
+                            <div className="w-16 h-16 bg-[#FC4C02] rounded-2xl flex items-center justify-center shadow-lg shadow-orange-200 mx-auto mb-6">
+                                <svg className="w-8 h-8 text-white fill-current" viewBox="0 0 24 24">
+                                    <path d="M15.387 17.944l-2.089-4.116h-3.065L15.387 24l5.15-10.172h-3.066m-7.008-5.599l2.836 5.598h4.172L10.463 0l-7 13.828h4.169" />
+                                </svg>
+                            </div>
+                            <h2 className="text-2xl font-bold text-gray-900 mb-3 tracking-tight">Welcome to StreetSweep!</h2>
+                            <p className="text-gray-500 mb-8 font-medium leading-relaxed">
+                                To get started drawing your custom routes, you need to connect your Strava account to synchronize your heatmap data.
+                            </p>
+                            <button
+                                onClick={() => setShowStravaSettings(true)}
+                                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#FC4C02] text-white rounded-xl text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200"
+                            >
+                                <Settings className="w-4 h-4" />
+                                Setup Strava Connection
+                            </button>
+                        </div>
+                    </div>
+                )}
                 {/* Construction Warning */}
                 {route && route.some(p => p.length > 3 && p[3] === 1) && (
                     <div className="bg-amber-50 border-l-4 border-amber-400 px-6 py-3 flex items-center gap-3 shadow-sm">
