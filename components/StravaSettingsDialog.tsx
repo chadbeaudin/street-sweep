@@ -65,7 +65,7 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                     <section className="space-y-4">
                         <div className="flex items-center gap-2 text-indigo-600 font-semibold uppercase tracking-wider text-xs">
                             <HelpCircle className="w-4 h-4" />
-                            How to get your API details
+                            How to connect to Strava
                         </div>
                         <div className="bg-indigo-50 rounded-lg p-5 border border-indigo-100 space-y-3">
                             <ol className="list-decimal list-inside space-y-3 text-sm text-indigo-900 leading-relaxed">
@@ -74,26 +74,11 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                                 </li>
                                 <li> Create an application (if you haven&apos;t yet). Use &quot;StreetSweep&quot; as the name and &quot;localhost&quot; as the Authorization Callback Domain.</li>
                                 <li> Copy your <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below.</li>
-                                <li>
-                                    To get your <strong>Refresh Token</strong>, visit this URL in your browser (replace <code>YOUR_CLIENT_ID</code> with yours):
-                                    <div className="mt-2 p-2 bg-indigo-100/50 rounded font-mono text-[10px] break-all border border-indigo-200">
-                                        https://www.strava.com/oauth/authorize?client_id=YOUR_CLIENT_ID&amp;response_type=code&amp;redirect_uri=http://localhost&amp;approval_prompt=force&amp;scope=read,activity:read_all
-                                    </div>
-                                </li>
                                 <li className="text-amber-800 font-semibold bg-amber-50 p-2 rounded border border-amber-100">
                                     <Check className="w-3 h-3 inline mr-1" />
-                                    IMPORTANT: On the authorization page, you MUST check all the boxes (especially &quot;View data about your activities&quot; and &quot;View data about your private activities&quot;) or the app will not be able to fetch your data.
+                                    IMPORTANT: When you click Connect to Strava below, you will be taken to an authorization page. You MUST manually check all the boxes (especially &quot;View data about your activities&quot; and &quot;View data about your private activities&quot;) or the app will not fetch routes.
                                 </li>
-                                <li> Authorize the app, then you will be redirected to a localhost URL. Copy the <code>code</code> parameter from the URL.</li>
-                                <li> Run this command in your terminal (mac/linux) to get the refresh token:
-                                    <div className="mt-2 p-2 bg-indigo-100/50 rounded font-mono text-[10px] break-all border border-indigo-200 overflow-x-auto whitespace-pre">
-                                        {`curl -X POST https://www.strava.com/oauth/token \\
-  -F client_id=YOUR_CLIENT_ID \\
-  -F client_secret=YOUR_CLIENT_SECRET \\
-  -F code=AUTHORIZATION_CODE \\
-  -F grant_type=authorization_code`}
-                                    </div>
-                                </li>
+                                <li> Click the Connect button below to securely authenticate. </li>
                             </ol>
                         </div>
                     </section>
@@ -120,42 +105,38 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                                 className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FC4C02] focus:border-transparent transition-all outline-none text-gray-900"
                             />
                         </div>
-                        <div className="space-y-2">
-                            <label className="text-sm font-semibold text-gray-700">Refresh Token</label>
-                            <input
-                                type="password"
-                                value={settings.refreshToken}
-                                onChange={(e) => setSettings({ ...settings, refreshToken: e.target.value })}
-                                placeholder="••••••••••••••••••••••••••••••••"
-                                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FC4C02] focus:border-transparent transition-all outline-none text-gray-900"
-                            />
-                        </div>
                     </div>
                 </div>
 
-                <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 bg-gray-50/50">
-                    <button
-                        onClick={onClose}
-                        className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                    >
-                        Close
-                    </button>
-                    <button
-                        onClick={handleSave}
-                        className="flex items-center gap-2 px-6 py-2 bg-[#FC4C02] text-white rounded-lg text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200"
-                    >
-                        {saved ? (
-                            <>
-                                <Check className="w-4 h-4" />
-                                Saved!
-                            </>
+                <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
+                    <div className="text-sm">
+                        {settings.refreshToken ? (
+                            <span className="text-green-600 font-medium flex items-center gap-1">
+                                <Check className="w-4 h-4" /> Connected to Strava
+                            </span>
                         ) : (
-                            <>
-                                <Save className="w-4 h-4" />
-                                Save Settings
-                            </>
+                            <span className="text-amber-600 font-medium">Not connected</span>
                         )}
-                    </button>
+                    </div>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={onClose}
+                            className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={() => {
+                                localStorage.setItem('strava_settings', JSON.stringify(settings));
+                                window.location.href = `https://www.strava.com/oauth/authorize?client_id=${settings.clientId}&response_type=code&redirect_uri=${window.location.origin}/strava-auth&approval_prompt=force&scope=read,activity:read_all`;
+                            }}
+                            disabled={!settings.clientId || !settings.clientSecret}
+                            className="flex items-center gap-2 px-6 py-2 bg-[#FC4C02] text-white rounded-lg text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <Save className="w-4 h-4" />
+                            Connect to Strava
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
