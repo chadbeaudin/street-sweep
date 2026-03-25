@@ -428,9 +428,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <Polyline
                         key={`strava-${idx}`}
                         positions={road as [number, number][]}
-                        color="#3B82F6"
-                        weight={2}
-                        opacity={0.8}
+                        color="#1D4ED8"
+                        weight={3}
+                        opacity={0.9}
                         interactive={false}
                     />
                 ))}
