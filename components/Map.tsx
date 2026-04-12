@@ -89,6 +89,7 @@ function GeolocateOnMount() {
     return null;
 }
 
+
 function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) {
     if (!point) return null;
 
@@ -360,8 +361,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             <MapContainer
                 center={[39.02, -104.7]}
                 zoom={13}
-                zoomSnap={0.25}
-                zoomDelta={0.25}
+                zoomSnap={1}
+                zoomDelta={1}
+                wheelPxPerZoomLevel={120}
+                wheelDebounceTime={40}
                 className={`absolute inset-0 ${isSelectionMode ? 'selection-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''}`}
             >
                 <TileLayer
