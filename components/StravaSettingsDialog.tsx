@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { X, ExternalLink, HelpCircle, Save, Check } from 'lucide-react';
+import { featureFlags } from '@/lib/featureFlags';
 
 interface StravaSettings {
-    clientId: string;
-    clientSecret: string;
-    refreshToken: string;
+    refreshToken?: string;
+    // Only used when advancedStravaIntegration is enabled
+    clientId?: string;
+    clientSecret?: string;
 }
 
 interface StravaSettingsDialogProps {
@@ -16,12 +18,10 @@ interface StravaSettingsDialogProps {
 }
 
 export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettingsDialogProps) {
-    const [settings, setSettings] = useState<StravaSettings>({
-        clientId: '',
-        clientSecret: '',
-        refreshToken: ''
-    });
+    const [settings, setSettings] = useState<StravaSettings>({});
     const [saved, setSaved] = useState(false);
+
+    const isAdvanced = featureFlags.advancedStravaIntegration;
 
     useEffect(() => {
         const savedSettings = localStorage.getItem('strava_settings');
@@ -41,7 +41,20 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
         setTimeout(() => setSaved(false), 2000);
     };
 
+    const handleConnect = () => {
+        if (isAdvanced) {
+            // Advanced: user supplies their own Strava app credentials
+            localStorage.setItem('strava_settings', JSON.stringify(settings));
+            window.location.href = `https://www.strava.com/oauth/authorize?client_id=${settings.clientId}&response_type=code&redirect_uri=${window.location.origin}/strava-auth&approval_prompt=force&scope=read,activity:read_all`;
+        } else {
+            // Standard: server handles credentials, request minimal public scope
+            window.location.href = `/api/strava/auth`;
+        }
+    };
+
     if (!isOpen) return null;
+
+    const canConnect = isAdvanced ? !!(settings.clientId && settings.clientSecret) : true;
 
     return (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
@@ -68,44 +81,61 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                             How to connect to Strava
                         </div>
                         <div className="bg-indigo-50 rounded-lg p-5 border border-indigo-100 space-y-3">
-                            <ol className="list-decimal list-inside space-y-3 text-sm text-indigo-900 leading-relaxed">
-                                <li>
-                                    Go to the <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener" className="inline-flex items-center gap-1 font-bold underline hover:text-indigo-700">Strava API Settings <ExternalLink className="w-3 h-3" /></a>
-                                </li>
-                                <li> Create an application (if you haven&apos;t yet). Use &quot;StreetSweep&quot; as the name and &quot;localhost&quot; as the Authorization Callback Domain.</li>
-                                <li> Copy your <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below.</li>
-                                <li className="text-amber-800 font-semibold bg-amber-50 p-2 rounded border border-amber-100">
-                                    <Check className="w-3 h-3 inline mr-1" />
-                                    IMPORTANT: When you click Connect to Strava below, you will be taken to an authorization page. You MUST manually check all the boxes (especially &quot;View data about your activities&quot; and &quot;View data about your private activities&quot;) or the app will not fetch routes.
-                                </li>
-                                <li> Click the Connect button below to securely authenticate. </li>
-                            </ol>
+                            {isAdvanced ? (
+                                // ── Advanced mode instructions ──────────────────────────────
+                                <ol className="list-decimal list-inside space-y-3 text-sm text-indigo-900 leading-relaxed">
+                                    <li>
+                                        Go to the <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener" className="inline-flex items-center gap-1 font-bold underline hover:text-indigo-700">Strava API Settings <ExternalLink className="w-3 h-3" /></a>
+                                    </li>
+                                    <li>Create an application (if you haven&apos;t yet). Use &quot;StreetSweep&quot; as the name and &quot;localhost&quot; as the Authorization Callback Domain.</li>
+                                    <li>Copy your <strong>Client ID</strong> and <strong>Client Secret</strong> into the fields below.</li>
+                                    <li className="text-amber-800 font-semibold bg-amber-50 p-2 rounded border border-amber-100">
+                                        <Check className="w-3 h-3 inline mr-1" />
+                                        IMPORTANT: When you click Connect to Strava below, you will be taken to an authorization page. You MUST manually check all the boxes (especially &quot;View data about your activities&quot; and &quot;View data about your private activities&quot;) or the app will not fetch routes.
+                                    </li>
+                                    <li>Click the Connect button below to securely authenticate.</li>
+                                </ol>
+                            ) : (
+                                // ── Standard mode instructions ──────────────────────────────
+                                <ol className="list-decimal list-inside space-y-3 text-sm text-indigo-900 leading-relaxed">
+                                    <li>
+                                        Click the <strong>Connect to Strava</strong> button below.
+                                    </li>
+                                    <li className="text-amber-800 font-semibold bg-amber-50 p-2 rounded border border-amber-100">
+                                        <Check className="w-3 h-3 inline mr-1" />
+                                        IMPORTANT: When prompted by Strava, you MUST check the box to allow viewing data about your activities (specifically &quot;View data about your activities&quot;) so we can fetch your public routes.
+                                    </li>
+                                    <li>After authorizing, you will be securely redirected back to the map.</li>
+                                </ol>
+                            )}
                         </div>
                     </section>
 
-                    {/* Form */}
-                    <div className="grid gap-6">
-                        <div className="space-y-2">
-                            <label className="text-sm font-semibold text-gray-700">Client ID</label>
-                            <input
-                                type="text"
-                                value={settings.clientId}
-                                onChange={(e) => setSettings({ ...settings, clientId: e.target.value })}
-                                placeholder="12345"
-                                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FC4C02] focus:border-transparent transition-all outline-none text-gray-900"
-                            />
+                    {/* Advanced-only: API credential inputs */}
+                    {isAdvanced && (
+                        <div className="grid gap-6">
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-gray-700">Client ID</label>
+                                <input
+                                    type="text"
+                                    value={settings.clientId ?? ''}
+                                    onChange={(e) => setSettings({ ...settings, clientId: e.target.value })}
+                                    placeholder="12345"
+                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FC4C02] focus:border-transparent transition-all outline-none text-gray-900"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-gray-700">Client Secret</label>
+                                <input
+                                    type="password"
+                                    value={settings.clientSecret ?? ''}
+                                    onChange={(e) => setSettings({ ...settings, clientSecret: e.target.value })}
+                                    placeholder="••••••••••••••••••••••••••••••••"
+                                    className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FC4C02] focus:border-transparent transition-all outline-none text-gray-900"
+                                />
+                            </div>
                         </div>
-                        <div className="space-y-2">
-                            <label className="text-sm font-semibold text-gray-700">Client Secret</label>
-                            <input
-                                type="password"
-                                value={settings.clientSecret}
-                                onChange={(e) => setSettings({ ...settings, clientSecret: e.target.value })}
-                                placeholder="••••••••••••••••••••••••••••••••"
-                                className="w-full px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FC4C02] focus:border-transparent transition-all outline-none text-gray-900"
-                            />
-                        </div>
-                    </div>
+                    )}
                 </div>
 
                 <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between bg-gray-50/50">
@@ -126,11 +156,8 @@ export function StravaSettingsDialog({ isOpen, onClose, onSave }: StravaSettings
                             Cancel
                         </button>
                         <button
-                            onClick={() => {
-                                localStorage.setItem('strava_settings', JSON.stringify(settings));
-                                window.location.href = `https://www.strava.com/oauth/authorize?client_id=${settings.clientId}&response_type=code&redirect_uri=${window.location.origin}/strava-auth&approval_prompt=force&scope=read,activity:read_all`;
-                            }}
-                            disabled={!settings.clientId || !settings.clientSecret}
+                            onClick={handleConnect}
+                            disabled={!canConnect}
                             className="flex items-center gap-2 px-6 py-2 bg-[#FC4C02] text-white rounded-lg text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <Save className="w-4 h-4" />

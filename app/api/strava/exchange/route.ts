@@ -3,10 +3,18 @@ import { NextResponse } from 'next/server';
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        const { clientId, clientSecret, code } = body;
+        const { code, clientId: bodyClientId, clientSecret: bodyClientSecret } = body;
+
+        // Advanced mode: client passes its own credentials.
+        // Standard mode: fall back to server-side env vars.
+        const clientId = bodyClientId?.trim() || process.env.STRAVA_CLIENT_ID;
+        const clientSecret = bodyClientSecret?.trim() || process.env.STRAVA_CLIENT_SECRET;
 
         if (!clientId || !clientSecret || !code) {
-            return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
+            return NextResponse.json(
+                { error: 'Missing required parameters or server configuration' },
+                { status: 400 }
+            );
         }
 
         const params = new URLSearchParams();
@@ -26,7 +34,11 @@ export async function POST(req: Request) {
         const data = await response.json();
 
         if (!response.ok) {
-            return NextResponse.json({ error: 'Strava OAuth failed', details: data }, { status: response.status });
+            console.error('Strava OAuth exchange failed:', JSON.stringify(data, null, 2));
+            return NextResponse.json(
+                { error: 'Strava OAuth failed', details: data },
+                { status: response.status }
+            );
         }
 
         return NextResponse.json(data);

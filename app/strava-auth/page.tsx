@@ -23,29 +23,23 @@ function StravaAuthCallback() {
 
         try {
             const savedSettings = localStorage.getItem('strava_settings');
-            if (!savedSettings) {
-                setStatus('Missing Strava credentials in local storage. Please return to Settings.');
-                return;
-            }
-
-            const settings = JSON.parse(savedSettings);
-            if (!settings.clientId || !settings.clientSecret) {
-                setStatus('Missing Client ID or Secret in local storage. Please return to Settings.');
-                return;
-            }
+            const settings = savedSettings ? JSON.parse(savedSettings) : {};
 
             setStatus('Exchanging authorization code securely...');
+
+            // In advanced mode the user supplied their own Client ID/Secret, so
+            // we forward them to the exchange endpoint. In standard mode we only
+            // send the code and let the server use its own credentials.
+            const exchangePayload: Record<string, string> = { code };
+            if (settings.clientId) exchangePayload.clientId = settings.clientId;
+            if (settings.clientSecret) exchangePayload.clientSecret = settings.clientSecret;
 
             fetch('/api/strava/exchange', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({ 
-                    clientId: settings.clientId, 
-                    clientSecret: settings.clientSecret, 
-                    code 
-                })
+                body: JSON.stringify(exchangePayload)
             })
             .then(res => res.json())
             .then(data => {
@@ -55,7 +49,8 @@ function StravaAuthCallback() {
                     setStatus('Successfully connected to Strava! Redirecting to map...');
                     setTimeout(() => router.push('/'), 1500);
                 } else {
-                    setStatus('Failed to get token: ' + (data.error || JSON.stringify(data)));
+                    const detail = data.details ? JSON.stringify(data.details) : '';
+                    setStatus('Failed to get token: ' + (data.error || JSON.stringify(data)) + (detail ? ` — ${detail}` : ''));
                 }
             })
             .catch(err => {

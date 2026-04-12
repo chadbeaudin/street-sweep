@@ -28,3 +28,6 @@ ts-debug.log*
 
 # vercel
 .vercel
+
+# Local environment variables (contains secrets)
+.env.local

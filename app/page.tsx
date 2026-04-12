@@ -66,11 +66,8 @@ export default function Home() {
         // Don't fetch until we've at least tried to load from localStorage
         if (stravaCredentials === undefined) return;
 
-        // If we have no credentials in UI and no ENV vars are expected, 
-        // we can skip the fetch to avoid log noise.
-        const hasRequired = stravaCredentials.clientId &&
-            stravaCredentials.clientSecret &&
-            stravaCredentials.refreshToken;
+        // If we have no refreshToken in UI, we haven't connected yet.
+        const hasRequired = !!stravaCredentials?.refreshToken;
 
         if (!hasRequired) {
             console.log('[Strava] No UI credentials configured, skipping initial fetch.');
