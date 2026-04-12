@@ -39,13 +39,16 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
 
     if (!response.ok) {
         const errorText = await response.text();
+        if (errorText.trimStart().startsWith('<')) {
+            throw new Error('Strava is temporarily unavailable. Please try again in a few minutes.');
+        }
         let errorMessage = `Failed to refresh Strava token: ${response.status} ${response.statusText}`;
         try {
             const errorJson = JSON.parse(errorText);
             if (errorJson.message) errorMessage += ` - ${errorJson.message}`;
             if (errorJson.errors) errorMessage += ` (${JSON.stringify(errorJson.errors)})`;
         } catch {
-            errorMessage += ` - ${errorText.substring(0, 500)}`;
+            errorMessage += ` - ${errorText.substring(0, 200)}`;
         }
         throw new Error(errorMessage);
     }
@@ -87,13 +90,16 @@ export async function fetchAllStravaActivities(creds?: { clientId?: string; clie
 
         if (!response.ok) {
             const errorText = await response.text();
+            if (errorText.trimStart().startsWith('<')) {
+                throw new Error('Strava is temporarily unavailable. Please try again in a few minutes.');
+            }
             let errorMessage = `Strava API error: ${response.status} ${response.statusText}`;
             try {
                 const errorJson = JSON.parse(errorText);
                 if (errorJson.message) errorMessage += ` - ${errorJson.message}`;
                 if (errorJson.errors) errorMessage += ` (${JSON.stringify(errorJson.errors)})`;
             } catch {
-                errorMessage += ` - ${errorText.substring(0, 500)}`;
+                errorMessage += ` - ${errorText.substring(0, 200)}`;
             }
             throw new Error(errorMessage);
         }
