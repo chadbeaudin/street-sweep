@@ -40,7 +40,8 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
 
   // Round to 3 decimal places (~110m) for much better cache hit rate
   const round = (n: number) => Math.round(n * 1000) / 1000;
-  const cacheKey = `${round(bbox.south)},${round(bbox.west)},${round(bbox.north)},${round(bbox.east)}`;
+  // v2: removed footway and path to avoid parallel sidewalk inflation
+  const cacheKey = `v2_${round(bbox.south)},${round(bbox.west)},${round(bbox.north)},${round(bbox.east)}`;
   const now = Date.now();
 
   // 1. Check persistent memory cache
@@ -67,7 +68,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
   const requestPromise = (async () => {
     const bikeQuery = `
       [out:json][timeout:90];
-      way["highway"~"motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|track|path|cycleway|footway"]
+      way["highway"~"motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|track|cycleway"]
          ["access"!~"private|no"]
          (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
       out geom;

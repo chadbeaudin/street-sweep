@@ -95,15 +95,10 @@ describe('StreetGraph Efficiency', () => {
         }
 
         console.log('Total circuit distance:', totalDist);
-
-        // Theoretical min: sum of all edges + min matching
-        // Edges: 5-3(111), 3-1(111), 1-2(111), 2-4(111), 4-6(111), 3-4(122) -> total ~ 677m (very rough)
-        // Min matching: (3,5) and (4,6) -> 111+111 = 222m
-        // Total min ~ 899m
-        // Suboptimal matching: (3,4) and (5,6) -> 122 + 158 = 280m
-        // Total suboptimal ~ 957m
-
-        // Since I don't know the exact haversine values here, I'll just run it and see.
+        
+        // The optimal total distance is ~899m. The greedy approach gives ~1042m.
+        // We assert that the new algorithm finds the optimal path (allow small float variations).
+        expect(totalDist).toBeLessThan(905);
     });
 
     test('demonstrates improvement in island connection', () => {
