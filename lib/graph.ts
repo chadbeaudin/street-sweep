@@ -1,8 +1,6 @@
 // @ts-ignore
 import createGraph, { Graph } from 'ngraph.graph';
 // @ts-ignore
-import eulerianTrail from 'eulerian-trail';
-// @ts-ignore
 import path from 'ngraph.path';
 
 import { OSMWay, OSMNode, OverpassResponse } from './types';
@@ -215,6 +213,116 @@ export class StreetGraph {
         return oddNodes;
     }
 
+    private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+        const phi1 = lat1 * Math.PI / 180;
+        const phi2 = lat2 * Math.PI / 180;
+        const lambda1 = lon1 * Math.PI / 180;
+        const lambda2 = lon2 * Math.PI / 180;
+        const y = Math.sin(lambda2 - lambda1) * Math.cos(phi2);
+        const x = Math.cos(phi1) * Math.sin(phi2) -
+                  Math.sin(phi1) * Math.cos(phi2) * Math.cos(lambda2 - lambda1);
+        const theta = Math.atan2(y, x);
+        return (theta * 180 / Math.PI + 360) % 360;
+    }
+
+    private getAngleDifference(b1: number, b2: number): number {
+        let diff = Math.abs(b1 - b2);
+        if (diff > 180) {
+            diff = 360 - diff;
+        }
+        return diff;
+    }
+
+    private buildGeographicEulerianTrail(edges: { u: string, v: string, data: any }[], startNodeId: string | null): string[] {
+        const adj = new Map<string, { id: number, target: string }[]>();
+        let edgeCounter = 0;
+        
+        for (const e of edges) {
+            const id = edgeCounter++;
+            if (!adj.has(e.u)) adj.set(e.u, []);
+            if (!adj.has(e.v)) adj.set(e.v, []);
+            adj.get(e.u)!.push({ id, target: e.v });
+            adj.get(e.v)!.push({ id, target: e.u });
+        }
+
+        let startNode = startNodeId || edges[0].u;
+        const oddNodes = Array.from(adj.entries()).filter(([_, neighbors]) => neighbors.length % 2 !== 0).map(([node]) => node);
+        
+        if (oddNodes.length > 0) {
+            if (oddNodes.length === 2) {
+                if (!startNodeId || !oddNodes.includes(startNodeId)) {
+                    startNode = oddNodes[0];
+                }
+            } else {
+                throw new Error(`Graph is not Eulerian (${oddNodes.length} odd nodes)`);
+            }
+        }
+
+        const usedEdges = new Set<number>();
+        const stack: string[] = [startNode];
+        const trailPath: string[] = [];
+        
+        while (stack.length > 0) {
+            const curr = stack[stack.length - 1];
+            const neighbors = adj.get(curr) || [];
+            
+            const unused = neighbors.filter(n => !usedEdges.has(n.id));
+            
+            if (unused.length === 0) {
+                trailPath.push(stack.pop()!);
+            } else {
+                let bestIdx = 0;
+                
+                if (stack.length >= 2 && unused.length > 1) {
+                    const prevNodeId = stack[stack.length - 2];
+                    const prevNode = this.graph.getNode(prevNodeId);
+                    const currNode = this.graph.getNode(curr);
+                    
+                    if (prevNode && currNode) {
+                        const inBearing = this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon);
+                        
+                        let bestScore = -Infinity;
+                        for (let i = 0; i < unused.length; i++) {
+                            const nextNodeId = unused[i].target;
+                            
+                            if (nextNodeId === prevNodeId) {
+                                // Heavily penalize immediate U-turns
+                                const score = -1000;
+                                if (score > bestScore) { bestScore = score; bestIdx = i; }
+                                continue;
+                            }
+                            
+                            const nextNode = this.graph.getNode(nextNodeId);
+                            if (nextNode) {
+                                const outBearing = this.calculateBearing(currNode.data.lat, currNode.data.lon, nextNode.data.lat, nextNode.data.lon);
+                                const diff = this.getAngleDifference(inBearing, outBearing);
+                                
+                                // We want the smallest angle difference (closest to 0) to "go straight"
+                                const score = -diff;
+                                if (score > bestScore) {
+                                    bestScore = score;
+                                    bestIdx = i;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                const next = unused[bestIdx];
+                usedEdges.add(next.id);
+                stack.push(next.target);
+            }
+        }
+
+        trailPath.reverse();
+        
+        if (usedEdges.size < edges.length) {
+            throw new Error(`Partial solution - disconnected graph detected. Traversed ${usedEdges.size} of ${edges.length} edges.`);
+        }
+
+        return trailPath;
+    }
+
     public pruneDisconnectedComponents() {
         if (this.graph.getNodesCount() === 0) return;
         const visited = new Set<string>();
@@ -245,6 +353,50 @@ export class StreetGraph {
                 this.graph.removeNode(nodeId);
             }
         }
+    }
+
+    public findAllTargets(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>): Map<string, { path: { id: string, idNext: string, weight: number }[], weight: number }> {
+        const distances = new Map<string, number>();
+        const previous = new Map<string, { id: string, weight: number }>();
+        const queue: { id: string, weight: number }[] = [{ id: fromId, weight: 0 }];
+        distances.set(fromId, 0);
+
+        const results = new Map<string, { path: { id: string, idNext: string, weight: number }[], weight: number }>();
+        const targetsLeft = new Set(targetIds);
+        targetsLeft.delete(fromId);
+
+        while (queue.length > 0) {
+            queue.sort((a, b) => a.weight - b.weight);
+            const { id: u, weight: distU } = queue.shift()!;
+
+            if (targetsLeft.has(u)) {
+                const p: { id: string, idNext: string, weight: number }[] = [];
+                let curr = u;
+                while (curr !== fromId) {
+                    const prev = previous.get(curr)!;
+                    p.unshift({ id: prev.id, idNext: curr, weight: prev.weight });
+                    curr = prev.id;
+                }
+                results.set(u, { path: p, weight: distU });
+                targetsLeft.delete(u);
+                if (targetsLeft.size === 0) break;
+            }
+
+            const node = this.graph.getNode(u);
+            node?.links?.forEach((link: any) => {
+                if (allowedLinks && !allowedLinks.has(link.id)) return;
+                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                const weight = link.data.weight;
+                const alt = distU + weight;
+
+                if (!distances.has(v) || alt < distances.get(v)!) {
+                    distances.set(v, alt);
+                    previous.set(v, { id: u, weight });
+                    queue.push({ id: v, weight: alt });
+                }
+            });
+        }
+        return results;
     }
 
     public findClosestTarget(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
@@ -529,74 +681,115 @@ export class StreetGraph {
         }
 
         const remainingOdd = new Set(nodesToFlip);
-        const pairs: { u: string, v: string, path: any[], weight: number }[] = [];
+        console.log(`${ts()} Matching ${remainingOdd.size} odd nodes using APSP + 2-opt approach...`);
+        
+        const oddArray = Array.from(remainingOdd);
+        const distMatrix = new Map<string, Map<string, { weight: number, path: any[] }>>();
+        
+        // 1. Compute APSP for odd nodes
+        for (const u of oddArray) {
+            const res = this.findAllTargets(u, remainingOdd);
+            distMatrix.set(u, res);
+        }
 
-        console.log(`${ts()} Matching ${remainingOdd.size} odd nodes using global min-weight greedy approach...`);
-
-        while (remainingOdd.size > 1) {
-            let bestPair: any = null;
-            let minWeight = Infinity;
-
-            const oddArray = Array.from(remainingOdd);
-            // Limit search for massive graphs if necessary, but usually odd nodes are few
-            const searchLimit = Math.min(oddArray.length, 100);
-
-            for (let i = 0; i < searchLimit; i++) {
+        // 2. Global Greedy Base Matching
+        const currentMatches: { u: string, v: string, weight: number, path: any[] }[] = [];
+        const unmatched = new Set(oddArray);
+        
+        const allPairs: { u: string, v: string, weight: number }[] = [];
+        for (let i = 0; i < oddArray.length; i++) {
+            for (let j = i + 1; j < oddArray.length; j++) {
                 const u = oddArray[i];
-                const targets = new Set(remainingOdd);
-                targets.delete(u);
-
-                const res = this.findClosestTarget(u, targets);
+                const v = oddArray[j];
+                const res = distMatrix.get(u)?.get(v);
                 if (res) {
-                    const weight = res.path.reduce((sum, p) => sum + p.weight, 0);
-                    if (weight < minWeight) {
-                        minWeight = weight;
-                        bestPair = { u, v: res.targetId, path: res.path, weight };
-                    }
-                }
-                // If we found a very close match, we can stop early to speed up
-                if (minWeight < 10) break;
-            }
-
-            if (bestPair) {
-                remainingOdd.delete(bestPair.u);
-                remainingOdd.delete(bestPair.v);
-                bestPair.path.forEach((p: any) => {
-                    const link = this.graph.getLink(p.id, p.idNext);
-                    if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
-                });
-            } else {
-                // Should not happen in a connected component, but for safety:
-                const u = oddArray[0];
-                remainingOdd.delete(u);
-                console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge.`);
-                const forced = this.findClosestTarget(u, reachableNodes);
-                if (forced) {
-                    forced.path.forEach((p: any) => {
-                        const link = this.graph.getLink(p.id, p.idNext);
-                        if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
-                    });
+                    allPairs.push({ u, v, weight: res.weight });
                 }
             }
         }
+        
+        allPairs.sort((a, b) => a.weight - b.weight);
+        
+        for (const pair of allPairs) {
+            if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
+                unmatched.delete(pair.u);
+                unmatched.delete(pair.v);
+                currentMatches.push({
+                    u: pair.u,
+                    v: pair.v,
+                    weight: pair.weight,
+                    path: distMatrix.get(pair.u)!.get(pair.v)!.path
+                });
+            }
+        }
+
+        // Forced bridging for any isolated odd nodes (safety fallback)
+        for (const u of Array.from(unmatched)) {
+             unmatched.delete(u);
+             console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge.`);
+             const forced = this.findClosestTarget(u, reachableNodes);
+             if (forced) {
+                 forced.path.forEach((p: any) => {
+                     const link = this.graph.getLink(p.id, p.idNext);
+                     if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                 });
+             }
+        }
+
+        // 3. 2-Opt Local Search to find absolute minimum weight perfect matching
+        let improved = true;
+        let iterations = 0;
+        while (improved && iterations < 100) {
+            improved = false;
+            iterations++;
+            for (let i = 0; i < currentMatches.length; i++) {
+                for (let j = i + 1; j < currentMatches.length; j++) {
+                    const m1 = currentMatches[i];
+                    const m2 = currentMatches[j];
+                    
+                    const currentWeight = m1.weight + m2.weight;
+                    
+                    // Option A: Pair (m1.u, m2.u) and (m1.v, m2.v)
+                    const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u)?.weight ?? Infinity;
+                    const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v)?.weight ?? Infinity;
+                    const sumA = w_u1u2 + w_v1v2;
+                    
+                    // Option B: Pair (m1.u, m2.v) and (m1.v, m2.u)
+                    const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v)?.weight ?? Infinity;
+                    const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u)?.weight ?? Infinity;
+                    const sumB = w_u1v2 + w_v1u2;
+                    
+                    // Compare and swap if better
+                    if (sumA < currentWeight && sumA <= sumB) {
+                        currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2, path: distMatrix.get(m1.u)!.get(m2.u)!.path };
+                        currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2, path: distMatrix.get(m1.v)!.get(m2.v)!.path };
+                        improved = true;
+                        break;
+                    } else if (sumB < currentWeight) {
+                        currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2, path: distMatrix.get(m1.u)!.get(m2.v)!.path };
+                        currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2, path: distMatrix.get(m1.v)!.get(m2.u)!.path };
+                        improved = true;
+                        break;
+                    }
+                }
+                if (improved) break; // Restart loop if improved
+            }
+        }
+        
+        console.log(`${ts()} 2-opt complete after ${iterations} iterations.`);
+
+        // Apply final matched paths to the graph
+        for (const match of currentMatches) {
+            match.path.forEach((p: any) => {
+                const link = this.graph.getLink(p.id, p.idNext);
+                if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+            });
+        }
 
         try {
-            const finalEdges: [string, string][] = edgesInFinalGraph.map(e => [e.u, e.v]);
             let trail: string[] = [];
             try {
-                // If the graph is disconnected, eulerianTrail often returns a path for just ONE component
-                // and ignores the rest. We must verify coverage.
-                trail = eulerianTrail({ edges: finalEdges, startNode: startNode || undefined });
-
-                // Coverage Check: If we have many edges but trail is short, we likely missed components.
-                // A simple Eulerian trail visits every edge at least once.
-                // Trail length should be >= finalEdges.length.
-                if (trail.length < finalEdges.length && !startNode && (!manualRoute || manualRoute.length === 0)) {
-                    // Only enforce this strictly for area-only monitoring where we expect full coverage
-                    console.warn(`${ts()} Partial solution detected (Trail=${trail.length}, Edges=${finalEdges.length}). Triggering repair.`);
-                    throw new Error("Partial solution - disconnected graph detected.");
-                }
-
+                trail = this.buildGeographicEulerianTrail(edgesInFinalGraph, startNode || null);
             } catch (err) {
                 console.warn(`${ts()} Eulerian trail failed. Attempting emergency repair (bridging disconnected components)...`, err);
                 let repairSuccess = false;
@@ -659,8 +852,7 @@ export class StreetGraph {
                             }
                         }
 
-                        const repairedEdges: [string, string][] = edgesInFinalGraph.map(e => [e.u, e.v]);
-                        trail = eulerianTrail({ edges: repairedEdges, startNode: startNode || undefined });
+                        trail = this.buildGeographicEulerianTrail(edgesInFinalGraph, startNode || null);
                         console.log(`${ts()} Emergency repair successful!`);
                         repairSuccess = true;
                     }
