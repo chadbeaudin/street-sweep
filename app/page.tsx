@@ -24,6 +24,7 @@ export default function Home() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
+    const [isStravaLoading, setIsStravaLoading] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
     const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
@@ -75,6 +76,7 @@ export default function Home() {
         }
 
         setStravaError(null);
+        setIsStravaLoading(true);
         fetch('/api/strava/activities', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -97,6 +99,9 @@ export default function Home() {
                 console.error('Failed to fetch Strava roads:', err);
                 setStravaError(err.message);
                 setError({ message: `Strava Connection Failed: ${err.message}` });
+            })
+            .finally(() => {
+                setIsStravaLoading(false);
             });
     }, [stravaCredentials]);
 
@@ -671,6 +676,18 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </div>
                     </div>
                 )}
+                
+                {/* Strava Loading Overlay */}
+                {isStravaLoading && (
+                    <div className="absolute inset-0 z-[500] backdrop-blur-sm bg-white/30 flex flex-col items-center justify-center p-4">
+                        <div className="bg-white p-6 rounded-2xl shadow-xl w-full max-w-xs text-center border border-gray-100 animate-in fade-in zoom-in duration-300">
+                            <div className="w-12 h-12 border-4 border-orange-200 border-t-[#FC4C02] rounded-full animate-spin mx-auto mb-4"></div>
+                            <h3 className="text-lg font-bold text-gray-900 tracking-tight">Syncing Strava...</h3>
+                            <p className="text-sm text-gray-500 font-medium mt-1">Downloading activities</p>
+                        </div>
+                    </div>
+                )}
+
                 {/* Construction Warning */}
                 {route && route.some(p => p.length > 3 && p[3] === 1) && (
                     <div className="bg-amber-50 border-l-4 border-amber-400 px-6 py-3 flex items-center gap-3 shadow-sm">
