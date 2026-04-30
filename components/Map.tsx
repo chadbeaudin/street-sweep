@@ -397,13 +397,11 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             [box.north, box.east]
                         ]}
                         interactive={false}
-                        pathOptions={{
-                            color: '#F59E0B',
-                            weight: 2,
-                            fillColor: '#F59E0B',
-                            fillOpacity: 0.2,
-                            dashArray: '5, 5'
-                        }}
+                        color="#F59E0B"
+                        weight={2}
+                        fillColor="#F59E0B"
+                        fillOpacity={0.2}
+                        dashArray="5, 5"
                     />
                 ))}
 
@@ -415,13 +413,11 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             [drawingBox.north, drawingBox.east]
                         ]}
                         interactive={false}
-                        pathOptions={{
-                            color: '#F59E0B',
-                            weight: 2,
-                            fillColor: '#F59E0B',
-                            fillOpacity: 0.1,
-                            dashArray: '2, 2'
-                        }}
+                        color="#F59E0B"
+                        weight={2}
+                        fillColor="#F59E0B"
+                        fillOpacity={0.1}
+                        dashArray="2, 2"
                     />
                 )}
 
@@ -480,14 +476,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <Polyline
                         key={`road-hitbox-${idx}`}
                         positions={road as [number, number][]}
-                        pathOptions={{
-                            color: '#3B82F6',
-                            weight: 15,
-                            opacity: 0, // Totally invisible, but interactive
-                            interactive: !isEraserMode,
-                            bubblingMouseEvents: true,
-                            className: 'road-hitbox'
-                        }}
+                        color="#3B82F6"
+                        weight={15}
+                        opacity={0} // Totally invisible, but interactive
+                        interactive={!isEraserMode}
+                        bubblingMouseEvents={true}
+                        className="road-hitbox"
                         eventHandlers={{
                             click: isEraserMode ? undefined : (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
                         }}
@@ -555,7 +549,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 }
                 /* Use specific class for roads to avoid overriding markers */
                 .leaflet-container .road-hitbox {
-                    cursor: crosshair !important;
+                    cursor: pointer !important;
                     pointer-events: auto !important;
                 }
                 /* Use a specific class for the eraser cursor if needed, but EraserTool.tsx already sets it on the container */

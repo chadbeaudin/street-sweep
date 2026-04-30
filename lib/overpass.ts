@@ -84,7 +84,11 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
             const response = await fetch(endpoint, {
               method: 'POST',
               body: 'data=' + encodeURIComponent(bikeQuery),
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+              headers: { 
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+                'User-Agent': 'StreetSweep/1.0 (Local Development)'
+              }
             });
 
             if (response.ok) {
