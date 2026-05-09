@@ -12,6 +12,8 @@ export const metadata: Metadata = {
     },
 };
 
+import packageJson from '../package.json';
+
 export default function RootLayout({
     children,
 }: Readonly<{
@@ -19,7 +21,12 @@ export default function RootLayout({
 }>) {
     return (
         <html lang="en">
-            <body className={inter.className}>{children}</body>
+            <body className={inter.className}>
+                {children}
+                <div className="fixed bottom-4 left-4 text-[11px] font-medium text-gray-500/80 bg-white/30 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/40 shadow-sm pointer-events-none z-[9999]">
+                    v{packageJson.version}
+                </div>
+            </body>
         </html>
     );
 }
