@@ -10,7 +10,9 @@ export async function GET(req: Request) {
     }
 
     const url = new URL(req.url);
-    const redirectUri = `${url.protocol}//${url.host}/strava-auth`;
+    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || url.host;
+    const protocol = req.headers.get('x-forwarded-proto') || 'http';
+    const redirectUri = `${protocol}://${host}/strava-auth`;
 
     const stravaUrl = `https://www.strava.com/oauth/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&approval_prompt=force&scope=read,activity:read`;
 
