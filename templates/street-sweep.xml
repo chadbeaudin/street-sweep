@@ -13,7 +13,7 @@
   <Category>Tools:Utilities Network:Web Mapper:Biking</Category>
   <WebUI>http://[IP]:[PORT:3888]</WebUI>
   <TemplateURL/>
-  <Icon>https://github.com/chadbeaudin/street-sweep/raw/refs/heads/main/app/icon.svg</Icon>
+  <Icon>https://cdn.jsdelivr.net/gh/chadbeaudin/street-sweep@main/app/icon.svg</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
