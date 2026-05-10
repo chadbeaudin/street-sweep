@@ -244,6 +244,18 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         const newPoint = { ...point, id: Math.random().toString(36).substr(2, 9) };
         const tempIdx = pointsRef.current.length;
         pointsRef.current.push(newPoint);
+
+        // 1.5 Optimistic Segment: Add a straight line to the last point so the user sees a connection immediately
+        if (tempIdx > 0) {
+            const lastPoint = pointsRef.current[tempIdx - 1];
+            const tempPath: [number, number][] = [
+                [lastPoint.lon, lastPoint.lat],
+                [newPoint.lon, newPoint.lat]
+            ];
+            manualRouteRef.current.push(tempPath);
+            setManualRoute([...manualRouteRef.current]);
+        }
+
         setSelectedPoints([...pointsRef.current]);
 
         clickChainRef.current = clickChainRef.current.then(async () => {
@@ -274,10 +286,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 let currentSegments = [...manualRouteRef.current];
                 if (stepData.path && stepData.path.length > 0) {
-                    currentSegments.push(stepData.path);
-                } else if (!lastPoint) {
-                    // Start of manual route (technically no segment yet, or empty segment)
-                    // We don't add a segment for the first point
+                    if (tempIdx > 0) {
+                        // Replace the optimistic straight line with the actual path
+                        currentSegments[tempIdx - 1] = stepData.path;
+                    } else {
+                        currentSegments.push(stepData.path);
+                    }
                 }
 
                 // Update refs (source of truth for subsequent clicks)

@@ -12,11 +12,11 @@ export async function POST(req: NextRequest) {
 
         const BUFFER = 0.005; // ~500m buffer
 
-        // Calculate the span that includes current point, last point, and the provided bbox
-        let minLat = Math.min(point.lat, bbox.south);
-        let maxLat = Math.max(point.lat, bbox.north);
-        let minLon = Math.min(point.lon, bbox.west);
-        let maxLon = Math.max(point.lon, bbox.east);
+        // Calculate the span that includes current point and last point
+        let minLat = point.lat;
+        let maxLat = point.lat;
+        let minLon = point.lon;
+        let maxLon = point.lon;
 
         if (lastPoint) {
             minLat = Math.min(minLat, lastPoint.lat);
@@ -25,11 +25,12 @@ export async function POST(req: NextRequest) {
             maxLon = Math.max(maxLon, lastPoint.lon);
         }
 
+        const round = (n: number) => Math.round(n * 1000) / 1000;
         const bufferedBbox = {
-            south: minLat - BUFFER,
-            west: minLon - BUFFER,
-            north: maxLat + BUFFER,
-            east: maxLon + BUFFER
+            south: round(minLat - BUFFER),
+            west: round(minLon - BUFFER),
+            north: round(maxLat + BUFFER),
+            east: round(maxLon + BUFFER)
         };
 
         const osmData = await fetchOSMData(bufferedBbox);
