@@ -154,3 +154,5 @@ export function buildFitActivity(
 
     return new Uint8Array(full);
 }
+
+export const buildFitCourse = buildFitActivity;

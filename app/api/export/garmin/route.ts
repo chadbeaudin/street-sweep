@@ -54,7 +54,8 @@ export async function POST(req: Request) {
         // 3. POST to Course Service
         // This creates the course directly in the user's account
         const url = 'https://connectapi.garmin.com/course-service/course';
-        const createRes = await GCClient.post(url, coursePayload, {
+        // @ts-ignore - Accessing internal client to provide custom headers for course service
+        const createRes = await GCClient.client.post(url, coursePayload, {
             headers: {
                 'Content-Type': 'application/json',
                 'NK': 'NT'
