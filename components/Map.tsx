@@ -20,7 +20,7 @@ interface MapProps {
     route: [number, number, number?, number?][] | null;
     hoveredPoint: { lat: number; lon: number } | null;
     stravaRoads: [number, number][][] | null;
-    selectedPoints: { lat: number; lon: number; id: string }[];
+    selectedPoints: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[];
     onPointAdd: (point: { lat: number; lon: number }) => void;
     onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
     onPointMoveStart?: () => void;
@@ -438,10 +438,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 {flatManualRoute.length > 1 && (
                     <Polyline
                         positions={flatManualRoute.map(p => [p[1], p[0]])}
-                        color="#6366F1"
-                        weight={3}
-                        dashArray="5, 8"
-                        opacity={0.6}
+                        color="#D9480F" // Burnt metallic orange
+                        weight={4}
+                        dashArray="5, 10"
+                        opacity={0.8}
                         interactive={false}
                     />
                 )}
@@ -503,6 +503,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             border: 2px solid white; 
                             border-radius: 50%; 
                             box-shadow: 0 0 4px rgba(0,0,0,0.3);
+                            ${point.status === 'pending' ? 'animation: pulse 1s infinite;' : ''}
                         "></div>`,
                         iconSize: [14, 14],
                         iconAnchor: [7, 7],

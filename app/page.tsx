@@ -42,10 +42,11 @@ export default function Home() {
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
+    const [activeSteps, setActiveSteps] = useState(0);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
-    const pointsRef = useRef<{ lat: number; lon: number; id: string }[]>([]);
+    const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
-    const historyRef = useRef<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
+    const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][] }[]>([]);
     const historyIndexRef = useRef(-1);
     const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
 
@@ -241,22 +242,11 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
 
         // 1. Optimistic Update: Add raw point immediately for "insta-drop" feel
-        const newPoint = { ...point, id: Math.random().toString(36).substr(2, 9) };
+        const newPoint = { ...point, id: Math.random().toString(36).substr(2, 9), status: 'pending' as const };
         const tempIdx = pointsRef.current.length;
         pointsRef.current.push(newPoint);
-
-        // 1.5 Optimistic Segment: Add a straight line to the last point so the user sees a connection immediately
-        if (tempIdx > 0) {
-            const lastPoint = pointsRef.current[tempIdx - 1];
-            const tempPath: [number, number][] = [
-                [lastPoint.lon, lastPoint.lat],
-                [newPoint.lon, newPoint.lat]
-            ];
-            manualRouteRef.current.push(tempPath);
-            setManualRoute([...manualRouteRef.current]);
-        }
-
         setSelectedPoints([...pointsRef.current]);
+        setActiveSteps(prev => prev + 1);
 
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
@@ -278,7 +268,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     return;
                 }
 
-                const snappedPoint = { ...stepData.snappedPoint, id: newPoint.id };
+                const snappedPoint = { ...stepData.snappedPoint, id: newPoint.id, status: 'snapped' as const };
 
                 // 2. Correct Update: Replace raw point with snapped point in ref and state
                 pointsRef.current[tempIdx] = snappedPoint;
@@ -286,12 +276,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 let currentSegments = [...manualRouteRef.current];
                 if (stepData.path && stepData.path.length > 0) {
-                    if (tempIdx > 0) {
-                        // Replace the optimistic straight line with the actual path
-                        currentSegments[tempIdx - 1] = stepData.path;
-                    } else {
-                        currentSegments.push(stepData.path);
-                    }
+                    currentSegments.push(stepData.path);
                 }
 
                 // Update refs (source of truth for subsequent clicks)
@@ -313,6 +298,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 // Rollback optimistic update on network error
                 pointsRef.current.splice(tempIdx, 1);
                 setSelectedPoints([...pointsRef.current]);
+            } finally {
+                setActiveSteps(prev => Math.max(0, prev - 1));
             }
         });
     }, []);
@@ -324,9 +311,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         // 1. Optimistic Update: Update the waypoint immediately
         const newPoints = [...pointsRef.current];
         const pointId = newPoints[idx].id;
-        newPoints[idx] = { ...newLatLng, id: pointId };
+        newPoints[idx] = { ...newLatLng, id: pointId, status: 'pending' };
         pointsRef.current = newPoints;
         setSelectedPoints([...newPoints]);
+        setActiveSteps(prev => prev + 1);
 
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
@@ -349,7 +337,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 const moveData = await moveRes.json();
                 if (moveData.error) return;
 
-                const snappedMovedPoint = { ...moveData.snappedPoint, id: pointId };
+                const snappedMovedPoint = { ...moveData.snappedPoint, id: pointId, status: 'snapped' as const };
 
                 // Use the latest points from the ref to avoid race conditions with point additions
                 const newestPoints = [...pointsRef.current];
@@ -397,6 +385,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
             } catch (err) {
                 console.error('Failed to move point:', err);
+            } finally {
+                setActiveSteps(prev => Math.max(0, prev - 1));
             }
         });
     }, []);
@@ -429,6 +419,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setElevationData(null);
         setTotalDistance(null);
         setSelectionBoxes([]);
+        setActiveSteps(0);
     }, []);
 
     const handleUndo = useCallback(() => {
@@ -515,23 +506,6 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </button>
                         )}
                     </div>
-
-                    {/* Eraser Tool - DISABLED: creates straight line artifacts when removing segments */}
-                    {/* {route && (
-                        <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
-                            <button
-                                onClick={() => setIsEraserMode(!isEraserMode)}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${isEraserMode
-                                    ? 'bg-red-100 text-red-700 border border-red-200'
-                                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                title={isEraserMode ? "Exit Eraser mode" : "Erase route segments"}
-                            >
-                                <Eraser className="w-4 h-4" />
-                                {isEraserMode && 'Eraser Active'}
-                            </button>
-                        </div>
-                    )} */}
 
                     <StravaHeaderButton 
                         isConnected={!!stravaCredentials?.refreshToken} 
@@ -667,6 +641,16 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             </header>
 
             <div className="flex-1 flex flex-col relative min-h-0">
+                {/* Routing Status Pill */}
+                {activeSteps > 0 && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
+                        <div className="relative flex items-center justify-center">
+                            <div className="w-3 h-3 bg-indigo-600 rounded-full animate-ping absolute"></div>
+                            <Loader2 className="w-4 h-4 animate-spin text-indigo-600 relative z-10" />
+                        </div>
+                        <span className="text-sm font-bold text-indigo-900 tracking-tight">Calculating route...</span>
+                    </div>
+                )}
                 {/* First-Time User Welcome Overlay */}
                 {stravaCredentials !== undefined && !stravaCredentials.refreshToken && (
                     <div className="absolute inset-0 z-[500] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
