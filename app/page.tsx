@@ -226,6 +226,34 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         URL.revokeObjectURL(url);
     };
 
+    const [isFitDownloading, setIsFitDownloading] = useState(false);
+
+    const downloadFIT = async () => {
+        if (!route) return;
+        setIsFitDownloading(true);
+        try {
+            const res = await fetch('/api/export/fit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ route, name: 'StreetSweep Course' }),
+            });
+            if (!res.ok) throw new Error('FIT export failed');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'streetsweep_course.fit';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('FIT download error:', err);
+        } finally {
+            setIsFitDownloading(false);
+        }
+    };
+
     const isDraggingRef = useRef(false);
 
     const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
@@ -612,6 +640,22 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                                 </svg>
+                                GPX
+                            </button>
+                            <button
+                                onClick={downloadFIT}
+                                disabled={isFitDownloading}
+                                title="Download FIT (Garmin native format)"
+                                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 disabled:opacity-60"
+                            >
+                                {isFitDownloading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                )}
+                                FIT
                             </button>
                         </>
                     )}

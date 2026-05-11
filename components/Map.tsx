@@ -356,6 +356,60 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { normalSegments: normal, constructionSegments: construction, hasConstruction: hasAnyConstruction };
     }, [route]);
 
+    // Chevron markers: one every ~150m along the full generated route
+    const chevronMarkers = React.useMemo(() => {
+        if (!route || route.length < 2) return [];
+
+        const SPACING_M = 150;
+        const markers: { lat: number; lon: number; angle: number }[] = [];
+
+        const toRad = (d: number) => d * Math.PI / 180;
+        const toDeg = (r: number) => r * 180 / Math.PI;
+
+        const haversineM = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+            const R = 6371000;
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        };
+
+        const bearing = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+            const dLon = toRad(lon2 - lon1);
+            const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+            return (toDeg(Math.atan2(y, x)) + 360) % 360;
+        };
+
+        let distSinceLastChevron = SPACING_M / 2; // offset so first chevron isn't at the very start
+
+        for (let i = 1; i < route.length; i++) {
+            const [lon1, lat1] = route[i - 1];
+            const [lon2, lat2] = route[i];
+            const segLen = haversineM(lat1, lon1, lat2, lon2);
+            let remaining = segLen;
+            let traveled = 0;
+
+            while (distSinceLastChevron + remaining >= SPACING_M) {
+                const overshoot = SPACING_M - distSinceLastChevron;
+                traveled += overshoot;
+                remaining -= overshoot;
+                distSinceLastChevron = 0;
+
+                const frac = traveled / segLen;
+                const cLat = lat1 + (lat2 - lat1) * frac;
+                const cLon = lon1 + (lon2 - lon1) * frac;
+                markers.push({ lat: cLat, lon: cLon, angle: bearing(lat1, lon1, lat2, lon2) });
+                distSinceLastChevron = 0;
+            }
+
+            distSinceLastChevron += remaining;
+        }
+
+        return markers;
+    }, [route]);
+
+
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
@@ -451,9 +505,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <Polyline
                         key={`route-normal-${idx}`}
                         positions={segment}
-                        color="#B4491E"
+                        color="#EF4444"
                         weight={5}
-                        opacity={0.8}
+                        opacity={0.85}
                         interactive={false}
                     />
                 ))}
@@ -468,6 +522,23 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         opacity={0.9}
                         interactive={false}
                         dashArray="10, 10"
+                    />
+                ))}
+
+                {/* Directional chevrons along the generated route */}
+                {chevronMarkers.map((m, idx) => (
+                    <Marker
+                        key={`chevron-${idx}`}
+                        position={[m.lat, m.lon]}
+                        interactive={false}
+                        icon={L.divIcon({
+                            className: '',
+                            html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${m.angle}deg);display:block;">
+                                <polyline points="4,14 8,4 12,14" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95"/>
+                            </svg>`,
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8],
+                        })}
                     />
                 ))}
 

@@ -10,6 +10,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@garmin/fitsdk": "^21.202.0",
     "@mapbox/polyline": "^1.2.1",
     "@turf/distance": "^7.3.1",
     "@types/mapbox__polyline": "^1.0.5",
