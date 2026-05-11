@@ -438,7 +438,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 {flatManualRoute.length > 1 && (
                     <Polyline
                         positions={flatManualRoute.map(p => [p[1], p[0]])}
-                        color="#D9480F" // Burnt metallic orange
+                        color="#EF4444" // Plain red
                         weight={4}
                         dashArray="5, 10"
                         opacity={0.8}
