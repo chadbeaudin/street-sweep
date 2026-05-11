@@ -16,6 +16,7 @@
     "@types/mapbox__polyline": "^1.0.5",
     "@types/polyline": "^0.1.32",
     "clsx": "^2.1.0",
+    "garmin-connect": "^1.6.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.300.0",
     "next": "^14.2.3",

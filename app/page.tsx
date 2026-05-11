@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
+import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -42,6 +43,10 @@ export default function Home() {
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
+    const [showGarminSettings, setShowGarminSettings] = useState(false);
+    const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
+    const [isGarminUploading, setIsGarminUploading] = useState(false);
+    const [routeName, setRouteName] = useState('StreetSweep Route');
     const [activeSteps, setActiveSteps] = useState(0);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
@@ -61,6 +66,13 @@ export default function Home() {
             setStravaCredentials(JSON.parse(saved));
         } else {
             setStravaCredentials({}); // Set to empty object to signal we've checked localStorage
+        }
+
+        const savedGarmin = localStorage.getItem('garmin_settings');
+        if (savedGarmin) {
+            setGarminCredentials(JSON.parse(savedGarmin));
+        } else {
+            setGarminCredentials({});
         }
     }, []);
 
@@ -207,7 +219,7 @@ export default function Home() {
         const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="StreetSweep" xmlns="http://www.topografix.com/GPX/1/1">
   <trk>
-    <name>StreetSweep Route</name>
+    <name>${routeName}</name>
     <trkseg>
 ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefined ? `\n        <ele>${pt[2]}</ele>` : ''}
       </trkpt>`).join('\n')}
@@ -235,14 +247,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             const res = await fetch('/api/export/fit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ route, name: 'StreetSweep Course' }),
+                body: JSON.stringify({ route, name: routeName }),
             });
             if (!res.ok) throw new Error('FIT export failed');
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'streetsweep_course.fit';
+            a.download = `${routeName.toLowerCase().replace(/\s+/g, '_')}.fit`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -251,6 +263,38 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             console.error('FIT download error:', err);
         } finally {
             setIsFitDownloading(false);
+        }
+    };
+
+    const sendToGarmin = async () => {
+        if (!route) return;
+        if (!garminCredentials?.email || !garminCredentials?.password) {
+            setShowGarminSettings(true);
+            return;
+        }
+
+        setIsGarminUploading(true);
+        try {
+            const res = await fetch('/api/export/garmin', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    route, 
+                    name: routeName,
+                    email: garminCredentials.email,
+                    password: garminCredentials.password
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Garmin upload failed');
+            
+            // Show success (could be a toast, for now alert)
+            alert('Route uploaded successfully! It will now appear in your Garmin Courses.');
+        } catch (err: any) {
+            console.error('Garmin upload error:', err);
+            setError({ message: `Garmin Upload Failed: ${err.message}` });
+        } finally {
+            setIsGarminUploading(false);
         }
     };
 
@@ -507,6 +551,16 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     <h1 className="text-xl font-bold text-gray-900 tracking-tight">StreetSweep</h1>
                 </a>
 
+                <div className="flex-1 max-w-xs mx-4">
+                    <input
+                        type="text"
+                        value={routeName}
+                        onChange={(e) => setRouteName(e.target.value)}
+                        placeholder="Route Name"
+                        className="w-full px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-900 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all outline-none"
+                    />
+                </div>
+
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <button
@@ -657,6 +711,21 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 )}
                                 FIT
                             </button>
+                            <button
+                                onClick={sendToGarmin}
+                                disabled={isGarminUploading}
+                                title="Send directly to Garmin Connect"
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
+                            >
+                                {isGarminUploading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                                    </svg>
+                                )}
+                                Send to Garmin
+                            </button>
                         </>
                     )}
                     {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0) && (
@@ -775,6 +844,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     onSave={(creds) => {
                         setStravaCredentials(creds);
                         // No need to close, let them see the "Saved!" state
+                    }}
+                />
+
+                <GarminSettingsDialog
+                    isOpen={showGarminSettings}
+                    onClose={() => setShowGarminSettings(false)}
+                    onSave={(creds) => {
+                        setGarminCredentials(creds);
                     }}
                 />
 

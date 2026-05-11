@@ -10,7 +10,8 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
         }
 
-        const BUFFER = 0.005; // ~500m buffer
+        const BUFFER = 0.01; // ~1km buffer for snapping and short paths
+        const GRID = 0.01;   // Snap to 1km grid for extreme caching
 
         // Calculate the span that includes current point and last point
         let minLat = point.lat;
@@ -25,12 +26,16 @@ export async function POST(req: NextRequest) {
             maxLon = Math.max(maxLon, lastPoint.lon);
         }
 
-        const round = (n: number) => Math.round(n * 1000) / 1000;
+        const roundToGrid = (n: number, down: boolean) => {
+            const val = down ? Math.floor(n / GRID) * GRID : Math.ceil(n / GRID) * GRID;
+            return Number(val.toFixed(4));
+        };
+
         const bufferedBbox = {
-            south: round(minLat - BUFFER),
-            west: round(minLon - BUFFER),
-            north: round(maxLat + BUFFER),
-            east: round(maxLon + BUFFER)
+            south: roundToGrid(minLat - BUFFER, true),
+            west: roundToGrid(minLon - BUFFER, true),
+            north: roundToGrid(maxLat + BUFFER, false),
+            east: roundToGrid(maxLon + BUFFER, false)
         };
 
         const osmData = await fetchOSMData(bufferedBbox);

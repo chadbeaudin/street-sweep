@@ -82,15 +82,20 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
         for (const endpoint of OVERPASS_ENDPOINTS) {
           try {
             console.log(`${ts()} Fetching OSM data from ${endpoint}...`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
             const response = await fetch(endpoint, {
               method: 'POST',
               body: 'data=' + encodeURIComponent(bikeQuery),
+              signal: controller.signal,
               headers: { 
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Accept': 'application/json',
                 'User-Agent': 'StreetSweep/1.0 (Local Development)'
               }
             });
+            clearTimeout(timeoutId);
 
             if (response.ok) {
               const data = (await response.json()) as OverpassResponse;
