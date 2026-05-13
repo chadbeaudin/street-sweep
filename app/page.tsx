@@ -15,6 +15,7 @@ const Map = dynamic<any>(() => import('@/components/Map'), {
 
 import { ElevationProfile } from '@/components/ElevationProfile';
 import pkg from '@/package.json';
+import { haversineM, toSemicircles } from '@/lib/geometry';
 
 export default function Home() {
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);

@@ -1,6 +1,6 @@
 // Pure-binary FIT encoder — Refined based on working Velotron Converter logic.
 const FIT_EPOCH_OFFSET = 631065600;
-const SEMICIRCLES_PER_DEGREE = 2 ** 31 / 180;
+import { haversineM, toSemicircles } from './geometry';
 
 const UINT8  = 0x02;
 const UINT16 = 0x84;
@@ -10,18 +10,6 @@ const STRING = 0x07;
 
 function fitNow(): number {
     return Math.floor(Date.now() / 1000) - FIT_EPOCH_OFFSET;
-}
-
-function toSemicircles(deg: number): number {
-    return Math.round(deg * SEMICIRCLES_PER_DEGREE);
-}
-
-function haversineM(lat1: number, lon1: number, lat2: number, lon2: number): number {
-    const R = 6371000;
-    const toR = (d: number) => d * Math.PI / 180;
-    const dLat = toR(lat2 - lat1), dLon = toR(lon2 - lon1);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toR(lat1)) * Math.cos(toR(lat2)) * Math.sin(dLon / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 const CRC_TABLE = [0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401,
