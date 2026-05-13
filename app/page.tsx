@@ -50,7 +50,9 @@ export default function Home() {
     const [isGarminUploading, setIsGarminUploading] = useState(false);
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [activeSteps, setActiveSteps] = useState(0);
+    const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
+    const generateAbortControllerRef = useRef<AbortController | null>(null);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
     const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][] }[]>([]);
@@ -155,13 +157,21 @@ export default function Home() {
         return () => clearTimeout(timer);
     }, [bbox]);
 
-    const handleGenerate = useCallback(async () => {
+    const handleGenerate = useCallback(async (isSilent = false) => {
         if (!bbox) {
-            setError({ message: "Please move the map to set an area." });
+            if (!isSilent) setError({ message: "Please move the map to set an area." });
             return;
         }
-        setLoading(true);
+        if (isSilent) setIsAutoGenerating(true);
+        else setLoading(true);
         setError(null);
+
+        // Abort previous request if in progress
+        if (generateAbortControllerRef.current) {
+            generateAbortControllerRef.current.abort();
+        }
+        generateAbortControllerRef.current = new AbortController();
+
         try {
             const payload = {
                 bbox,
@@ -179,12 +189,16 @@ export default function Home() {
             const res = await fetch('/api/generate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                signal: generateAbortControllerRef.current.signal
             });
 
             const data = await res.json();
             if (!res.ok) {
-                throw new Error(JSON.stringify(data));
+                if (res.statusText !== 'AbortError') {
+                    throw new Error(JSON.stringify(data));
+                }
+                return;
             }
 
             if (data.features && data.features.length > 0) {
@@ -193,9 +207,11 @@ export default function Home() {
                 setElevationData(feature.properties.elevationProfile);
                 setTotalDistance(feature.properties.totalDistance);
             } else {
-                setError({ message: "No route generated." });
+                if (!isSilent) setError({ message: "No route generated." });
             }
         } catch (e: any) {
+            if (e.name === 'AbortError') return;
+            
             console.error("API Error:", e);
             let message = e.message;
             let trace = undefined;
@@ -211,9 +227,34 @@ export default function Home() {
             }
             setError({ message, trace });
         } finally {
+            if (generateAbortControllerRef.current?.signal.aborted) {
+                // If this was aborted, don't clear loading yet as a new one is coming
+                return;
+            }
             setLoading(false);
+            setIsAutoGenerating(false);
+            generateAbortControllerRef.current = null;
         }
     }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBoxes, routingOptions]);
+
+    // Real-time route generation (Issue #12)
+    useEffect(() => {
+        const hasManualRoute = selectedPoints.length >= 2;
+        const hasSelectionBoxes = selectionBoxes.length > 0;
+        
+        if (!hasManualRoute && !hasSelectionBoxes) {
+            // If everything was cleared, we might want to clear the route too
+            // but let's be careful not to flicker
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            console.log('[RealTime] Triggering auto-generation...');
+            handleGenerate(true);
+        }, 1200); // 1.2s debounce to allow for multiple rapid clicks/box draws
+
+        return () => clearTimeout(timer);
+    }, [manualRoute, selectionBoxes, routingOptions, handleGenerate, selectedPoints.length]);
 
     const downloadGPX = () => {
         if (!route) return;
@@ -746,7 +787,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </button>
                     )}
                     <button
-                        onClick={handleGenerate}
+                        onClick={() => handleGenerate()}
                         disabled={loading}
                         className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
                     >
@@ -764,13 +805,15 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
             <div className="flex-1 flex flex-col relative min-h-0">
                 {/* Routing Status Pill */}
-                {activeSteps > 0 && (
+                {(activeSteps > 0 || isAutoGenerating) && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="relative flex items-center justify-center">
                             <div className="w-3 h-3 bg-indigo-600 rounded-full animate-ping absolute"></div>
                             <Loader2 className="w-4 h-4 animate-spin text-indigo-600 relative z-10" />
                         </div>
-                        <span className="text-sm font-bold text-indigo-900 tracking-tight">Calculating route...</span>
+                        <span className="text-sm font-bold text-indigo-900 tracking-tight">
+                            {isAutoGenerating ? 'Updating route...' : 'Calculating route...'}
+                        </span>
                     </div>
                 )}
                 {/* First-Time User Welcome / About Overlay */}
