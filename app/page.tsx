@@ -58,11 +58,21 @@ export default function Home() {
     const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][] }[]>([]);
     const historyIndexRef = useRef(-1);
     const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
+    const stravaRoadsRef = useRef<[number, number][][] | null>(null);
+    const routingOptionsRef = useRef(routingOptions);
 
-    // Keep bboxRef in sync with state for use in stable callbacks
+    // Keep refs in sync with state for use in stable callbacks
     useEffect(() => {
         bboxRef.current = bbox;
     }, [bbox]);
+
+    useEffect(() => {
+        stravaRoadsRef.current = stravaRoads;
+    }, [stravaRoads]);
+
+    useEffect(() => {
+        routingOptionsRef.current = routingOptions;
+    }, [routingOptions]);
 
     useEffect(() => {
         const saved = localStorage.getItem('strava_settings');
@@ -371,7 +381,15 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 const stepRes = await fetch('/api/step', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ point, lastPoint, bbox: currentBbox })
+                    body: JSON.stringify({
+                        point,
+                        lastPoint,
+                        bbox: currentBbox,
+                        // Pass context so the step pathfinder avoids already-traversed streets
+                        manualRoute: manualRouteRef.current,
+                        riddenRoads: stravaRoadsRef.current,
+                        routingOptions: routingOptionsRef.current
+                    })
                 });
                 const stepData = await stepRes.json();
 
@@ -434,19 +452,21 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
                 // Determine affected segments based on the current state of points
-                const affectedIndices = [];
+                const affectedIndices: number[] = [];
                 if (idx > 0) affectedIndices.push(idx - 1); // prev -> moved
                 if (idx < pointsRef.current.length - 1) affectedIndices.push(idx); // moved -> next
 
                 const updatedSegments = [...manualRouteRef.current];
 
-                // Snap the moved point and fetch affected segments
+                // Snap the moved point (no lastPoint needed — just for snapping, not routing)
                 const moveRes = await fetch('/api/step', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         point: newLatLng,
-                        bbox: currentBbox
+                        bbox: currentBbox,
+                        riddenRoads: stravaRoadsRef.current,
+                        routingOptions: routingOptionsRef.current
                     })
                 });
                 const moveData = await moveRes.json();
@@ -478,7 +498,11 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         body: JSON.stringify({
                             point: p2,
                             lastPoint: p1,
-                            bbox: currentBbox
+                            bbox: currentBbox,
+                            // When moving a point, only penalize segments that aren't being recalculated
+                            manualRoute: updatedSegments.filter((_, i) => !affectedIndices.includes(i)),
+                            riddenRoads: stravaRoadsRef.current,
+                            routingOptions: routingOptionsRef.current
                         })
                     });
                     const stepData = await stepRes.json();

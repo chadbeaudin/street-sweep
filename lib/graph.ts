@@ -454,6 +454,36 @@ export class StreetGraph {
         return result ? result.path : [];
     }
 
+    /**
+     * Inflates the pathfinding weight of graph edges that correspond to already-traversed
+     * manualRoute segments. This causes the step-by-step pathfinder to prefer fresh streets
+     * over streets that have already been added to the in-progress route, without hard-blocking
+     * backtracking (which would be impossible at dead ends).
+     * 
+     * @param segments  Already-drawn route segments as [[lon,lat], ...] arrays
+     * @param multiplier  Weight inflation factor (e.g. 5 = strongly prefer fresh streets)
+     */
+    public penalizeTraversedEdges(segments: [number, number][][], multiplier: number): void {
+        for (const segment of segments) {
+            for (let i = 0; i < segment.length - 1; i++) {
+                const [lon1, lat1] = segment[i];
+                const [lon2, lat2] = segment[i + 1];
+
+                // Find the closest node to each endpoint within a small radius
+                const n1 = this.findClosestNode(lat1, lon1);
+                const n2 = this.findClosestNode(lat2, lon2);
+                if (!n1 || !n2 || n1 === n2) continue;
+
+                // Inflate weight in both directions
+                const link1 = this.graph.getLink(n1, n2);
+                if (link1) link1.data.weight *= multiplier;
+
+                const link2 = this.graph.getLink(n2, n1);
+                if (link2) link2.data.weight *= multiplier;
+            }
+        }
+    }
+
     public findClosestNode(lat: number, lon: number, nodeIds?: Set<string>): string | null {
         let closestNode: string | null = null;
         let minDist = Infinity;

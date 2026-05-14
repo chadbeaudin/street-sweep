@@ -4,7 +4,7 @@ import { StreetGraph } from '@/lib/graph';
 
 export async function POST(req: NextRequest) {
     try {
-        const { point, lastPoint, bbox } = await req.json();
+        const { point, lastPoint, bbox, manualRoute, riddenRoads, routingOptions } = await req.json();
 
         if (!point || !bbox) {
             return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
@@ -39,9 +39,18 @@ export async function POST(req: NextRequest) {
         };
 
         const osmData = await fetchOSMData(bufferedBbox);
-        // Note: Step API doesn't currently support routing options or ridden roads context,
-        // so it uses the default matching behavior (snap to any road).
-        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData);
+
+        // Build a fresh (non-cached) graph so we can safely mutate edge weights
+        // for traversal penalties without corrupting the shared cache used by /api/generate.
+        // Pass riddenRoads so Strava-ridden streets carry a ×100 penalty from the start.
+        const graph = new StreetGraph();
+        graph.buildFromOSM(osmData, riddenRoads || null, routingOptions);
+
+        // Penalize edges that are part of already-drawn manualRoute segments (×5).
+        // This strongly discourages backtracking while still allowing it at dead ends.
+        if (manualRoute && Array.isArray(manualRoute) && manualRoute.length > 0) {
+            graph.penalizeTraversedEdges(manualRoute, 5);
+        }
 
         const snappedData = graph.findClosestPointOnEdge(point.lat, point.lon);
         if (!snappedData) {
