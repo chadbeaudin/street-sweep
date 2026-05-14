@@ -399,7 +399,12 @@ export class StreetGraph {
         return results;
     }
 
-    public findClosestTarget(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
+    public findClosestTarget(
+        fromId: string, 
+        targetIds: Set<string>, 
+        allowedLinks?: Set<string>, 
+        penalizedLinks?: Map<string, number>
+    ): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
         const distances = new Map<string, number>();
         const previous = new Map<string, { id: string, weight: number }>();
         const queue: { id: string, weight: number }[] = [{ id: fromId, weight: 0 }];
@@ -424,7 +429,12 @@ export class StreetGraph {
             node?.links?.forEach((link: any) => {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
                 const v = (link.fromId === u ? link.toId : link.fromId).toString();
-                const weight = link.data.weight;
+                
+                let weight = link.data.weight;
+                if (penalizedLinks && penalizedLinks.has(link.id)) {
+                    weight *= penalizedLinks.get(link.id)!;
+                }
+
                 const alt = distU + weight;
 
                 if (!distances.has(v) || alt < distances.get(v)!) {
@@ -449,8 +459,13 @@ export class StreetGraph {
         return null;
     }
 
-    public findPath(fromId: string, toId: string, allowedLinks?: Set<string>): { id: string, idNext: string, weight: number }[] {
-        const result = this.findClosestTarget(fromId, new Set([toId]), allowedLinks);
+    public findPath(
+        fromId: string, 
+        toId: string, 
+        allowedLinks?: Set<string>, 
+        penalizedLinks?: Map<string, number>
+    ): { id: string, idNext: string, weight: number }[] {
+        const result = this.findClosestTarget(fromId, new Set([toId]), allowedLinks, penalizedLinks);
         return result ? result.path : [];
     }
 
@@ -463,18 +478,46 @@ export class StreetGraph {
      * @param segments  Already-drawn route segments as [[lon,lat], ...] arrays
      * @param multiplier  Weight inflation factor (e.g. 5 = strongly prefer fresh streets)
      */
+    /**
+     * Finds link IDs that correspond to already-traversed manualRoute segments.
+     * Returns a Map of link IDs to the inflation multiplier.
+     */
+    public getTraversalPenalties(segments: [number, number][][], multiplier: number): Map<string, number> {
+        const penalties = new Map<string, number>();
+        for (const segment of segments) {
+            for (let i = 0; i < segment.length - 1; i++) {
+                const [lon1, lat1] = segment[i];
+                const [lon2, lat2] = segment[i + 1];
+
+                const n1 = this.findClosestNode(lat1, lon1);
+                const n2 = this.findClosestNode(lat2, lon2);
+                if (!n1 || !n2 || n1 === n2) continue;
+
+                const link1 = this.graph.getLink(n1, n2);
+                if (link1) penalties.set(link1.id, multiplier);
+
+                const link2 = this.graph.getLink(n2, n1);
+                if (link2) penalties.set(link2.id, multiplier);
+            }
+        }
+        return penalties;
+    }
+
+    /**
+     * Inflates the pathfinding weight of graph edges that correspond to already-traversed
+     * manualRoute segments.
+     * @deprecated Use getTraversalPenalties and pass them to findPath instead for non-mutating search.
+     */
     public penalizeTraversedEdges(segments: [number, number][][], multiplier: number): void {
         for (const segment of segments) {
             for (let i = 0; i < segment.length - 1; i++) {
                 const [lon1, lat1] = segment[i];
                 const [lon2, lat2] = segment[i + 1];
 
-                // Find the closest node to each endpoint within a small radius
                 const n1 = this.findClosestNode(lat1, lon1);
                 const n2 = this.findClosestNode(lat2, lon2);
                 if (!n1 || !n2 || n1 === n2) continue;
 
-                // Inflate weight in both directions
                 const link1 = this.graph.getLink(n1, n2);
                 if (link1) link1.data.weight *= multiplier;
 
@@ -555,27 +598,34 @@ export class StreetGraph {
             for (let i = 0; i < manualRoute.length - 1; i++) {
                 const p1 = manualRoute[i];
                 const p2 = manualRoute[i + 1];
-                // Points are [lon, lat]
                 const u = this.findClosestNode(p1[1], p1[0]);
                 const v = this.findClosestNode(p2[1], p2[0]);
+
                 if (u && v && u !== v) {
-                    // Critical fix: We must find the EXACT link between these nodes
-                    // if it exists, as manualRoute points are typically consecutive
-                    // nodes from an OSM way.
-                    const link = this.graph.getLink(u, v);
-                    if (link) {
-                        allowedLinks.add(link.id);
+                    const directLink = this.graph.getLink(u, v);
+                    if (directLink) {
+                        allowedLinks.add(directLink.id);
                         const exists = requiredEdges.find(re => (re.u === u && re.v === v) || (re.u === v && re.v === u));
                         if (!exists) {
-                            requiredEdges.push({ u, v, link });
-                            unriddenNodes.add(u);
-                            unriddenNodes.add(v);
+                            requiredEdges.push({ u, v, link: directLink });
                         }
                     } else {
-                        // If no direct link, we still keep the nodes to ensure they are bridge-able
-                        unriddenNodes.add(u);
-                        unriddenNodes.add(v);
+                        // Fallback: If no direct link between manual points, find the path
+                        // and add those edges as mandatory. This is critical for sparse manual routes.
+                        const path = this.findPath(u, v);
+                        path.forEach(seg => {
+                            const link = this.graph.getLink(seg.id, seg.idNext);
+                            if (link) {
+                                allowedLinks.add(link.id);
+                                const exists = requiredEdges.find(re => (re.u === seg.id && re.v === seg.idNext) || (re.u === seg.idNext && re.v === seg.id));
+                                if (!exists) {
+                                    requiredEdges.push({ u: seg.id, v: seg.idNext, link });
+                                }
+                            }
+                        });
                     }
+                    unriddenNodes.add(u);
+                    unriddenNodes.add(v);
                 }
             }
         }
@@ -625,9 +675,14 @@ export class StreetGraph {
             });
         }
 
+        if (this.graph.getNodesCount() === 0) {
+            console.warn(`${ts()} Cannot solve CPP: Graph is empty.`);
+            return manualRoute ? manualRoute.map(p => ({ lon: p[0], lat: p[1] })) : [];
+        }
+
         if (requiredEdges.length === 0) {
-            console.log(`${ts()} No unridden roads found in this area.`);
-            return [];
+            console.log(`${ts()} No unridden roads or mandatory segments found in this area.`);
+            return manualRoute ? manualRoute.map(p => ({ lon: p[0], lat: p[1] })) : [];
         }
 
         let components: string[][] = [];

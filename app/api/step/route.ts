@@ -40,16 +40,14 @@ export async function POST(req: NextRequest) {
 
         const osmData = await fetchOSMData(bufferedBbox);
 
-        // Build a fresh (non-cached) graph so we can safely mutate edge weights
-        // for traversal penalties without corrupting the shared cache used by /api/generate.
-        // Pass riddenRoads so Strava-ridden streets carry a ×100 penalty from the start.
-        const graph = new StreetGraph();
-        graph.buildFromOSM(osmData, riddenRoads || null, routingOptions);
+        // Use the cached graph for speed. We now apply penalties dynamically
+        // during pathfinding instead of mutating the graph weights.
+        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads || null, routingOptions);
 
-        // Penalize edges that are part of already-drawn manualRoute segments (×5).
-        // This strongly discourages backtracking while still allowing it at dead ends.
+        // Get link IDs that should be penalized (already traversed in current session)
+        let penalizedLinks: Map<string, number> | undefined;
         if (manualRoute && Array.isArray(manualRoute) && manualRoute.length > 0) {
-            graph.penalizeTraversedEdges(manualRoute, 5);
+            penalizedLinks = graph.getTraversalPenalties(manualRoute, 5);
         }
 
         const snappedData = graph.findClosestPointOnEdge(point.lat, point.lon);
@@ -73,7 +71,7 @@ export async function POST(req: NextRequest) {
                 const endId = graph.findClosestNode(point.lat, point.lon, endCandidates);
 
                 if (startId && endId) {
-                    const path = graph.findPath(startId, endId);
+                    const path = graph.findPath(startId, endId, undefined, penalizedLinks);
 
                     // Start of the path: [prevSnappedPoint, startNode]
                     pathCoords.push([prevSnappedData.lon, prevSnappedData.lat]);

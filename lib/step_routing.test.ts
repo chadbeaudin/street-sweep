@@ -262,4 +262,32 @@ describe('Waypoint routing: penalizeTraversedEdges prevents backtracking', () =>
         const path = deadEndGraph.findPath(aId, cId);
         expect(path.length).toBeGreaterThan(0);
     });
+
+    test('NEW: getTraversalPenalties + findPath avoids backtracking without mutating the graph', () => {
+        // This test ensures the new non-mutating system works as intended.
+        const traversedSegment: [number, number][][] = [
+            [
+                [N.W26_SP.lon, N.W26_SP.lat],
+                [N.W24_SP.lon, N.W24_SP.lat],
+                [N.W22_SP.lon, N.W22_SP.lat],
+            ]
+        ];
+
+        // 1. Get penalties without mutating graph
+        const penalties = graph.getTraversalPenalties(traversedSegment, 5);
+        expect(penalties.size).toBeGreaterThan(0);
+
+        // 2. Find path using penalties
+        const path = graph.findPath(startNodeId, endNodeId, undefined, penalties);
+        
+        // 3. Verify it avoids backtracking
+        const backtracks = pathVisitsNode(graph, path, sp24NodeId);
+        expect(backtracks).toBe(false);
+
+        // 4. Verify original graph weight is UNCHANGED
+        // (South leg: W22-SP -> W24-SP)
+        const southLink = graph.graph.getLink(startNodeId, sp24NodeId);
+        // Verify it didn't get multiplied by 5 (122 * 5 = 610)
+        expect(southLink?.data.weight).toBeLessThan(150); 
+    });
 });

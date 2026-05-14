@@ -65,6 +65,10 @@ export async function POST(request: Request) {
         const osmData = await fetchOSMData(bufferedBbox);
         console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
+        if (osmData.elements.length === 0) {
+            console.warn(`${ts()} OSM data is empty for bbox:`, bufferedBbox);
+        }
+
         const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads, routingOptions);
 
         console.log(`${ts()} Solving Routing Problem...`);

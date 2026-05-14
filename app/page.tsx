@@ -253,18 +253,21 @@ export default function Home() {
         const hasSelectionBoxes = selectionBoxes.length > 0;
         
         if (!hasManualRoute && !hasSelectionBoxes) {
-            // If everything was cleared, we might want to clear the route too
-            // but let's be careful not to flicker
+            return;
+        }
+
+        if (activeSteps > 0) {
+            console.log(`[RealTime] Skipping auto-generation: ${activeSteps} steps in progress...`);
             return;
         }
 
         const timer = setTimeout(() => {
             console.log('[RealTime] Triggering auto-generation...');
             handleGenerate(true);
-        }, 1200); // 1.2s debounce to allow for multiple rapid clicks/box draws
+        }, 1500); // 1.5s debounce to allow for multiple rapid clicks/box draws
 
         return () => clearTimeout(timer);
-    }, [manualRoute, selectionBoxes, routingOptions, handleGenerate, selectedPoints.length]);
+    }, [manualRoute, selectionBoxes, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
 
     const downloadGPX = () => {
         if (!route) return;
