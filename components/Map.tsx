@@ -4,6 +4,7 @@ import React, { useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { Plus, Minus, LocateFixed } from 'lucide-react';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -86,6 +87,12 @@ import { useGeolocateOnMount } from '../lib/useGeolocate';
 
 function GeolocateOnMount() {
     useGeolocateOnMount();
+    return null;
+}
+
+function MapRefCapture({ mapRef }: { mapRef: React.MutableRefObject<L.Map | null> }) {
+    const map = useMap();
+    useEffect(() => { mapRef.current = map; }, [map, mapRef]);
     return null;
 }
 
@@ -293,6 +300,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
 
 const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
+    const mapRef = React.useRef<L.Map | null>(null);
 
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isSelectionMode || isEraserMode) return;
@@ -419,6 +427,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 zoomDelta={1}
                 wheelPxPerZoomLevel={120}
                 wheelDebounceTime={40}
+                zoomControl={false}
                 className={`absolute inset-0 ${isSelectionMode ? 'selection-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''}`}
             >
                 <TileLayer
@@ -428,6 +437,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
                 <GeolocateOnMount />
                 <RecenterMap route={route} />
+                <MapRefCapture mapRef={mapRef} />
 
                 {/* Selection Box Drawing Tool */}
                 <SelectionTool
@@ -604,6 +614,31 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
                 <HoverMarker point={hoveredPoint} />
             </MapContainer>
+
+            {/* Custom map controls */}
+            <div className="absolute bottom-8 right-3 z-[1000] flex flex-col gap-1">
+                <button
+                    onClick={() => mapRef.current?.zoomIn()}
+                    className="w-9 h-9 bg-white rounded shadow-md flex items-center justify-center text-gray-700 hover:bg-gray-100 active:bg-gray-200 border border-gray-300"
+                    aria-label="Zoom in"
+                >
+                    <Plus size={16} />
+                </button>
+                <button
+                    onClick={() => mapRef.current?.zoomOut()}
+                    className="w-9 h-9 bg-white rounded shadow-md flex items-center justify-center text-gray-700 hover:bg-gray-100 active:bg-gray-200 border border-gray-300"
+                    aria-label="Zoom out"
+                >
+                    <Minus size={16} />
+                </button>
+                <button
+                    onClick={() => mapRef.current?.locate({ setView: true, maxZoom: 14 })}
+                    className="w-9 h-9 bg-white rounded shadow-md flex items-center justify-center text-gray-700 hover:bg-gray-100 active:bg-gray-200 border border-gray-300 mt-1"
+                    aria-label="Return to current location"
+                >
+                    <LocateFixed size={16} />
+                </button>
+            </div>
 
             <style jsx global>{`
                 @keyframes pulse {
