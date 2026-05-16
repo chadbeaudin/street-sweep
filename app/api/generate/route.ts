@@ -86,7 +86,7 @@ export async function POST(request: Request) {
         // Fetch elevation
         console.log(`${ts()} Fetching elevation data...`);
         let elevations: number[] = [];
-        let sampledCoords = coords;
+        let sampledCoords: [number, number][] = coords;
         try {
             const result = await fetchElevationData(coords);
             elevations = result.elevations;
@@ -100,8 +100,30 @@ export async function POST(request: Request) {
         const lastPoint = profile[profile.length - 1];
         const totalDistance = lastPoint ? lastPoint.distance : 0;
 
-        // Convert sampled circuit to GeoJSON LineString
-        // This ensures every coord point has exactly one elevation point
+        // Interpolate sampled elevations back to full-resolution coords so that
+        // the rendered polyline exactly matches the CPP circuit geometry
+        // (which is what the dashed manualRoute line is also drawn from).
+        // Previously we used sampledCoords as the rendered geometry, which
+        // dropped shape points and caused the solid line to drift from the
+        // dashed line on routes long enough to trigger downsampling.
+        const fullElevations: number[] = (() => {
+            if (sampledCoords.length === coords.length) return elevations;
+            if (sampledCoords.length < 2) {
+                return new Array(coords.length).fill(elevations[0] ?? 0);
+            }
+            const step = (coords.length - 1) / (sampledCoords.length - 1);
+            const out = new Array<number>(coords.length);
+            for (let i = 0; i < coords.length; i++) {
+                const sIdx = i / step;
+                const lo = Math.floor(sIdx);
+                const hi = Math.min(lo + 1, sampledCoords.length - 1);
+                const t = sIdx - lo;
+                out[i] = elevations[lo] * (1 - t) + elevations[hi] * t;
+            }
+            return out;
+        })();
+
+        // Convert full-resolution circuit to GeoJSON LineString
         const geoJson = {
             type: 'FeatureCollection',
             features: [
@@ -113,13 +135,10 @@ export async function POST(request: Request) {
                     },
                     geometry: {
                         type: 'LineString',
-                        coordinates: sampledCoords.map((c, i) => {
-                            // Find corresponding circuit point to check construction
-                            const circuitPoint = circuit.find(p =>
-                                Math.abs(p.lon - c[0]) < 0.00001 && Math.abs(p.lat - c[1]) < 0.00001
-                            );
-                            const construction = circuitPoint?.hasConstruction ? 1 : 0;
-                            return [c[0], c[1], Math.round(elevations[i] * 3.28084), construction];
+                        coordinates: coords.map((c, i) => {
+                            // circuit and coords are 1:1 by index
+                            const construction = circuit[i]?.hasConstruction ? 1 : 0;
+                            return [c[0], c[1], Math.round(fullElevations[i] * 3.28084), construction];
                         })
                     }
                 }

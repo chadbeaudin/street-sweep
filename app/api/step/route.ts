@@ -81,13 +81,37 @@ export async function POST(req: NextRequest) {
                         pathCoords.push([startNode.data.lon, startNode.data.lat]);
                     }
 
-                    // Middle of the path: the nodes in-between
-                    path.forEach(segment => {
+                    // Middle of the path: the nodes in-between.
+                    //
+                    // Special case for the final hop: if the path's last edge
+                    // is the snap edge containing snappedPoint, and we are
+                    // approaching endId from the OTHER endpoint of that edge
+                    // (i.e., from snappedData.u when endId === snappedData.v,
+                    // or vice versa), then pushing endId before snappedPoint
+                    // would overshoot the user's click — the polyline would
+                    // travel the full edge to endId, then backtrack to
+                    // snappedPoint. Instead, skip endId and let the path end
+                    // exactly at snappedPoint mid-edge.
+                    const otherSnapEnd =
+                        endId === snappedData.u ? snappedData.v :
+                        endId === snappedData.v ? snappedData.u : null;
+
+                    for (let i = 0; i < path.length; i++) {
+                        const segment = path[i];
+                        const isLast = i === path.length - 1;
+                        const skipEndOvershoot =
+                            isLast &&
+                            otherSnapEnd !== null &&
+                            segment.idNext === endId &&
+                            segment.id === otherSnapEnd;
+
+                        if (skipEndOvershoot) break;
+
                         const n = graph.graph.getNode(segment.idNext);
                         if (n) pathCoords.push([n.data.lon, n.data.lat]);
-                    });
+                    }
 
-                    // End of the path: [endNode, currentSnappedPoint]
+                    // End of the path: [..., currentSnappedPoint]
                     if (pathCoords.length > 0) {
                         const lastInPath = pathCoords[pathCoords.length - 1];
                         if (lastInPath[0] !== snappedPoint.lon || lastInPath[1] !== snappedPoint.lat) {

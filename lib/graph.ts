@@ -595,37 +595,62 @@ export class StreetGraph {
 
         if (manualRoute && manualRoute.length > 1) {
             console.log(`${ts()} Identifying mandatory segments from ${manualRoute.length} manual points.`);
+
+            const addRequiredEdge = (fromId: string, toId: string, link: any) => {
+                if (!link) return;
+                allowedLinks.add(link.id);
+                const exists = requiredEdges.find(re => (re.u === fromId && re.v === toId) || (re.u === toId && re.v === fromId));
+                if (!exists) {
+                    requiredEdges.push({ u: fromId, v: toId, link });
+                }
+                unriddenNodes.add(fromId);
+                unriddenNodes.add(toId);
+            };
+
             for (let i = 0; i < manualRoute.length - 1; i++) {
                 const p1 = manualRoute[i];
                 const p2 = manualRoute[i + 1];
+
+                // Skip duplicate points (segment boundaries in flattened manualRoute share an endpoint)
+                if (p1[0] === p2[0] && p1[1] === p2[1]) continue;
+
                 const u = this.findClosestNode(p1[1], p1[0]);
                 const v = this.findClosestNode(p2[1], p2[0]);
 
                 if (u && v && u !== v) {
                     const directLink = this.graph.getLink(u, v);
                     if (directLink) {
-                        allowedLinks.add(directLink.id);
-                        const exists = requiredEdges.find(re => (re.u === u && re.v === v) || (re.u === v && re.v === u));
-                        if (!exists) {
-                            requiredEdges.push({ u, v, link: directLink });
-                        }
+                        addRequiredEdge(u, v, directLink);
                     } else {
                         // Fallback: If no direct link between manual points, find the path
                         // and add those edges as mandatory. This is critical for sparse manual routes.
                         const path = this.findPath(u, v);
                         path.forEach(seg => {
                             const link = this.graph.getLink(seg.id, seg.idNext);
-                            if (link) {
-                                allowedLinks.add(link.id);
-                                const exists = requiredEdges.find(re => (re.u === seg.id && re.v === seg.idNext) || (re.u === seg.idNext && re.v === seg.id));
-                                if (!exists) {
-                                    requiredEdges.push({ u: seg.id, v: seg.idNext, link });
-                                }
-                            }
+                            if (link) addRequiredEdge(seg.id, seg.idNext, link);
                         });
                     }
-                    unriddenNodes.add(u);
-                    unriddenNodes.add(v);
+                } else if (u && v && u === v) {
+                    // Both endpoints snap to the same node. This happens when the
+                    // user's clicked waypoints both fell mid-edge near the same
+                    // intersection: the half-edge between the intersection and
+                    // the snapped click points would otherwise be skipped, so
+                    // the CPP solver never visits that street.
+                    //
+                    // Identify the edge each endpoint actually lies on, then
+                    // mark it mandatory only when both agree. Falling back to
+                    // the midpoint (as a previous version did) can snap to a
+                    // parallel/crossing road and pin the wrong edge.
+                    const snap1 = this.findClosestPointOnEdge(p1[1], p1[0]);
+                    const snap2 = this.findClosestPointOnEdge(p2[1], p2[0]);
+                    const sameEdge =
+                        snap1 && snap2 &&
+                        ((snap1.u === snap2.u && snap1.v === snap2.v) ||
+                         (snap1.u === snap2.v && snap1.v === snap2.u));
+                    if (sameEdge && snap1.u !== snap1.v) {
+                        const link = this.graph.getLink(snap1.u, snap1.v) || this.graph.getLink(snap1.v, snap1.u);
+                        if (link) addRequiredEdge(snap1.u, snap1.v, link);
+                    }
                 }
             }
         }
@@ -1022,6 +1047,58 @@ export class StreetGraph {
                     ...(hasConstruction && { hasConstruction: true })
                 });
             }
+
+            // If the user's endpoint click landed mid-edge (not at an
+            // intersection), the trail above ends at the nearest intersection
+            // node which can be visually past the actual click. Project the
+            // endpoint onto its closest edge and truncate (or extend) the
+            // coords so the route stops exactly at that point.
+            if (endPoint && coords.length > 0) {
+                const snap = this.findClosestPointOnEdge(endPoint.lat, endPoint.lon);
+                if (snap) {
+                    const uNode = this.graph.getNode(snap.u);
+                    const vNode = this.graph.getNode(snap.v);
+                    if (uNode && vNode) {
+                        const distToSnap = this.haversine(endPoint.lat, endPoint.lon, snap.lat, snap.lon);
+                        const distToU = this.haversine(endPoint.lat, endPoint.lon, uNode.data.lat, uNode.data.lon);
+                        const distToV = this.haversine(endPoint.lat, endPoint.lon, vNode.data.lat, vNode.data.lon);
+                        const minNodeDist = Math.min(distToU, distToV);
+
+                        // Only truncate when the click is genuinely mid-edge,
+                        // not just slightly off an intersection due to map
+                        // rounding. ~5m gap between node and edge snap.
+                        const NODE_THRESHOLD_M = 5;
+                        if (minNodeDist - distToSnap > NODE_THRESHOLD_M) {
+                            const eq = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+                            const isU = (c: { lat: number, lon: number }) =>
+                                eq(c.lat, uNode.data.lat) && eq(c.lon, uNode.data.lon);
+                            const isV = (c: { lat: number, lon: number }) =>
+                                eq(c.lat, vNode.data.lat) && eq(c.lon, vNode.data.lon);
+
+                            // Find the last time the route traversed the snap edge.
+                            let lastIdx = -1;
+                            for (let i = 0; i < coords.length - 1; i++) {
+                                const a = coords[i], b = coords[i + 1];
+                                if ((isU(a) && isV(b)) || (isV(a) && isU(b))) lastIdx = i;
+                            }
+
+                            if (lastIdx !== -1) {
+                                // Truncate at the snap point during that traversal.
+                                return [...coords.slice(0, lastIdx + 1), { lat: snap.lat, lon: snap.lon }];
+                            }
+
+                            // The snap edge was not traversed. If the trail's
+                            // final node is one of the snap edge's endpoints,
+                            // extend along that edge to the snap point.
+                            const last = coords[coords.length - 1];
+                            if (isU(last) || isV(last)) {
+                                coords.push({ lat: snap.lat, lon: snap.lon });
+                            }
+                        }
+                    }
+                }
+            }
+
             return coords;
         } catch (e: any) {
             console.error("Route construction failed:", e.message);
