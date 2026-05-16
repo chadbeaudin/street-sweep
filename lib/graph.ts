@@ -33,8 +33,60 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const GRAPH_CACHE = new Map<string, { graph: StreetGraph; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
+// Spatial index cell size in degrees (~55m at equator). Small enough to
+// keep cell buckets tiny, large enough that typical clicks find candidates
+// within a 1-2 ring expansion.
+const GRID_DEG = 0.0005;
+
+// Binary min-heap for Dijkstra. Replaces the previous `queue.sort()` on
+// every iteration (which was O(n log n) per dequeue, making pathfinding
+// O(V^2 log V) instead of O((V+E) log V)).
+class MinHeap<T> {
+    private heap: { k: number; v: T }[] = [];
+    size(): number { return this.heap.length; }
+    push(value: T, key: number): void {
+        const h = this.heap;
+        h.push({ k: key, v: value });
+        let i = h.length - 1;
+        while (i > 0) {
+            const p = (i - 1) >> 1;
+            if (h[p].k <= h[i].k) break;
+            [h[p], h[i]] = [h[i], h[p]];
+            i = p;
+        }
+    }
+    pop(): T | undefined {
+        const h = this.heap;
+        if (h.length === 0) return undefined;
+        const top = h[0].v;
+        const last = h.pop()!;
+        if (h.length > 0) {
+            h[0] = last;
+            let i = 0;
+            const n = h.length;
+            while (true) {
+                const l = 2 * i + 1, r = 2 * i + 2;
+                let s = i;
+                if (l < n && h[l].k < h[s].k) s = l;
+                if (r < n && h[r].k < h[s].k) s = r;
+                if (s === i) break;
+                [h[i], h[s]] = [h[s], h[i]];
+                i = s;
+            }
+        }
+        return top;
+    }
+}
+
 export class StreetGraph {
     graph: Graph<NodeData, EdgeData>;
+
+    // Lazy spatial indices. Built on first query, invalidated on
+    // buildFromOSM. Cached on the graph instance so they survive across
+    // multiple /api/step calls via the GRAPH_CACHE.
+    private nodeIndex: Map<string, string[]> | null = null;
+    private edgeIndex: Map<string, any[]> | null = null;
+    private riddenIndex: Map<string, [number, number][]> | null = null;
 
     public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions): StreetGraph {
         const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
@@ -57,7 +109,13 @@ export class StreetGraph {
 
     public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions) {
         console.log(`${ts()} Building graph with options:`, options);
+        // Any prior spatial indices are stale.
+        this.nodeIndex = null;
+        this.edgeIndex = null;
+        this.riddenIndex = null;
         const nodesMap = new Map<number, { lat: number, lon: number }>();
+
+        if (riddenRoads && riddenRoads.length > 0) this.buildRiddenIndex(riddenRoads);
 
         // 1. First pass: Collect any top-level node elements (for backward compatibility/tests)
         for (const elem of data.elements) {
@@ -155,25 +213,36 @@ export class StreetGraph {
         }
     }
 
+    private buildRiddenIndex(riddenRoads: [number, number][][]): void {
+        this.riddenIndex = new Map();
+        for (const activity of riddenRoads) {
+            for (const point of activity) {
+                const cellLat = Math.floor(point[0] / GRID_DEG);
+                const cellLon = Math.floor(point[1] / GRID_DEG);
+                const key = `${cellLat}:${cellLon}`;
+                let bucket = this.riddenIndex.get(key);
+                if (!bucket) { bucket = []; this.riddenIndex.set(key, bucket); }
+                bucket.push(point);
+            }
+        }
+    }
+
     private checkIfRidden(u: { lat: number, lon: number }, v: { lat: number, lon: number }, riddenRoads: [number, number][][] | null): boolean {
-        if (!riddenRoads || riddenRoads.length === 0) return false;
+        if (!riddenRoads || riddenRoads.length === 0 || !this.riddenIndex) return false;
 
         const thresholdMeters = 20;
         const midLat = (u.lat + v.lat) / 2;
         const midLon = (u.lon + v.lon) / 2;
+        const centerLat = Math.floor(midLat / GRID_DEG);
+        const centerLon = Math.floor(midLon / GRID_DEG);
 
-        const edgeMinLat = Math.min(u.lat, v.lat) - 0.001;
-        const edgeMaxLat = Math.max(u.lat, v.lat) + 0.001;
-        const edgeMinLon = Math.min(u.lon, v.lon) - 0.001;
-        const edgeMaxLon = Math.max(u.lon, v.lon) + 0.001;
-
-        for (const activity of riddenRoads) {
-            if (activity.length === 0) continue;
-            for (const point of activity) {
-                if (point[0] > edgeMinLat && point[0] < edgeMaxLat &&
-                    point[1] > edgeMinLon && point[1] < edgeMaxLon) {
-                    const dist = this.haversine(midLat, midLon, point[0], point[1]);
-                    if (dist < thresholdMeters) return true;
+        // 1-ring expansion: GRID_DEG (~55m) > threshold (20m), so neighbors cover all candidates
+        for (let dLat = -1; dLat <= 1; dLat++) {
+            for (let dLon = -1; dLon <= 1; dLon++) {
+                const bucket = this.riddenIndex.get(`${centerLat + dLat}:${centerLon + dLon}`);
+                if (!bucket) continue;
+                for (const point of bucket) {
+                    if (this.haversine(midLat, midLon, point[0], point[1]) < thresholdMeters) return true;
                 }
             }
         }
@@ -358,16 +427,20 @@ export class StreetGraph {
     public findAllTargets(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>): Map<string, { path: { id: string, idNext: string, weight: number }[], weight: number }> {
         const distances = new Map<string, number>();
         const previous = new Map<string, { id: string, weight: number }>();
-        const queue: { id: string, weight: number }[] = [{ id: fromId, weight: 0 }];
+        const queue = new MinHeap<{ id: string; weight: number }>();
+        queue.push({ id: fromId, weight: 0 }, 0);
         distances.set(fromId, 0);
 
         const results = new Map<string, { path: { id: string, idNext: string, weight: number }[], weight: number }>();
         const targetsLeft = new Set(targetIds);
         targetsLeft.delete(fromId);
 
-        while (queue.length > 0) {
-            queue.sort((a, b) => a.weight - b.weight);
-            const { id: u, weight: distU } = queue.shift()!;
+        while (queue.size() > 0) {
+            const { id: u, weight: distU } = queue.pop()!;
+
+            // Stale entry: a better path to u was already processed.
+            const known = distances.get(u);
+            if (known !== undefined && known < distU) continue;
 
             if (targetsLeft.has(u)) {
                 const p: { id: string, idNext: string, weight: number }[] = [];
@@ -392,7 +465,7 @@ export class StreetGraph {
                 if (!distances.has(v) || alt < distances.get(v)!) {
                     distances.set(v, alt);
                     previous.set(v, { id: u, weight });
-                    queue.push({ id: v, weight: alt });
+                    queue.push({ id: v, weight: alt }, alt);
                 }
             });
         }
@@ -407,17 +480,22 @@ export class StreetGraph {
     ): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
         const distances = new Map<string, number>();
         const previous = new Map<string, { id: string, weight: number }>();
-        const queue: { id: string, weight: number }[] = [{ id: fromId, weight: 0 }];
+        const queue = new MinHeap<{ id: string; weight: number }>();
+        queue.push({ id: fromId, weight: 0 }, 0);
         distances.set(fromId, 0);
 
         let bestTarget: string | null = null;
         let minWeight = Infinity;
 
-        while (queue.length > 0) {
-            queue.sort((a, b) => a.weight - b.weight);
-            const { id: u, weight: distU } = queue.shift()!;
+        while (queue.size() > 0) {
+            const { id: u, weight: distU } = queue.pop()!;
 
             if (distU > minWeight) break;
+
+            // Stale entry: a better path to u was already processed.
+            const known = distances.get(u);
+            if (known !== undefined && known < distU) continue;
+
             if (targetIds.has(u)) {
                 if (distU < minWeight) {
                     minWeight = distU;
@@ -440,7 +518,7 @@ export class StreetGraph {
                 if (!distances.has(v) || alt < distances.get(v)!) {
                     distances.set(v, alt);
                     previous.set(v, { id: u, weight });
-                    queue.push({ id: v, weight: alt });
+                    queue.push({ id: v, weight: alt }, alt);
                 }
             });
         }
@@ -527,37 +605,176 @@ export class StreetGraph {
         }
     }
 
-    public findClosestNode(lat: number, lon: number, nodeIds?: Set<string>): string | null {
-        let closestNode: string | null = null;
-        let minDist = Infinity;
-        const checkNode = (node: any) => {
-            const nodeId = node.id.toString();
-            if (nodeIds && !nodeIds.has(nodeId)) return;
-            const dist = this.haversine(lat, lon, node.data.lat, node.data.lon);
-            if (dist < minDist) {
-                minDist = dist;
-                closestNode = nodeId;
-            }
-        };
-        this.graph.forEachNode(checkNode);
-        return closestNode;
+    private cellKey(lat: number, lon: number): string {
+        const cLat = Math.floor(lat / GRID_DEG);
+        const cLon = Math.floor(lon / GRID_DEG);
+        return `${cLat}:${cLon}`;
     }
 
-    public findClosestPointOnEdge(lat: number, lon: number): { lat: number, lon: number, u: string, v: string } | null {
-        let minDist = Infinity;
-        let bestPoint: { lat: number, lon: number, u: string, v: string } | null = null;
+    private buildNodeIndex() {
+        const index = new Map<string, string[]>();
+        this.graph.forEachNode((node: any) => {
+            const key = this.cellKey(node.data.lat, node.data.lon);
+            let bucket = index.get(key);
+            if (!bucket) { bucket = []; index.set(key, bucket); }
+            bucket.push(node.id.toString());
+        });
+        this.nodeIndex = index;
+    }
+
+    private buildEdgeIndex() {
+        const index = new Map<string, any[]>();
+        const addLinkToCell = (key: string, link: any) => {
+            let bucket = index.get(key);
+            if (!bucket) { bucket = []; index.set(key, bucket); }
+            bucket.push(link);
+        };
+        const seenLinks = new Set<any>();
+        // Safety cap: a single edge can't add itself to more than this many
+        // cells. Real OSM way segments are short (<200m) so they touch 1–4
+        // cells; this only matters for pathological test inputs.
+        const MAX_CELLS_PER_EDGE = 4096;
 
         this.graph.forEachLink((link: any) => {
+            // ngraph multigraph has both u→v and v→u links per edge.
+            // Dedupe by edge id so each physical segment is indexed once.
+            const edgeKey = `${link.fromId}|${link.toId}|${link.data?.id}`;
+            const revKey = `${link.toId}|${link.fromId}|${link.data?.id}`;
+            if (seenLinks.has(edgeKey) || seenLinks.has(revKey)) return;
+            seenLinks.add(edgeKey);
+
             const u = this.graph.getNode(link.fromId);
             const v = this.graph.getNode(link.toId);
             if (!u || !v) return;
 
+            const cells = new Set<string>();
+            const dLat = v.data.lat - u.data.lat;
+            const dLon = v.data.lon - u.data.lon;
+            // Rasterize the segment into every cell it passes through by
+            // sampling at half-cell intervals.
+            const span = Math.max(Math.abs(dLat), Math.abs(dLon));
+            const steps = Math.min(MAX_CELLS_PER_EDGE, Math.max(1, Math.ceil((span / GRID_DEG) * 2)));
+            for (let s = 0; s <= steps; s++) {
+                const t = s / steps;
+                cells.add(this.cellKey(u.data.lat + t * dLat, u.data.lon + t * dLon));
+            }
+            for (const c of cells) addLinkToCell(c, link);
+        });
+        this.edgeIndex = index;
+    }
+
+    public findClosestNode(lat: number, lon: number, nodeIds?: Set<string>): string | null {
+        // For a small candidate set, just iterate it directly.
+        if (nodeIds && nodeIds.size <= 64) {
+            let bestId: string | null = null;
+            let minDist = Infinity;
+            for (const id of nodeIds) {
+                const n = this.graph.getNode(id);
+                if (!n) continue;
+                const d = this.haversine(lat, lon, n.data.lat, n.data.lon);
+                if (d < minDist) { minDist = d; bestId = id; }
+            }
+            return bestId;
+        }
+
+        if (!this.nodeIndex) this.buildNodeIndex();
+
+        const centerLat = Math.floor(lat / GRID_DEG);
+        const centerLon = Math.floor(lon / GRID_DEG);
+        let bestId: string | null = null;
+        let minDist = Infinity;
+
+        const MAX_RINGS = 20; // ~1km radius — covers typical dense street networks
+        for (let radius = 0; radius <= MAX_RINGS; radius++) {
+            for (let dLat = -radius; dLat <= radius; dLat++) {
+                for (let dLon = -radius; dLon <= radius; dLon++) {
+                    // Only scan the ring's perimeter (skip already-scanned interior)
+                    if (radius > 0 && Math.abs(dLat) !== radius && Math.abs(dLon) !== radius) continue;
+                    const key = `${centerLat + dLat}:${centerLon + dLon}`;
+                    const bucket = this.nodeIndex!.get(key);
+                    if (!bucket) continue;
+                    for (const id of bucket) {
+                        if (nodeIds && !nodeIds.has(id)) continue;
+                        const n = this.graph.getNode(id);
+                        if (!n) continue;
+                        const d = this.haversine(lat, lon, n.data.lat, n.data.lon);
+                        if (d < minDist) { minDist = d; bestId = id; }
+                    }
+                }
+            }
+            // Once we have a candidate, expand one more ring to confirm
+            // nothing closer exists in the next ring out. Approximate
+            // degrees-to-meters conversion is good enough as a lower bound.
+            if (bestId) {
+                const minDegDist = minDist / 111000;
+                if (minDegDist < (radius - 1) * GRID_DEG) break;
+            }
+        }
+
+        // Fallback for sparse graphs (or pathological tests) where no node
+        // exists within MAX_RINGS: scan the entire index. This still beats
+        // the old O(n) forEachNode because we skip empty cells, but is
+        // primarily a correctness safety net.
+        if (!bestId) {
+            for (const bucket of this.nodeIndex!.values()) {
+                for (const id of bucket) {
+                    if (nodeIds && !nodeIds.has(id)) continue;
+                    const n = this.graph.getNode(id);
+                    if (!n) continue;
+                    const d = this.haversine(lat, lon, n.data.lat, n.data.lon);
+                    if (d < minDist) { minDist = d; bestId = id; }
+                }
+            }
+        }
+
+        return bestId;
+    }
+
+    public findClosestPointOnEdge(lat: number, lon: number): { lat: number, lon: number, u: string, v: string } | null {
+        if (!this.edgeIndex) this.buildEdgeIndex();
+
+        const centerLat = Math.floor(lat / GRID_DEG);
+        const centerLon = Math.floor(lon / GRID_DEG);
+        let bestPoint: { lat: number, lon: number, u: string, v: string } | null = null;
+        let minDist = Infinity;
+        const seen = new Set<any>();
+
+        const tryLink = (link: any) => {
+            if (seen.has(link)) return;
+            seen.add(link);
+            const u = this.graph.getNode(link.fromId);
+            const v = this.graph.getNode(link.toId);
+            if (!u || !v) return;
             const res = this.pointToSegmentDistance(lat, lon, u.data.lat, u.data.lon, v.data.lat, v.data.lon);
             if (res.distance < minDist) {
                 minDist = res.distance;
                 bestPoint = { lat: res.lat, lon: res.lon, u: link.fromId.toString(), v: link.toId.toString() };
             }
-        });
+        };
+
+        const MAX_RINGS = 20;
+        for (let radius = 0; radius <= MAX_RINGS; radius++) {
+            for (let dLat = -radius; dLat <= radius; dLat++) {
+                for (let dLon = -radius; dLon <= radius; dLon++) {
+                    if (radius > 0 && Math.abs(dLat) !== radius && Math.abs(dLon) !== radius) continue;
+                    const key = `${centerLat + dLat}:${centerLon + dLon}`;
+                    const bucket = this.edgeIndex!.get(key);
+                    if (!bucket) continue;
+                    for (const link of bucket) tryLink(link);
+                }
+            }
+            if (bestPoint) {
+                const minDegDist = minDist / 111000;
+                if (minDegDist < (radius - 1) * GRID_DEG) break;
+            }
+        }
+
+        // Fallback for sparse graphs: scan all indexed edges.
+        if (!bestPoint) {
+            for (const bucket of this.edgeIndex!.values()) {
+                for (const link of bucket) tryLink(link);
+            }
+        }
 
         return bestPoint;
     }
@@ -590,8 +807,11 @@ export class StreetGraph {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
+        const requiredEdgeKeys = new Set<string>();
         const unriddenNodes = new Set<string>();
         const allowedLinks = new Set<string>();
+
+        const edgeKey = (a: string, b: string) => a < b ? `${a}|${b}` : `${b}|${a}`;
 
         if (manualRoute && manualRoute.length > 1) {
             console.log(`${ts()} Identifying mandatory segments from ${manualRoute.length} manual points.`);
@@ -599,8 +819,9 @@ export class StreetGraph {
             const addRequiredEdge = (fromId: string, toId: string, link: any) => {
                 if (!link) return;
                 allowedLinks.add(link.id);
-                const exists = requiredEdges.find(re => (re.u === fromId && re.v === toId) || (re.u === toId && re.v === fromId));
-                if (!exists) {
+                const key = edgeKey(fromId, toId);
+                if (!requiredEdgeKeys.has(key)) {
+                    requiredEdgeKeys.add(key);
                     requiredEdges.push({ u: fromId, v: toId, link });
                 }
                 unriddenNodes.add(fromId);
@@ -677,8 +898,9 @@ export class StreetGraph {
 
                     if (isRequired) {
                         allowedLinks.add(link.id);
-                        const exists = requiredEdges.find(re => (re.u === link.fromId && re.v === link.toId) || (re.u === link.toId && re.v === link.fromId));
-                        if (!exists) {
+                        const key = edgeKey(link.fromId.toString(), link.toId.toString());
+                        if (!requiredEdgeKeys.has(key)) {
+                            requiredEdgeKeys.add(key);
                             requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
                             unriddenNodes.add(link.fromId.toString());
                             unriddenNodes.add(link.toId.toString());

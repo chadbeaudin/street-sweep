@@ -53,6 +53,7 @@ export default function Home() {
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const generateAbortControllerRef = useRef<AbortController | null>(null);
+    const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
     const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][] }[]>([]);
@@ -148,11 +149,16 @@ export default function Home() {
     useEffect(() => {
         if (!bbox) return;
 
+        roadsAbortControllerRef.current?.abort();
+        roadsAbortControllerRef.current = new AbortController();
+        const signal = roadsAbortControllerRef.current.signal;
+
         const timer = setTimeout(() => {
             fetch('/api/roads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bbox })
+                body: JSON.stringify({ bbox }),
+                signal
             })
                 .then(res => res.json())
                 .then(data => {
@@ -161,10 +167,13 @@ export default function Home() {
                         setAllRoads(data.roads);
                     }
                 })
-                .catch(err => console.error('Failed to fetch roads:', err));
+                .catch(err => { if (err.name !== 'AbortError') console.error('Failed to fetch roads:', err); });
         }, 300);
 
-        return () => clearTimeout(timer);
+        return () => {
+            clearTimeout(timer);
+            roadsAbortControllerRef.current?.abort();
+        };
     }, [bbox]);
 
     const handleGenerate = useCallback(async (isSilent = false) => {

@@ -24,19 +24,19 @@ interface ElevationProfileProps {
     onHover: (point: { lat: number; lon: number } | null) => void;
 }
 
-export const ElevationProfile: React.FC<ElevationProfileProps> = ({ data, onHover }) => {
+const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover }) => {
+    const yDomain = useMemo(() => {
+        if (!data || data.length === 0) return [0, 100];
+        const elevations = data.map(d => d.elevation);
+        const minElev = Math.min(...elevations);
+        const maxElev = Math.max(...elevations);
+        return [
+            Math.floor(minElev / 100) * 100 - 100,
+            Math.ceil(maxElev / 100) * 100 + 100
+        ];
+    }, [data]);
+
     if (!data || data.length === 0) return null;
-
-    // Find min/max for better Y axis scaling
-    const elevations = data.map(d => d.elevation);
-    const minElev = Math.min(...elevations);
-    const maxElev = Math.max(...elevations);
-
-    // Padding for Y axis
-    const yDomain = [
-        Math.floor(minElev / 100) * 100 - 100,
-        Math.ceil(maxElev / 100) * 100 + 100
-    ];
 
     return (
         <div className="w-full h-48 bg-white border-t border-gray-200 p-4 shadow-inner relative z-10">
@@ -98,3 +98,5 @@ export const ElevationProfile: React.FC<ElevationProfileProps> = ({ data, onHove
         </div>
     );
 };
+
+export const ElevationProfile = React.memo(ElevationProfileInner);
