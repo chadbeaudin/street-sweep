@@ -9,10 +9,8 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'Strava Client ID not configured on server.' }, { status: 500 });
     }
 
-    const url = new URL(req.url);
-    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || url.host;
-    const protocol = req.headers.get('x-forwarded-proto') || 'http';
-    const redirectUri = `${protocol}://${host}/strava-auth`;
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://${new URL(req.url).host}`;
+    const redirectUri = `${baseUrl}/strava-auth`;
 
     const state = crypto.randomUUID();
 
