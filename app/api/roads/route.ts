@@ -4,7 +4,12 @@ import { OSMWay } from '@/lib/types';
 
 export async function POST(req: NextRequest) {
     try {
-        const { bbox } = await req.json();
+        let bbox: any;
+        try {
+            ({ bbox } = await req.json());
+        } catch {
+            return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });
+        }
 
         if (!bbox) {
             return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });

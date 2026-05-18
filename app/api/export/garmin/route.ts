@@ -72,7 +72,7 @@ export async function POST(req: Request) {
         });
 
     } catch (err: any) {
-        console.error('Garmin Course Creation error:', err);
+        console.error('Garmin Course Creation error:', err.message);
         
         // Try to extract more detail from the error if it's from the library
         let errorMessage = err.message || 'Failed to create course in Garmin.';
