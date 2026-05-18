@@ -41,7 +41,7 @@ export async function POST(req: Request) {
             );
         }
 
-        return NextResponse.json(data);
+        return NextResponse.json({ refresh_token: data.refresh_token });
     } catch (error: any) {
         console.error('Strava OAuth Exchange Error:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
