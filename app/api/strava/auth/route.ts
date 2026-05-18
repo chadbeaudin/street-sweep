@@ -14,7 +14,16 @@ export async function GET(req: Request) {
     const protocol = req.headers.get('x-forwarded-proto') || 'http';
     const redirectUri = `${protocol}://${host}/strava-auth`;
 
-    const stravaUrl = `https://www.strava.com/oauth/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&approval_prompt=force&scope=read,activity:read`;
+    const state = crypto.randomUUID();
 
-    return NextResponse.redirect(stravaUrl);
+    const stravaUrl = `https://www.strava.com/oauth/authorize?client_id=${clientId}&response_type=code&redirect_uri=${encodeURIComponent(redirectUri)}&approval_prompt=force&scope=read,activity:read&state=${state}`;
+
+    const response = NextResponse.redirect(stravaUrl);
+    response.cookies.set('strava_oauth_state', state, {
+        httpOnly: false,
+        sameSite: 'lax',
+        maxAge: 600,
+        path: '/',
+    });
+    return response;
 }

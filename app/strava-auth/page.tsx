@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 function StravaAuthCallback() {
     const searchParams = useSearchParams();
     const code = searchParams.get('code');
+    const stateParam = searchParams.get('state');
     const error = searchParams.get('error');
     const router = useRouter();
     const [status, setStatus] = useState('Connecting to Strava...');
@@ -20,6 +21,19 @@ function StravaAuthCallback() {
             setStatus('No authorization code found in URL.');
             return;
         }
+
+        const stateCookie = document.cookie
+            .split(';')
+            .find(c => c.trim().startsWith('strava_oauth_state='))
+            ?.split('=')[1];
+
+        if (!stateParam || !stateCookie || stateParam !== stateCookie) {
+            setStatus('Authorization failed: invalid state parameter. Please try connecting again.');
+            return;
+        }
+
+        // Clear the state cookie now that it has been validated
+        document.cookie = 'strava_oauth_state=; Max-Age=0; path=/';
 
         try {
             const savedSettings = localStorage.getItem('strava_settings');

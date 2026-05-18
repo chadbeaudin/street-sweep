@@ -1,6 +1,11 @@
 // Tests for issues #15 (OAuth state parameter) and #17 (hardcoded redirect_uri).
 
-const mockRedirect = jest.fn((url: string) => ({ status: 302, _url: url }));
+const mockCookiesSet = jest.fn();
+const mockRedirect = jest.fn((url: string) => ({
+    status: 302,
+    _url: url,
+    cookies: { set: mockCookiesSet },
+}));
 const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
     status: init?.status ?? 200,
     _data: data,
@@ -24,6 +29,11 @@ function getRedirectUrl(): URL {
 describe('GET /api/strava/auth', () => {
     beforeEach(() => {
         process.env.STRAVA_CLIENT_ID = 'test_client_id';
+        mockRedirect.mockImplementation((url: string) => ({
+            status: 302,
+            _url: url,
+            cookies: { set: mockCookiesSet },
+        }));
     });
 
     it('returns 500 when STRAVA_CLIENT_ID is not set', async () => {
