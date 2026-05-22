@@ -903,11 +903,13 @@ export class StreetGraph {
                 const v = this.graph.getNode(link.toId);
 
                 if (u && v) {
+                    // Expand each box by ~20m to catch streets just outside the drawn edge
+                    const BOX_BUFFER = 0.0002;
                     const isRequired = selectionBoxes.some(box => {
-                        const uIn = u.data.lat <= box.north && u.data.lat >= box.south &&
-                            u.data.lon <= box.east && u.data.lon >= box.west;
-                        const vIn = v.data.lat <= box.north && v.data.lat >= box.south &&
-                            v.data.lon <= box.east && v.data.lon >= box.west;
+                        const uIn = u.data.lat <= box.north + BOX_BUFFER && u.data.lat >= box.south - BOX_BUFFER &&
+                            u.data.lon <= box.east + BOX_BUFFER && u.data.lon >= box.west - BOX_BUFFER;
+                        const vIn = v.data.lat <= box.north + BOX_BUFFER && v.data.lat >= box.south - BOX_BUFFER &&
+                            v.data.lon <= box.east + BOX_BUFFER && v.data.lon >= box.west - BOX_BUFFER;
                         return uIn || vIn;
                     });
 
