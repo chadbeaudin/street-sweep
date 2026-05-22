@@ -806,6 +806,21 @@ export class StreetGraph {
     public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
+        // Mixed mode: point route is fixed, area coverage is appended starting from its endpoint.
+        if (manualRoute && manualRoute.length > 1 && selectionBoxes && selectionBoxes.length > 0) {
+            const manualCoords = manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
+            const lastPt = manualRoute[manualRoute.length - 1];
+            const junction = { lat: lastPt[1], lon: lastPt[0] };
+            const areaCircuit = this.solveCPP(junction, junction, undefined, selectionBoxes);
+            // Drop the first area coord if it duplicates the junction point
+            const tail = areaCircuit.length > 0 &&
+                Math.abs(areaCircuit[0].lat - junction.lat) < 1e-7 &&
+                Math.abs(areaCircuit[0].lon - junction.lon) < 1e-7
+                ? areaCircuit.slice(1)
+                : areaCircuit;
+            return [...manualCoords, ...tail];
+        }
+
         const requiredEdges: { u: string, v: string, link: any }[] = [];
         const requiredEdgeKeys = new Set<string>();
         const unriddenNodes = new Set<string>();
