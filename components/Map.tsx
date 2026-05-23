@@ -118,68 +118,15 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
 }
 
 const SelectionTool: React.FC<{
-    isSelectionMode: boolean;
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
-    onSelectionModeChange?: (isSelectionMode: boolean) => void;
-    onDrawingChange?: (box: { north: number; south: number; east: number; west: number } | null) => void;
-}> = ({ isSelectionMode, onSelectionChange, onSelectionModeChange, onDrawingChange }) => {
-    const [startPos, setStartPos] = React.useState<L.LatLng | null>(null);
-    const currentBoxRef = React.useRef<{ north: number; south: number; east: number; west: number } | null>(null);
-    const map = useMap();
-
+}> = ({ onSelectionChange }) => {
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                if (startPos) {
-                    setStartPos(null);
-                    onSelectionChange(null);
-                    map.dragging.enable();
-                } else {
-                    // Even if not dragging, let's clear the selection if it exists
-                    onSelectionChange(null);
-                }
-            }
+            if (e.key === 'Escape') onSelectionChange(null);
         };
-
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [startPos, map, onSelectionChange]);
-
-    useMapEvents({
-        mousedown: (e) => {
-            if (!isSelectionMode) return;
-            // Prevent dragging the map while selecting
-            map.dragging.disable();
-            setStartPos(e.latlng);
-        },
-        mousemove: (e) => {
-            if (!isSelectionMode || !startPos) return;
-            const box = {
-                north: Math.max(startPos.lat, e.latlng.lat),
-                south: Math.min(startPos.lat, e.latlng.lat),
-                east: Math.max(startPos.lng, e.latlng.lng),
-                west: Math.min(startPos.lng, e.latlng.lng)
-            };
-            currentBoxRef.current = box;
-            onDrawingChange?.(box);
-        },
-        mouseup: (e) => {
-            if (!isSelectionMode) return;
-            map.dragging.enable();
-
-            if (currentBoxRef.current) {
-                onSelectionChange(currentBoxRef.current);
-                currentBoxRef.current = null;
-                onDrawingChange?.(null);
-            }
-
-            setStartPos(null);
-            // Delay reverting to point mode to swallow the subsequent click event
-            setTimeout(() => {
-                onSelectionModeChange?.(false);
-            }, 100);
-        }
-    });
+    }, [onSelectionChange]);
 
     return null;
 };
@@ -293,6 +240,44 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
 const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
+    const selectionStartRef = React.useRef<L.Point | null>(null);
+
+    const handleOverlayMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        selectionStartRef.current = L.point(e.clientX - rect.left, e.clientY - rect.top);
+    }, []);
+
+    const handleOverlayMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (!selectionStartRef.current || !mapRef.current) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
+        const startLatLng = mapRef.current.containerPointToLatLng(selectionStartRef.current);
+        const endLatLng = mapRef.current.containerPointToLatLng(end);
+        setDrawingBox({
+            north: Math.max(startLatLng.lat, endLatLng.lat),
+            south: Math.min(startLatLng.lat, endLatLng.lat),
+            east: Math.max(startLatLng.lng, endLatLng.lng),
+            west: Math.min(startLatLng.lng, endLatLng.lng),
+        });
+    }, []);
+
+    const handleOverlayMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (!selectionStartRef.current || !mapRef.current) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
+        const startLatLng = mapRef.current.containerPointToLatLng(selectionStartRef.current);
+        const endLatLng = mapRef.current.containerPointToLatLng(end);
+        const box = {
+            north: Math.max(startLatLng.lat, endLatLng.lat),
+            south: Math.min(startLatLng.lat, endLatLng.lat),
+            east: Math.max(startLatLng.lng, endLatLng.lng),
+            west: Math.min(startLatLng.lng, endLatLng.lng),
+        };
+        onSelectionChange(box);
+        setDrawingBox(null);
+        selectionStartRef.current = null;
+        setTimeout(() => onSelectionModeChange?.(false), 100);
+    }, [onSelectionChange, onSelectionModeChange]);
 
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isSelectionMode || isEraserMode) return;
@@ -431,13 +416,8 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 <InvalidateSizeOnRoute route={route} />
                 <MapRefCapture mapRef={mapRef} />
 
-                {/* Selection Box Drawing Tool */}
-                <SelectionTool
-                    isSelectionMode={isSelectionMode}
-                    onSelectionChange={onSelectionChange}
-                    onSelectionModeChange={onSelectionModeChange}
-                    onDrawingChange={setDrawingBox}
-                />
+                {/* Escape key handler for selection mode */}
+                <SelectionTool onSelectionChange={onSelectionChange} />
 
                 {/* Eraser Tool */}
                 {isEraserMode && route && (
@@ -606,6 +586,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
                 <HoverMarker point={hoveredPoint} />
             </MapContainer>
+
+            {isSelectionMode && (
+                <div
+                    className="absolute inset-0"
+                    style={{ cursor: 'crosshair', zIndex: 999 }}
+                    onMouseDown={handleOverlayMouseDown}
+                    onMouseMove={handleOverlayMouseMove}
+                    onMouseUp={handleOverlayMouseUp}
+                />
+            )}
 
             {/* Custom map controls */}
             <div className="absolute bottom-8 right-3 z-[1000] flex flex-col gap-1">
