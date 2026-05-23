@@ -7,6 +7,7 @@ import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings 
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
+import { getCachedRoads, setCachedRoads } from '@/lib/stravaCache';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -99,34 +100,46 @@ export default function Home() {
             return;
         }
 
+        const credentialsKey = JSON.stringify(stravaCredentials);
+
         setStravaError(null);
         setIsStravaLoading(true);
-        fetch('/api/strava/activities', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stravaCredentials })
-        })
-            .then(res => res.json())
-            .then(data => {
-                if (data.riddenRoads) {
-                    setStravaRoads(data.riddenRoads);
-                } else if (data.error) {
-                    // Only show the main ErrorDialog if this isn't just a "missing credentials" case
-                    // which can happen if someone hasn't configured anything yet.
-                    setStravaError(data.error);
-                    if (!data.error.includes('Missing Strava credentials')) {
-                        setError({ message: data.error, trace: data.trace });
-                    }
-                }
-            })
-            .catch(err => {
-                console.error('Failed to fetch Strava roads:', err);
-                setStravaError(err.message);
-                setError({ message: `Strava Connection Failed: ${err.message}` });
-            })
-            .finally(() => {
+
+        getCachedRoads(credentialsKey).then(cached => {
+            if (cached) {
+                setStravaRoads(cached);
                 setIsStravaLoading(false);
-            });
+                return;
+            }
+
+            fetch('/api/strava/activities', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stravaCredentials })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.riddenRoads) {
+                        setStravaRoads(data.riddenRoads);
+                        setCachedRoads(data.riddenRoads, credentialsKey);
+                    } else if (data.error) {
+                        // Only show the main ErrorDialog if this isn't just a "missing credentials" case
+                        // which can happen if someone hasn't configured anything yet.
+                        setStravaError(data.error);
+                        if (!data.error.includes('Missing Strava credentials')) {
+                            setError({ message: data.error, trace: data.trace });
+                        }
+                    }
+                })
+                .catch(err => {
+                    console.error('Failed to fetch Strava roads:', err);
+                    setStravaError(err.message);
+                    setError({ message: `Strava Connection Failed: ${err.message}` });
+                })
+                .finally(() => {
+                    setIsStravaLoading(false);
+                });
+        });
     }, [stravaCredentials]);
 
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
