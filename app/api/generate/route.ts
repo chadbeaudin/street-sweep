@@ -138,7 +138,7 @@ export async function POST(request: Request) {
                         coordinates: coords.map((c, i) => {
                             // circuit and coords are 1:1 by index
                             const construction = circuit[i]?.hasConstruction ? 1 : 0;
-                            return [c[0], c[1], Math.round(fullElevations[i] * 3.28084), construction];
+                            return [c[0], c[1], fullElevations[i], construction];
                         })
                     }
                 }
