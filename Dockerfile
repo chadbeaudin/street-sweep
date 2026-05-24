@@ -20,6 +20,8 @@ ARG VERSION
 ENV APP_VERSION=$VERSION
 ENV NODE_ENV production
 
+LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/public/icon.png"
+
 RUN groupadd --system --gid 1001 nodejs
 RUN useradd --system --uid 1001 nextjs
 

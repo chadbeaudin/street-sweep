@@ -12,7 +12,7 @@
   <Overview>StreetSweep is an application for generating optimized bike routes to ensure 100% street coverage within a specified area with minimal backtracking and redundancy.</Overview>
   <Category>Tools:Utilities Network:Web Mapper:Biking</Category>
   <WebUI>http://[IP]:[PORT:3888]</WebUI>
-  <TemplateURL/>
+  <TemplateURL>https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/templates/street-sweep.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/public/icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
