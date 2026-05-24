@@ -806,19 +806,39 @@ export class StreetGraph {
     public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
-        // Mixed mode: point route is fixed, area coverage is appended starting from its endpoint.
+        // Mixed mode: point route is fixed, area coverage is appended.
+        // Generate the area circuit freely (no forced start/end) so the CPP matching
+        // is not pinned to the junction node, which previously caused long diagonal
+        // bridge edges radiating from the junction across the entire area.
+        // Then rotate the circuit so it begins at the point closest to the junction.
         if (manualRoute && manualRoute.length > 1 && selectionBoxes && selectionBoxes.length > 0) {
             const manualCoords = manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
             const lastPt = manualRoute[manualRoute.length - 1];
             const junction = { lat: lastPt[1], lon: lastPt[0] };
-            const areaCircuit = this.solveCPP(junction, junction, undefined, selectionBoxes);
-            // Drop the first area coord if it duplicates the junction point
-            const tail = areaCircuit.length > 0 &&
-                Math.abs(areaCircuit[0].lat - junction.lat) < 1e-7 &&
-                Math.abs(areaCircuit[0].lon - junction.lon) < 1e-7
-                ? areaCircuit.slice(1)
-                : areaCircuit;
-            return [...manualCoords, ...tail];
+
+            const areaCircuit = this.solveCPP(undefined, undefined, undefined, selectionBoxes);
+            if (areaCircuit.length === 0) return manualCoords;
+
+            // areaCircuit is a closed loop (first ≈ last). Strip the closing duplicate,
+            // rotate to the point nearest the junction, then re-close.
+            const isClosedLoop =
+                areaCircuit.length > 1 &&
+                Math.abs(areaCircuit[0].lat - areaCircuit[areaCircuit.length - 1].lat) < 1e-7 &&
+                Math.abs(areaCircuit[0].lon - areaCircuit[areaCircuit.length - 1].lon) < 1e-7;
+            const base = isClosedLoop ? areaCircuit.slice(0, -1) : areaCircuit;
+
+            let closestIdx = 0;
+            let minDist = Infinity;
+            for (let i = 0; i < base.length; i++) {
+                const d = this.haversine(junction.lat, junction.lon, base[i].lat, base[i].lon);
+                if (d < minDist) { minDist = d; closestIdx = i; }
+            }
+
+            const rotated = isClosedLoop
+                ? [...base.slice(closestIdx), ...base.slice(0, closestIdx), base[closestIdx]]
+                : base;
+
+            return [...manualCoords, ...rotated];
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];

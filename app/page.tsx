@@ -30,7 +30,7 @@ export default function Home() {
     const [isStravaLoading, setIsStravaLoading] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
-    const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][] }[]>([]);
+    const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[] }[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
     const [routingOptions, setRoutingOptions] = useState({
         avoidGravel: false,
@@ -57,7 +57,8 @@ export default function Home() {
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
-    const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][] }[]>([]);
+    const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[] }[]>([]);
+    const selectionBoxesRef = useRef<{ north: number; south: number; east: number; west: number }[]>([]);
     const historyIndexRef = useRef(-1);
     const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
     const stravaRoadsRef = useRef<[number, number][][] | null>(null);
@@ -71,6 +72,10 @@ export default function Home() {
     useEffect(() => {
         stravaRoadsRef.current = stravaRoads;
     }, [stravaRoads]);
+
+    useEffect(() => {
+        selectionBoxesRef.current = selectionBoxes;
+    }, [selectionBoxes]);
 
     useEffect(() => {
         routingOptionsRef.current = routingOptions;
@@ -429,7 +434,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 // Update refs (source of truth for subsequent clicks)
                 manualRouteRef.current = currentSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...currentSegments] };
+                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current] };
                 // Truncate history based on current index (for redo safety)
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
@@ -527,7 +532,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 manualRouteRef.current = updatedSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments] };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current] };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -580,32 +585,33 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             const prevIndex = historyIndexRef.current - 1;
             const snapshot = historyRef.current[prevIndex];
 
-            // Sync all refs
             pointsRef.current = [...snapshot.points];
             manualRouteRef.current = [...snapshot.route];
+            selectionBoxesRef.current = [...snapshot.selectionBoxes];
             historyIndexRef.current = prevIndex;
 
-            // Sync all state
             setSelectedPoints(pointsRef.current);
             setManualRoute(manualRouteRef.current);
+            setSelectionBoxes(selectionBoxesRef.current);
             setHistoryIndex(prevIndex);
         } else if (historyIndexRef.current === 0) {
             clearPoints();
         }
     }, [clearPoints]);
+
     const handleRedo = useCallback(() => {
         if (historyIndexRef.current < historyRef.current.length - 1) {
             const nextIndex = historyIndexRef.current + 1;
             const snapshot = historyRef.current[nextIndex];
 
-            // Sync all refs
             pointsRef.current = [...snapshot.points];
             manualRouteRef.current = [...snapshot.route];
+            selectionBoxesRef.current = [...snapshot.selectionBoxes];
             historyIndexRef.current = nextIndex;
 
-            // Sync all state
             setSelectedPoints(pointsRef.current);
             setManualRoute(manualRouteRef.current);
+            setSelectionBoxes(selectionBoxesRef.current);
             setHistoryIndex(nextIndex);
         }
     }, []);
@@ -635,19 +641,28 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
-                        <button
-                            onClick={() => setIsSelectionMode(!isSelectionMode)}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${isSelectionMode
-                                ? 'bg-amber-100 text-amber-700 border border-amber-200'
-                                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                                }`}
-                            title={isSelectionMode ? "Switch to Point mode" : "Switch to Area Select mode"}
-                        >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                            </svg>
-                            {isSelectionMode ? 'Area Selection' : 'Point Mode'}
-                        </button>
+                        <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium">
+                            <button
+                                onClick={() => setIsSelectionMode(false)}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${!isSelectionMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                title="Point Mode"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
+                                </svg>
+                                Point
+                            </button>
+                            <button
+                                onClick={() => setIsSelectionMode(true)}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isSelectionMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                title="Area Selection"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                </svg>
+                                Area
+                            </button>
+                        </div>
                         {selectionBoxes.length > 0 && (
                             <button
                                 onClick={() => setSelectionBoxes([])}
@@ -950,7 +965,21 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     allRoads={allRoads}
                     isSelectionMode={isSelectionMode}
                     selectionBoxes={selectionBoxes}
-                    onSelectionChange={(box: { north: number; south: number; east: number; west: number } | null) => box ? setSelectionBoxes(prev => [...prev, box]) : setSelectionBoxes([])}
+                    onSelectionChange={(box: { north: number; south: number; east: number; west: number } | null) => {
+                        if (box) {
+                            const newBoxes = [...selectionBoxesRef.current, box];
+                            selectionBoxesRef.current = newBoxes;
+                            setSelectionBoxes(newBoxes);
+                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes };
+                            const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+                            historyRef.current = [...newHistory, snapshot];
+                            historyIndexRef.current = historyRef.current.length - 1;
+                            setHistory(historyRef.current);
+                            setHistoryIndex(historyIndexRef.current);
+                        } else {
+                            setSelectionBoxes([]);
+                        }
+                    }}
                     onSelectionModeChange={setIsSelectionMode}
                     isEraserMode={isEraserMode}
                     onRouteUpdate={setRoute}
