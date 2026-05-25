@@ -11,8 +11,10 @@ module.exports = {
                     jsx: "react-jsx"
                 }
             }
-        ]
+        ],
+        "^.+\\.js$": ["ts-jest", { tsconfig: { allowJs: true, esModuleInterop: true } }]
     },
+    transformIgnorePatterns: ["/node_modules/(?!@garmin/fitsdk)"],
     moduleNameMapper: {
         "^@/(.*)$": "<rootDir>/$1"
     }
