@@ -15,6 +15,7 @@ module.exports = {
         "^.+\\.js$": ["ts-jest", { tsconfig: { allowJs: true, esModuleInterop: true } }]
     },
     transformIgnorePatterns: ["/node_modules/(?!@garmin/fitsdk)"],
+    testPathIgnorePatterns: ["/node_modules/", "/tests/integration/"],
     moduleNameMapper: {
         "^@/(.*)$": "<rootDir>/$1"
     }
