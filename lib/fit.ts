@@ -52,13 +52,17 @@ export function buildFitCourse(
         [0, 1, UINT8],  // type
         [1, 2, UINT16], // manufacturer
         [2, 2, UINT16], // product
+        [3, 4, UINT32], // serial_number
         [4, 4, UINT32], // time_created
+        [5, 2, UINT16], // number
     ]));
     data.push(0);
     u8(data, 6);       // type = course (6)
     u16(data, 1);      // manufacturer = garmin (1)
     u16(data, 65534);  // product = garmin connect
+    u32(data, 1);      // serial_number
     u32(data, ts);
+    u16(data, 1);      // number = 1
 
     // ── course (local 1, global 31) ──────────────────────────────────────────
     data.push(...def(1, 31, [
@@ -170,6 +174,15 @@ export function buildFitCourse(
     u32(data, totalDistCm);                // total_distance
     u16(data, Math.round(totalAscent));    // total_ascent
     u16(data, Math.round(totalDescent));   // total_descent
+
+    // ── file_creator (local 5, global 49) ────────────────────────────────────
+    data.push(...def(5, 49, [
+        [0, 2, UINT16], // software_version
+        [1, 1, UINT8],  // hardware_version
+    ]));
+    data.push(5);
+    u16(data, 0); // software_version
+    u8(data, 0);  // hardware_version
 
     // ── assemble with header + CRC ───────────────────────────────────────────
     const dataSize = data.length;
