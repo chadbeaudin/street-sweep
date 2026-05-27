@@ -853,7 +853,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
             <div className="flex-1 flex flex-col relative min-h-0">
                 {/* Routing Status Pill */}
-                {(activeSteps > 0 || isAutoGenerating) && (
+                {((activeSteps > 0 && selectedPoints.length >= 2) || isAutoGenerating) && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="relative flex items-center justify-center">
                             <div className="w-3 h-3 bg-indigo-600 rounded-full animate-ping absolute"></div>
