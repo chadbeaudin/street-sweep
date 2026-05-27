@@ -2,7 +2,7 @@ export interface Waypoint {
     id: string;
     lat: number;
     lon: number;
-    status?: string;
+    status?: 'snapped' | 'pending';
 }
 
 /**

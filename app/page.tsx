@@ -296,7 +296,7 @@ export default function Home() {
         }, 1500); // 1.5s debounce to allow for multiple rapid clicks/box draws
 
         return () => clearTimeout(timer);
-    }, [manualRoute, selectionBoxes, routingOptions, selectedPoints.length, activeSteps]);
+    }, [manualRoute, selectionBoxes, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
 
     const downloadGPX = () => {
         if (!route) return;
