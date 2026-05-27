@@ -7,7 +7,8 @@ import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings 
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
-import { getCachedRoads, setCachedRoads } from '@/lib/stravaCache';
+import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
+import { getAffectedSegmentIndices, applyMovedPoint } from '@/lib/pointMove';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -45,6 +46,7 @@ export default function Home() {
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
+    const [stravaRefreshKey, setStravaRefreshKey] = useState(0);
     const [showAbout, setShowAbout] = useState(false);
     const [showGarminSettings, setShowGarminSettings] = useState(false);
     const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
@@ -110,8 +112,10 @@ export default function Home() {
         setStravaError(null);
         setIsStravaLoading(true);
 
+        const skipCache = stravaRefreshKey > 0;
+
         getCachedRoads(credentialsKey).then(cached => {
-            if (cached) {
+            if (cached && !skipCache) {
                 setStravaRoads(cached);
                 setIsStravaLoading(false);
                 return;
@@ -145,7 +149,7 @@ export default function Home() {
                     setIsStravaLoading(false);
                 });
         });
-    }, [stravaCredentials]);
+    }, [stravaCredentials, stravaRefreshKey]);
 
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
         setBbox(prev => {
@@ -471,9 +475,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
                 // Determine affected segments based on the current state of points
-                const affectedIndices: number[] = [];
-                if (idx > 0) affectedIndices.push(idx - 1); // prev -> moved
-                if (idx < pointsRef.current.length - 1) affectedIndices.push(idx); // moved -> next
+                const affectedIndices = getAffectedSegmentIndices(idx, pointsRef.current.length);
 
                 const updatedSegments = [...manualRouteRef.current];
 
@@ -494,15 +496,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 const snappedMovedPoint = { ...moveData.snappedPoint, id: pointId, status: 'snapped' as const };
 
                 // Use the latest points from the ref to avoid race conditions with point additions
-                const newestPoints = [...pointsRef.current];
-                const pointIdxInRef = newestPoints.findIndex(p => p.id === pointId);
-                if (pointIdxInRef !== -1) {
-                    newestPoints[pointIdxInRef] = snappedMovedPoint;
-                    pointsRef.current = newestPoints;
-                    setSelectedPoints([...newestPoints]);
-                } else {
-                    return; // Point was removed while waiting
-                }
+                const newestPoints = applyMovedPoint(pointsRef.current, pointId, snappedMovedPoint);
+                if (!newestPoints) return; // Point was removed while waiting
+                pointsRef.current = newestPoints;
+                setSelectedPoints([...newestPoints]);
 
                 // Fetch new paths for affected segments
                 for (const segmentIdx of affectedIndices) {
@@ -679,7 +676,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     <StravaHeaderButton
                         isConnected={!!stravaCredentials?.refreshToken}
                         stravaError={stravaError}
+                        isLoading={isStravaLoading}
                         onClick={() => setShowStravaSettings(true)}
+                        onRefresh={() => {
+                            clearCachedRoads();
+                            setStravaRefreshKey(k => k + 1);
+                        }}
                     />
 
                     <button

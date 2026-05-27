@@ -99,7 +99,10 @@ export class StreetGraph {
         }
         const newGraph = new StreetGraph();
         newGraph.buildFromOSM(data, riddenRoads, options);
-        GRAPH_CACHE.set(key, { graph: newGraph, timestamp: now });
+        // Don't cache empty graphs — OSM data may have been transiently unavailable
+        if (newGraph.graph.getNodeCount() > 0) {
+            GRAPH_CACHE.set(key, { graph: newGraph, timestamp: now });
+        }
         return newGraph;
     }
 

@@ -52,7 +52,9 @@ export async function POST(req: NextRequest) {
 
         const snappedData = graph.findClosestPointOnEdge(point.lat, point.lon);
         if (!snappedData) {
-            return NextResponse.json({ error: 'Could not snap point' }, { status: 404 });
+            const nodeCount = graph.graph.getNodeCount();
+            console.error(`[Step] Could not snap point (${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}). Graph has ${nodeCount} nodes — OSM data may be unavailable.`);
+            return NextResponse.json({ error: `Could not snap point to road network (${nodeCount} nodes loaded). Overpass API may be unavailable — try again shortly.` }, { status: 404 });
         }
 
         const snappedPoint = { lat: snappedData.lat, lon: snappedData.lon };
