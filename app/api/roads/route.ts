@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        return NextResponse.json({ roads });
+        const degraded = osmData.elements.length === 0;
+        return NextResponse.json({ roads, degraded });
 
     } catch (error: any) {
         console.error('Roads API error:', error);

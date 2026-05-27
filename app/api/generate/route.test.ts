@@ -51,6 +51,7 @@ describe('POST /api/generate', () => {
         await POST(makeRequest({ bbox: validBbox }));
         const [data] = mockJson.mock.calls[0];
         expect(data.error).toBe('Connection refused');
-        expect(Object.keys(data)).toEqual(['error']);
+        expect(data.degraded).toBe(true);
+        expect(Object.keys(data)).toEqual(expect.arrayContaining(['error', 'degraded']));
     });
 });
