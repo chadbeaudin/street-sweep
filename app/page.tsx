@@ -195,7 +195,8 @@ export default function Home() {
     }, [bbox]);
 
     const handleGenerate = useCallback(async (isSilent = false) => {
-        if (!bbox) {
+        const currentBbox = bboxRef.current;
+        if (!currentBbox) {
             if (!isSilent) setError({ message: "Please move the map to set an area." });
             return;
         }
@@ -210,15 +211,16 @@ export default function Home() {
         generateAbortControllerRef.current = new AbortController();
 
         try {
+            const currentPoints = pointsRef.current;
             const payload = {
-                bbox,
-                riddenRoads: stravaRoads,
-                selectedPoints,
-                selectionBoxes,
-                routingOptions,
+                bbox: currentBbox,
+                riddenRoads: stravaRoadsRef.current,
+                selectedPoints: currentPoints,
+                selectionBoxes: selectionBoxesRef.current,
+                routingOptions: routingOptionsRef.current,
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
-                manualRoute: (selectedPoints.length >= 2) ? manualRoute.flat() : []
+                manualRoute: (currentPoints.length >= 2) ? manualRouteRef.current.flat() : []
             };
 
             console.log('[handleGenerate] Sending request to build route...');
@@ -272,7 +274,7 @@ export default function Home() {
             setIsAutoGenerating(false);
             generateAbortControllerRef.current = null;
         }
-    }, [bbox, stravaRoads, selectedPoints, manualRoute, selectionBoxes, routingOptions]);
+    }, []);
 
     // Real-time route generation (Issue #12)
     useEffect(() => {
@@ -294,7 +296,7 @@ export default function Home() {
         }, 1500); // 1.5s debounce to allow for multiple rapid clicks/box draws
 
         return () => clearTimeout(timer);
-    }, [manualRoute, selectionBoxes, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
+    }, [manualRoute, selectionBoxes, routingOptions, selectedPoints.length, activeSteps]);
 
     const downloadGPX = () => {
         if (!route) return;
