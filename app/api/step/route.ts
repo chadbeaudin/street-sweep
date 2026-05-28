@@ -10,10 +10,12 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
         }
 
-        const BUFFER = 0.01; // ~1km buffer for snapping and short paths
-        const GRID = 0.01;   // Snap to 1km grid for extreme caching
+        const BUFFER = 0.01; // small buffer beyond the union area for edge connectivity
+        const GRID = 0.01;   // Snap to 1km grid for caching
 
-        // Calculate the span that includes current point and last point
+        // Expand to include both click points and the full viewport bbox.
+        // This ensures highway crossings visible on screen are always in the graph,
+        // even when the two waypoints are on opposite sides of a divided highway.
         let minLat = point.lat;
         let maxLat = point.lat;
         let minLon = point.lon;
@@ -25,6 +27,12 @@ export async function POST(req: NextRequest) {
             minLon = Math.min(minLon, lastPoint.lon);
             maxLon = Math.max(maxLon, lastPoint.lon);
         }
+
+        // Union with the viewport bbox so the graph covers the same area the user sees
+        minLat = Math.min(minLat, bbox.south);
+        maxLat = Math.max(maxLat, bbox.north);
+        minLon = Math.min(minLon, bbox.west);
+        maxLon = Math.max(maxLon, bbox.east);
 
         const roundToGrid = (n: number, down: boolean) => {
             const val = down ? Math.floor(n / GRID) * GRID : Math.ceil(n / GRID) * GRID;
@@ -63,17 +71,43 @@ export async function POST(req: NextRequest) {
         if (lastPoint) {
             const prevSnappedData = graph.findClosestPointOnEdge(lastPoint.lat, lastPoint.lon);
             if (prevSnappedData) {
-                // Find path between nodes. We use the closest nodes of the current and previous edge snappings.
-                // To minimize path length, we could try all 4 combinations (u1->u2, u1->v2, v1->u2, v1->v2),
-                // but for now, we'll just pick the single closest nodes to the click points for simplicity.
-                const startCandidates = new Set([prevSnappedData.u, prevSnappedData.v]);
-                const endCandidates = new Set([snappedData.u, snappedData.v]);
+                // Try all combinations of start/end snap-edge endpoints to find any valid path.
+                // Sorting by proximity to the click points means we try the "natural" pair first
+                // and fall back to alternatives only when the graph is disconnected at those nodes.
+                const startOptions = [prevSnappedData.u, prevSnappedData.v].sort((a, b) => {
+                    const na = graph.graph.getNode(a);
+                    const nb = graph.graph.getNode(b);
+                    if (!na || !nb) return 0;
+                    const da = (na.data.lat - lastPoint.lat) ** 2 + (na.data.lon - lastPoint.lon) ** 2;
+                    const db = (nb.data.lat - lastPoint.lat) ** 2 + (nb.data.lon - lastPoint.lon) ** 2;
+                    return da - db;
+                });
+                const endTargets = new Set([snappedData.u, snappedData.v]);
 
-                const startId = graph.findClosestNode(lastPoint.lat, lastPoint.lon, startCandidates);
-                const endId = graph.findClosestNode(point.lat, point.lon, endCandidates);
+                let pathResult: { path: { id: string, idNext: string, weight: number }[], targetId: string } | null = null;
+                let usedStartId: string | null = null;
 
-                if (startId && endId) {
-                    const path = graph.findPath(startId, endId, undefined, penalizedLinks);
+                for (const sid of startOptions) {
+                    const r = graph.findClosestTarget(sid, endTargets, undefined, penalizedLinks);
+                    if (r) { pathResult = r; usedStartId = sid; break; }
+                }
+
+                // Fallback: snap-edge targets are disconnected — try all nodes within ~550m of
+                // the click point so Dijkstra can route to the nearest reachable node instead.
+                if (!pathResult) {
+                    const broadTargets = graph.findNodeIdsNearPoint(point.lat, point.lon, 10);
+                    for (const sid of startOptions) {
+                        const r = graph.findClosestTarget(sid, broadTargets, undefined, penalizedLinks);
+                        if (r) { pathResult = r; usedStartId = sid; break; }
+                    }
+                }
+
+                if (!pathResult || !usedStartId) {
+                    console.warn(`[Step] No path found from [${startOptions.join(',')}] to [${[...endTargets].join(',')}] — graph may be disconnected here.`);
+                } else {
+                    const path = pathResult.path;
+                    const endId = pathResult.targetId;
+                    const startId = usedStartId;
 
                     // Start of the path: [prevSnappedPoint, startNode]
                     pathCoords.push([prevSnappedData.lon, prevSnappedData.lat]);

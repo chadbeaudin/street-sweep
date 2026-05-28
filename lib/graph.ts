@@ -136,13 +136,17 @@ export class StreetGraph {
 
                 const highway = way.tags?.highway;
 
-                // SAFETY: Always exclude interstates/trunks from the graph entirely
-                if (highway === 'motorway' || highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link') {
+                // SAFETY: Exclude actual motorway lanes — cyclists cannot ride on them.
+                // trunk is kept (with isAvoided=true) so divided-highway crossings remain connected.
+                if (highway === 'motorway') {
                     continue;
                 }
 
                 const surface = way.tags?.surface;
-                let isAvoided = false;
+                // trunk/motorway_link/trunk_link are kept in the graph for crossing connectivity
+                // but treated as always-avoided so CPP never targets them for coverage and the
+                // snap function skips them (they're not displayed on the map).
+                let isAvoided = highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link';
 
                 // Determine if this way should be avoided
                 const majorHighways = ['motorway', 'trunk', 'primary', 'secondary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link'];
@@ -187,9 +191,13 @@ export class StreetGraph {
                         }
 
                         let dist = this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon);
-                        // Multiply distance for avoided roads to discourage their use in routing
-                        if (isAvoided) {
-                            dist *= 100;
+                        // Multiply distance for avoided roads to discourage their use in routing.
+                        // trunk: 20x — at-grade crossings are short; we just want to prefer alternatives.
+                        // trunk_link/motorway_link: 50x — actual ramps cyclists should never ride.
+                        if (highway === 'trunk') {
+                            dist *= 20;
+                        } else if (isAvoided) {
+                            dist *= 50;
                         }
                         const isRidden = this.checkIfRidden(uCoord, vCoord, riddenRoads);
 
@@ -206,6 +214,7 @@ export class StreetGraph {
                             id: way.id.toString(),
                             weight: dist,
                             name: way.tags?.name,
+                            highway: highway,
                             isRidden,
                             isAvoided,
                             hasConstruction
@@ -666,6 +675,26 @@ export class StreetGraph {
         this.edgeIndex = index;
     }
 
+    // Returns all node IDs from edges within `maxCells` grid cells of (lat, lon).
+    // Used as a broad fallback target set when the primary snap-edge nodes are disconnected.
+    public findNodeIdsNearPoint(lat: number, lon: number, maxCells: number): Set<string> {
+        if (!this.edgeIndex) this.buildEdgeIndex();
+        const result = new Set<string>();
+        const cLat = Math.floor(lat / GRID_DEG);
+        const cLon = Math.floor(lon / GRID_DEG);
+        for (let dLat = -maxCells; dLat <= maxCells; dLat++) {
+            for (let dLon = -maxCells; dLon <= maxCells; dLon++) {
+                const bucket = this.edgeIndex!.get(`${cLat + dLat}:${cLon + dLon}`);
+                if (!bucket) continue;
+                for (const link of bucket) {
+                    result.add(link.fromId.toString());
+                    result.add(link.toId.toString());
+                }
+            }
+        }
+        return result;
+    }
+
     public findClosestNode(lat: number, lon: number, nodeIds?: Set<string>): string | null {
         // For a small candidate set, just iterate it directly.
         if (nodeIds && nodeIds.size <= 64) {
@@ -745,6 +774,8 @@ export class StreetGraph {
         const tryLink = (link: any) => {
             if (seen.has(link)) return;
             seen.add(link);
+            // Don't snap to ramps — they're not visible on the map
+            if (link.data.highway === 'trunk' || link.data.highway === 'motorway_link' || link.data.highway === 'trunk_link') return;
             const u = this.graph.getNode(link.fromId);
             const v = this.graph.getNode(link.toId);
             if (!u || !v) return;
