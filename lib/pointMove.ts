@@ -6,6 +6,32 @@ export interface Waypoint {
 }
 
 /**
+ * Inserts `newPoint` between the two waypoints that border `segmentIdx`.
+ * Segment i connects points[i] → points[i+1], so inserting at segmentIdx places
+ * the new waypoint at index segmentIdx+1.  The original segment is replaced by
+ * two empty placeholders that the caller must fill by re-routing.
+ */
+export function insertWaypointAtSegment(
+    points: Waypoint[],
+    route: [number, number][][],
+    segmentIdx: number,
+    newPoint: Waypoint
+): { newPoints: Waypoint[]; newRoute: [number, number][][] } {
+    const newPoints = [
+        ...points.slice(0, segmentIdx + 1),
+        newPoint,
+        ...points.slice(segmentIdx + 1),
+    ];
+    const newRoute: [number, number][][] = [
+        ...route.slice(0, segmentIdx),
+        [], // placeholder: points[segmentIdx] → newPoint
+        [], // placeholder: newPoint → points[segmentIdx+1]
+        ...route.slice(segmentIdx + 1),
+    ];
+    return { newPoints, newRoute };
+}
+
+/**
  * Returns the indices of route segments that must be re-routed when the
  * waypoint at `movedIdx` is moved.  Segment `i` connects points[i] → points[i+1].
  */

@@ -140,6 +140,92 @@ describe('Integration: server logs', () => {
         });
     });
 
+    // ── Route segment insertion ────────────────────────────────────────────────
+
+    describe('Route segment insertion — step API sequence', () => {
+        // Spokane area: two points a few blocks apart with a clear road network
+        const pointA = { lat: 47.658, lon: -117.426 };
+        const pointB = { lat: 47.662, lon: -117.420 };
+        const viewport = { south: 47.640, north: 47.680, west: -117.450, east: -117.400 };
+        const routingOptions = { avoidGravel: false, avoidHighways: false, avoidTrails: false };
+
+        it('snapping a midpoint on the path and re-routing both sub-segments produces valid paths', async () => {
+            // Step 1: establish the A→B path
+            const resAB = await post('/api/step', {
+                point: pointB,
+                lastPoint: pointA,
+                bbox: viewport,
+                manualRoute: [],
+                riddenRoads: null,
+                routingOptions,
+            });
+            expect(resAB.status).toBe(200);
+            const dataAB = await resAB.json();
+
+            if (dataAB.error || !dataAB.path?.length) {
+                console.warn('Skipping insert integration test: Overpass unavailable or no path A→B');
+                return;
+            }
+
+            const snappedB = dataAB.snappedPoint;
+            const pathAB: [number, number][] = dataAB.path;
+
+            // Step 2: pick the midpoint of the A→B path as the insertion candidate
+            const midIdx = Math.floor(pathAB.length / 2);
+            const midRaw = { lat: pathAB[midIdx][1], lon: pathAB[midIdx][0] };
+
+            // Step 3: snap the midpoint (simulates the insert snap call)
+            const resMid = await post('/api/step', {
+                point: midRaw,
+                bbox: viewport,
+                manualRoute: [],
+                riddenRoads: null,
+                routingOptions,
+            });
+            expect(resMid.status).toBe(200);
+            const dataMid = await resMid.json();
+            expect(dataMid.snappedPoint).toBeDefined();
+            const snappedMid = dataMid.snappedPoint;
+
+            // Step 4: re-route A → snappedMid
+            const resAMid = await post('/api/step', {
+                point: snappedMid,
+                lastPoint: pointA,
+                bbox: viewport,
+                manualRoute: [],
+                riddenRoads: null,
+                routingOptions,
+            });
+            expect(resAMid.status).toBe(200);
+            const dataAMid = await resAMid.json();
+
+            // Step 5: re-route snappedMid → B
+            const resMidB = await post('/api/step', {
+                point: snappedB,
+                lastPoint: snappedMid,
+                bbox: viewport,
+                manualRoute: dataAMid.path ?? [],
+                riddenRoads: null,
+                routingOptions,
+            });
+            expect(resMidB.status).toBe(200);
+            const dataMidB = await resMidB.json();
+
+            // Both sub-segments must have path coordinates
+            expect(dataAMid.path?.length).toBeGreaterThan(0);
+            expect(dataMidB.path?.length).toBeGreaterThan(0);
+
+            // The two sub-paths together must visit at least as many points as the original
+            // (triangle inequality — adding a waypoint can only lengthen or equal the path)
+            const combinedLen = (dataAMid.path?.length ?? 0) + (dataMidB.path?.length ?? 0);
+            expect(combinedLen).toBeGreaterThanOrEqual(pathAB.length);
+
+            // The midpoint must lie geographically between A and B (rough sanity check)
+            expect(snappedMid.lat).toBeGreaterThan(pointA.lat - 0.01);
+            expect(snappedMid.lat).toBeLessThan(pointB.lat + 0.01);
+        }, 90000);
+    });
+
     // ── Route generation — elevation in coordinates ────────────────────────────
 
     describe('Route generate — elevation in response', () => {

@@ -8,7 +8,7 @@ import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
-import { getAffectedSegmentIndices, applyMovedPoint } from '@/lib/pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from '@/lib/pointMove';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -565,6 +565,108 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }, 500); // Increased timeout to be safer
     }, []);
 
+    const handleRouteSegmentInsert = useCallback((segmentIdx: number, rawPoint: { lat: number; lon: number }) => {
+        const currentBbox = bboxRef.current;
+        if (!currentBbox) return;
+
+        const newId = Math.random().toString(36).substr(2, 9);
+        const pendingPoint: Waypoint = { ...rawPoint, id: newId, status: 'pending' };
+
+        // Optimistic insert: split segment into two empty placeholders
+        const { newPoints, newRoute } = insertWaypointAtSegment(
+            pointsRef.current,
+            manualRouteRef.current,
+            segmentIdx,
+            pendingPoint
+        );
+        pointsRef.current = newPoints;
+        manualRouteRef.current = newRoute;
+        setSelectedPoints([...newPoints]);
+        setManualRoute([...newRoute]);
+        setActiveSteps(prev => prev + 2);
+
+        clickChainRef.current = clickChainRef.current.then(async () => {
+            try {
+                // Snap the inserted point to the road network
+                const snapRes = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        point: rawPoint,
+                        bbox: currentBbox,
+                        riddenRoads: stravaRoadsRef.current,
+                        routingOptions: routingOptionsRef.current,
+                    }),
+                });
+                const snapData = await snapRes.json();
+                if (snapData.error) return;
+
+                const snappedPoint: Waypoint = { ...snapData.snappedPoint, id: newId, status: 'snapped' };
+                const latestPoints = applyMovedPoint(pointsRef.current, newId, snappedPoint);
+                if (!latestPoints) return; // point was removed while snap was in flight
+                pointsRef.current = latestPoints;
+                setSelectedPoints([...latestPoints]);
+
+                const insertedIdx = latestPoints.findIndex(p => p.id === newId);
+                if (insertedIdx === -1) return;
+
+                const updatedSegments = [...manualRouteRef.current];
+                const excludeForPenalty = updatedSegments.filter((_, i) => i !== insertedIdx - 1 && i !== insertedIdx);
+
+                // Re-route: points[insertedIdx-1] → snappedPoint
+                const pBefore = latestPoints[insertedIdx - 1];
+                if (pBefore) {
+                    const res = await fetch('/api/step', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            point: snappedPoint,
+                            lastPoint: pBefore,
+                            bbox: currentBbox,
+                            manualRoute: excludeForPenalty,
+                            riddenRoads: stravaRoadsRef.current,
+                            routingOptions: routingOptionsRef.current,
+                        }),
+                    });
+                    const data = await res.json();
+                    if (data.path) updatedSegments[insertedIdx - 1] = data.path;
+                }
+
+                // Re-route: snappedPoint → points[insertedIdx+1]
+                const pAfter = latestPoints[insertedIdx + 1];
+                if (pAfter) {
+                    const res = await fetch('/api/step', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            point: pAfter,
+                            lastPoint: snappedPoint,
+                            bbox: currentBbox,
+                            manualRoute: excludeForPenalty,
+                            riddenRoads: stravaRoadsRef.current,
+                            routingOptions: routingOptionsRef.current,
+                        }),
+                    });
+                    const data = await res.json();
+                    if (data.path) updatedSegments[insertedIdx] = data.path;
+                }
+
+                manualRouteRef.current = updatedSegments;
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current] };
+                const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+                historyRef.current = [...newHistory, snapshot];
+                historyIndexRef.current = historyRef.current.length - 1;
+                setManualRoute(updatedSegments);
+                setHistory(historyRef.current);
+                setHistoryIndex(historyIndexRef.current);
+            } catch (err) {
+                console.error('Failed to insert route segment point:', err);
+            } finally {
+                setActiveSteps(prev => Math.max(0, prev - 2));
+            }
+        });
+    }, []);
+
     const clearPoints = useCallback(() => {
         // Reset refs
         pointsRef.current = [];
@@ -988,6 +1090,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     onPointMove={handlePointMove}
                     onPointMoveStart={handlePointMoveStart}
                     onPointMoveEnd={handlePointMoveEnd}
+                    onRouteSegmentInsert={handleRouteSegmentInsert}
                     manualRoute={manualRoute}
                     allRoads={allRoads}
                     isSelectionMode={isSelectionMode}

@@ -1,4 +1,4 @@
-import { getAffectedSegmentIndices, applyMovedPoint, Waypoint } from './pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from './pointMove';
 
 function makePoints(count: number): Waypoint[] {
     return Array.from({ length: count }, (_, i) => ({
@@ -122,6 +122,123 @@ describe('applyMovedPoint', () => {
             expect(result[0]).toEqual(pts[0]);
             expect(result[1]).toEqual(pts[1]);
             expect(result[2]).toEqual(newPos);
+        });
+    });
+});
+
+// ── insertWaypointAtSegment ───────────────────────────────────────────────────
+
+function makeRoute(segmentCount: number): [number, number][][] {
+    return Array.from({ length: segmentCount }, (_, i) => [
+        [i * 0.001, i * 0.001] as [number, number],
+        [(i + 1) * 0.001, (i + 1) * 0.001] as [number, number],
+    ]);
+}
+
+const NEW_PT: Waypoint = { id: 'new', lat: 39.5, lon: -104.5, status: 'pending' };
+
+describe('insertWaypointAtSegment', () => {
+    describe('2-point route (1 segment) — inserting at segment 0', () => {
+        const pts = makePoints(2);
+        const route = makeRoute(1);
+        const { newPoints, newRoute } = insertWaypointAtSegment(pts, route, 0, NEW_PT);
+
+        it('produces 3 waypoints', () => expect(newPoints).toHaveLength(3));
+        it('places new point at index 1', () => expect(newPoints[1]).toEqual(NEW_PT));
+        it('preserves original start at index 0', () => expect(newPoints[0]).toEqual(pts[0]));
+        it('preserves original end at index 2', () => expect(newPoints[2]).toEqual(pts[1]));
+        it('produces 2 route segments', () => expect(newRoute).toHaveLength(2));
+        it('both new segments are empty placeholders', () => {
+            expect(newRoute[0]).toEqual([]);
+            expect(newRoute[1]).toEqual([]);
+        });
+    });
+
+    describe('4-point route — inserting at first segment (segmentIdx=0)', () => {
+        const pts = makePoints(4);
+        const route = makeRoute(3);
+        const { newPoints, newRoute } = insertWaypointAtSegment(pts, route, 0, NEW_PT);
+
+        it('produces 5 waypoints', () => expect(newPoints).toHaveLength(5));
+        it('places new point at index 1', () => expect(newPoints[1]).toEqual(NEW_PT));
+        it('produces 4 route segments', () => expect(newRoute).toHaveLength(4));
+        it('replaces segment 0 with two empty placeholders', () => {
+            expect(newRoute[0]).toEqual([]);
+            expect(newRoute[1]).toEqual([]);
+        });
+        it('preserves segments 1 and 2 at their new indices', () => {
+            expect(newRoute[2]).toEqual(route[1]);
+            expect(newRoute[3]).toEqual(route[2]);
+        });
+    });
+
+    describe('4-point route — inserting at last segment (segmentIdx=2)', () => {
+        const pts = makePoints(4);
+        const route = makeRoute(3);
+        const { newPoints, newRoute } = insertWaypointAtSegment(pts, route, 2, NEW_PT);
+
+        it('places new point at index 3 (second-to-last)', () => expect(newPoints[3]).toEqual(NEW_PT));
+        it('original endpoint is still last', () => expect(newPoints[4]).toEqual(pts[3]));
+        it('preserves segments 0 and 1 unchanged', () => {
+            expect(newRoute[0]).toEqual(route[0]);
+            expect(newRoute[1]).toEqual(route[1]);
+        });
+        it('replaces segment 2 with two empty placeholders', () => {
+            expect(newRoute[2]).toEqual([]);
+            expect(newRoute[3]).toEqual([]);
+        });
+    });
+
+    describe('4-point route — inserting at middle segment (segmentIdx=1)', () => {
+        const pts = makePoints(4);
+        const route = makeRoute(3);
+        const { newPoints, newRoute } = insertWaypointAtSegment(pts, route, 1, NEW_PT);
+
+        it('produces 5 waypoints', () => expect(newPoints).toHaveLength(5));
+        it('places new point at index 2', () => expect(newPoints[2]).toEqual(NEW_PT));
+        it('produces 4 route segments', () => expect(newRoute).toHaveLength(4));
+        it('preserves segment 0 at index 0', () => expect(newRoute[0]).toEqual(route[0]));
+        it('replaces segment 1 with two empty placeholders at indices 1 and 2', () => {
+            expect(newRoute[1]).toEqual([]);
+            expect(newRoute[2]).toEqual([]);
+        });
+        it('preserves segment 2 at new index 3', () => expect(newRoute[3]).toEqual(route[2]));
+    });
+
+    describe('segment count invariant', () => {
+        it('always produces one more segment than the original', () => {
+            for (let n = 1; n <= 5; n++) {
+                const { newRoute } = insertWaypointAtSegment(makePoints(n + 1), makeRoute(n), 0, NEW_PT);
+                expect(newRoute).toHaveLength(n + 1);
+            }
+        });
+
+        it('always produces one more waypoint than the original', () => {
+            for (let n = 2; n <= 6; n++) {
+                const { newPoints } = insertWaypointAtSegment(makePoints(n), makeRoute(n - 1), 0, NEW_PT);
+                expect(newPoints).toHaveLength(n + 1);
+            }
+        });
+    });
+
+    describe('immutability', () => {
+        it('does not mutate the original points array', () => {
+            const pts = makePoints(3);
+            insertWaypointAtSegment(pts, makeRoute(2), 0, NEW_PT);
+            expect(pts).toHaveLength(3);
+        });
+
+        it('does not mutate the original route array', () => {
+            const route = makeRoute(2);
+            insertWaypointAtSegment(makePoints(3), route, 0, NEW_PT);
+            expect(route).toHaveLength(2);
+        });
+
+        it('does not mutate inner segment arrays', () => {
+            const route = makeRoute(3);
+            const seg1Before = route[1].length;
+            insertWaypointAtSegment(makePoints(4), route, 1, NEW_PT);
+            expect(route[1]).toHaveLength(seg1Before);
         });
     });
 });

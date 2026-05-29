@@ -26,6 +26,7 @@ interface MapProps {
     onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
     onPointMoveStart?: () => void;
     onPointMoveEnd?: () => void;
+    onRouteSegmentInsert?: (segmentIdx: number, point: { lat: number; lon: number }) => void;
     manualRoute: [number, number][][];
     allRoads: [number, number][][];
     isSelectionMode?: boolean;
@@ -88,6 +89,117 @@ function MapRefCapture({ mapRef }: { mapRef: React.MutableRefObject<L.Map | null
     return null;
 }
 
+
+interface RouteDragLayerProps {
+    manualRoute: [number, number][][];
+    onRouteSegmentInsert?: (segmentIdx: number, point: { lat: number; lon: number }) => void;
+    onDragStart?: () => void;
+    onDragEnd?: () => void;
+    isSelectionMode?: boolean;
+    isEraserMode?: boolean;
+}
+
+function RouteDragLayer({ manualRoute, onRouteSegmentInsert, onDragStart, onDragEnd, isSelectionMode, isEraserMode }: RouteDragLayerProps) {
+    const map = useMap();
+    // ref for synchronous access in event handlers; state for triggering re-renders
+    const draggingRef = React.useRef<{ segmentIdx: number } | null>(null);
+    const [draggingSegmentIdx, setDraggingSegmentIdx] = React.useState<number | null>(null);
+    const [ghostPos, setGhostPos] = React.useState<{ lat: number; lon: number } | null>(null);
+
+    // Re-enable map dragging if the user releases the mouse outside the map container
+    React.useEffect(() => {
+        const handleWindowMouseUp = () => {
+            if (draggingRef.current) {
+                draggingRef.current = null;
+                map.dragging.enable();
+                setDraggingSegmentIdx(null);
+                setGhostPos(null);
+                onDragEnd?.();
+            }
+        };
+        window.addEventListener('mouseup', handleWindowMouseUp);
+        return () => window.removeEventListener('mouseup', handleWindowMouseUp);
+    }, [map, onDragEnd]);
+
+    useMapEvents({
+        mousemove(e) {
+            if (draggingRef.current) setGhostPos({ lat: e.latlng.lat, lon: e.latlng.lng });
+        },
+        mouseup(e) {
+            if (draggingRef.current) {
+                const { segmentIdx } = draggingRef.current;
+                draggingRef.current = null;
+                map.dragging.enable();
+                setDraggingSegmentIdx(null);
+                setGhostPos(null);
+                onDragEnd?.();
+                onRouteSegmentInsert?.(segmentIdx, { lat: e.latlng.lat, lon: e.latlng.lng });
+            }
+        },
+    });
+
+    const ghostIcon = React.useMemo(() => L.divIcon({
+        className: '',
+        html: '<div style="width:12px;height:12px;background:#3B82F6;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.4)"></div>',
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
+    }), []);
+
+    if (isSelectionMode || isEraserMode) return null;
+
+    return (
+        <>
+            {manualRoute.map((seg, i) => {
+                if (seg.length < 2) return null;
+                const positions = seg.map(p => [p[1], p[0]] as [number, number]);
+                const isBeingDragged = draggingSegmentIdx === i;
+                return (
+                    <React.Fragment key={`route-seg-${i}`}>
+                        {/* Visual dashed line — hidden immediately on mousedown so the old
+                            path doesn't linger while the drag is in progress */}
+                        {!isBeingDragged && (
+                            <Polyline
+                                positions={positions}
+                                color="#EF4444"
+                                weight={4}
+                                dashArray="5, 10"
+                                opacity={0.8}
+                                interactive={false}
+                            />
+                        )}
+                        {/* Invisible wide hitbox — must be rendered even while dragging so
+                            Leaflet can still fire the map-level mouseup/mousemove events */}
+                        <Polyline
+                            positions={positions}
+                            color="transparent"
+                            weight={12}
+                            opacity={0}
+                            interactive={true}
+                            className="route-segment-hitbox"
+                            eventHandlers={{
+                                mousedown: (e: any) => {
+                                    L.DomEvent.stopPropagation(e);
+                                    draggingRef.current = { segmentIdx: i };
+                                    map.dragging.disable();
+                                    setDraggingSegmentIdx(i);
+                                    setGhostPos({ lat: e.latlng.lat, lon: e.latlng.lng });
+                                    onDragStart?.();
+                                },
+                            }}
+                        />
+                    </React.Fragment>
+                );
+            })}
+            {ghostPos && (
+                <Marker
+                    position={[ghostPos.lat, ghostPos.lon]}
+                    interactive={false}
+                    icon={ghostIcon}
+                />
+            )}
+        </>
+    );
+}
 
 function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) {
     if (!point) return null;
@@ -237,7 +349,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
     const selectionStartRef = React.useRef<L.Point | null>(null);
@@ -283,18 +395,6 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         if (isSelectionMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
     }, [onPointAdd, isSelectionMode, isEraserMode]);
-
-    const flatManualRoute = React.useMemo(() => {
-        return manualRoute.reduce((acc, seg, i) => {
-            if (i === 0) return seg;
-            const lastPoint = acc[acc.length - 1];
-            const firstPoint = seg[0];
-            if (lastPoint && firstPoint && lastPoint[0] === firstPoint[0] && lastPoint[1] === firstPoint[1]) {
-                return [...acc, ...seg.slice(1)];
-            }
-            return [...acc, ...seg];
-        }, [] as [number, number][]);
-    }, [manualRoute]);
 
     // Split route into normal and construction segments
     const { normalSegments, constructionSegments, hasConstruction } = React.useMemo(() => {
@@ -470,18 +570,6 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 ))}
 
-                {/* Manual route from road-snapped coordinates */}
-                {flatManualRoute.length > 1 && (
-                    <Polyline
-                        positions={flatManualRoute.map(p => [p[1], p[0]])}
-                        color="#EF4444" // Plain red
-                        weight={4}
-                        dashArray="5, 10"
-                        opacity={0.8}
-                        interactive={false}
-                    />
-                )}
-
                 {/* Generated route - Normal segments */}
                 {normalSegments.map((segment, idx) => (
                     <Polyline
@@ -540,6 +628,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         }}
                     />
                 ))}
+
+                {/* Invisible per-segment hitboxes — rendered above road hitboxes so mousedown fires here first */}
+                <RouteDragLayer
+                    manualRoute={manualRoute}
+                    onRouteSegmentInsert={onRouteSegmentInsert}
+                    onDragStart={onPointMoveStart}
+                    onDragEnd={onPointMoveEnd}
+                    isSelectionMode={isSelectionMode}
+                    isEraserMode={isEraserMode}
+                />
 
                 {/* Markers for selected points */}
                 {selectedPoints.map((point, idx) => {
@@ -640,6 +738,14 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 .leaflet-container .road-hitbox {
                     cursor: pointer !important;
                     pointer-events: auto !important;
+                }
+                /* Route segments: grab cursor to signal drag-to-insert */
+                .leaflet-container .route-segment-hitbox {
+                    cursor: grab !important;
+                    pointer-events: auto !important;
+                }
+                .leaflet-container .route-segment-hitbox:active {
+                    cursor: grabbing !important;
                 }
                 /* Use a specific class for the eraser cursor if needed, but EraserTool.tsx already sets it on the container */
                 .leaflet-container.eraser-mode {
