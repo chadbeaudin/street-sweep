@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -391,6 +392,22 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         setTimeout(() => onSelectionModeChange?.(false), 100);
     }, [onSelectionChange, onSelectionModeChange]);
 
+    React.useEffect(() => {
+        if (!isSelectionMode) {
+            selectionStartRef.current = null;
+            setDrawingBox(null);
+            return;
+        }
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            selectionStartRef.current = null;
+            flushSync(() => setDrawingBox(null));
+            onSelectionModeChange?.(false);
+        };
+        window.addEventListener('keydown', handleKeyDown, { capture: true });
+        return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    }, [isSelectionMode, onSelectionModeChange]);
+
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isSelectionMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
@@ -688,7 +705,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             {isSelectionMode && (
                 <div
                     className="absolute inset-0"
-                    style={{ cursor: 'crosshair', zIndex: 999 }}
+                    style={{ cursor: 'crosshair', zIndex: 999, userSelect: 'none' }}
                     onMouseDown={handleOverlayMouseDown}
                     onMouseMove={handleOverlayMouseMove}
                     onMouseUp={handleOverlayMouseUp}

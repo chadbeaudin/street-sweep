@@ -80,6 +80,7 @@ export default function Home() {
         selectionBoxesRef.current = selectionBoxes;
     }, [selectionBoxes]);
 
+
     useEffect(() => {
         routingOptionsRef.current = routingOptions;
     }, [routingOptions]);
