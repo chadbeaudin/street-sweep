@@ -437,10 +437,18 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 const stepData = await stepRes.json();
 
                 if (stepData.error) {
-                    console.warn('Step failed:', stepData.error);
-                    // Rollback optimistic update
-                    pointsRef.current.splice(tempIdx, 1);
+                    console.warn('Step failed, keeping point at click position:', stepData.error);
+                    // Keep the point at its raw click position rather than rolling back.
+                    // The generate API uses selectedPoints[last] as endPoint and will still
+                    // route to this location even without a road-following path segment.
+                    pointsRef.current[tempIdx] = { ...newPoint, status: 'snapped' as const };
                     setSelectedPoints([...pointsRef.current]);
+                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current] };
+                    historyRef.current = [...historyRef.current.slice(0, historyIndexRef.current + 1), snapshot];
+                    historyIndexRef.current = historyRef.current.length - 1;
+                    setHistory(historyRef.current);
+                    setHistoryIndex(historyIndexRef.current);
+                    setManualRoute([...manualRouteRef.current]);
                     return;
                 }
 

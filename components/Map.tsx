@@ -98,9 +98,10 @@ interface RouteDragLayerProps {
     onDragEnd?: () => void;
     isSelectionMode?: boolean;
     isEraserMode?: boolean;
+    hideVisualLines?: boolean;
 }
 
-function RouteDragLayer({ manualRoute, onRouteSegmentInsert, onDragStart, onDragEnd, isSelectionMode, isEraserMode }: RouteDragLayerProps) {
+function RouteDragLayer({ manualRoute, onRouteSegmentInsert, onDragStart, onDragEnd, isSelectionMode, isEraserMode, hideVisualLines }: RouteDragLayerProps) {
     const map = useMap();
     // ref for synchronous access in event handlers; state for triggering re-renders
     const draggingRef = React.useRef<{ segmentIdx: number } | null>(null);
@@ -158,7 +159,7 @@ function RouteDragLayer({ manualRoute, onRouteSegmentInsert, onDragStart, onDrag
                     <React.Fragment key={`route-seg-${i}`}>
                         {/* Visual dashed line — hidden immediately on mousedown so the old
                             path doesn't linger while the drag is in progress */}
-                        {!isBeingDragged && (
+                        {!isBeingDragged && !hideVisualLines && (
                             <Polyline
                                 positions={positions}
                                 color="#EF4444"
@@ -654,6 +655,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onDragEnd={onPointMoveEnd}
                     isSelectionMode={isSelectionMode}
                     isEraserMode={isEraserMode}
+                    hideVisualLines={!!(route && selectionBoxes && selectionBoxes.length > 0)}
                 />
 
                 {/* Markers for selected points */}

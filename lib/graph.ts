@@ -846,33 +846,77 @@ export class StreetGraph {
         // bridge edges radiating from the junction across the entire area.
         // Then rotate the circuit so it begins at the point closest to the junction.
         if (manualRoute && manualRoute.length > 1 && selectionBoxes && selectionBoxes.length > 0) {
-            const manualCoords = manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
-            const lastPt = manualRoute[manualRoute.length - 1];
-            const junction = { lat: lastPt[1], lon: lastPt[0] };
+            // Mixed mode: ignore the manualRoute path (which may detour around the area due to
+            // road topology) and instead bridge directly from startPoint → area → endPoint.
+            // This avoids detours where the road-following path dips away from the area before
+            // entering it, which made the route appear to "visit" the exit destination first.
+            const approachStart = startPoint ?? { lat: manualRoute[0][1], lon: manualRoute[0][0] };
 
             const areaCircuit = this.solveCPP(undefined, undefined, undefined, selectionBoxes);
-            if (areaCircuit.length === 0) return manualCoords;
+            if (areaCircuit.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
-            // areaCircuit is a closed loop (first ≈ last). Strip the closing duplicate,
-            // rotate to the point nearest the junction, then re-close.
             const isClosedLoop =
                 areaCircuit.length > 1 &&
                 Math.abs(areaCircuit[0].lat - areaCircuit[areaCircuit.length - 1].lat) < 1e-7 &&
                 Math.abs(areaCircuit[0].lon - areaCircuit[areaCircuit.length - 1].lon) < 1e-7;
             const base = isClosedLoop ? areaCircuit.slice(0, -1) : areaCircuit;
 
+            // Rotate circuit to start at the point nearest approachStart
             let closestIdx = 0;
-            let minDist = Infinity;
+            let minDistToStart = Infinity;
             for (let i = 0; i < base.length; i++) {
-                const d = this.haversine(junction.lat, junction.lon, base[i].lat, base[i].lon);
-                if (d < minDist) { minDist = d; closestIdx = i; }
+                const d = this.haversine(approachStart.lat, approachStart.lon, base[i].lat, base[i].lon);
+                if (d < minDistToStart) { minDistToStart = d; closestIdx = i; }
             }
 
+            // Open circuit: start at the point nearest approachStart, end wherever the
+            // Euler traversal finishes (not back at the entry). This avoids the artifact
+            // where the exit bridge starts at the entry point and retraces the approach.
             const rotated = isClosedLoop
-                ? [...base.slice(closestIdx), ...base.slice(0, closestIdx), base[closestIdx]]
+                ? [...base.slice(closestIdx), ...base.slice(0, closestIdx)]
                 : base;
 
-            return [...manualCoords, ...rotated];
+            // Entry bridge: approachStart → area circuit entry (road-following)
+            const startNodeId = this.findClosestNode(approachStart.lat, approachStart.lon);
+            const areaEntryNodeId = this.findClosestNode(rotated[0].lat, rotated[0].lon);
+            const entryBridge: { lat: number; lon: number }[] = [];
+            if (startNodeId && areaEntryNodeId && startNodeId !== areaEntryNodeId) {
+                const bridgePath = this.findPath(startNodeId, areaEntryNodeId);
+                if (bridgePath.length > 0) {
+                    const firstNode = this.graph.getNode(bridgePath[0].id);
+                    if (firstNode) entryBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
+                    for (const seg of bridgePath) {
+                        const n = this.graph.getNode(seg.idNext);
+                        if (n) entryBridge.push({ lat: n.data.lat, lon: n.data.lon });
+                    }
+                }
+            }
+
+            // Exit bridge: area circuit exit → endPoint (if endPoint is outside the area)
+            const isEndOutsideArea = endPoint && selectionBoxes.every(box =>
+                endPoint!.lat < box.south || endPoint!.lat > box.north ||
+                endPoint!.lon < box.west  || endPoint!.lon > box.east
+            );
+            const exitBridge: { lat: number; lon: number }[] = [];
+            if (isEndOutsideArea && endPoint) {
+                const areaExitPt = rotated[rotated.length - 1];
+                const exitNodeId = this.findClosestNode(areaExitPt.lat, areaExitPt.lon);
+                const destNodeId = this.findClosestNode(endPoint.lat, endPoint.lon);
+                if (exitNodeId && destNodeId && exitNodeId !== destNodeId) {
+                    const exitPath = this.findPath(exitNodeId, destNodeId);
+                    if (exitPath.length > 0) {
+                        const firstNode = this.graph.getNode(exitPath[0].id);
+                        if (firstNode) exitBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
+                        for (const seg of exitPath) {
+                            const n = this.graph.getNode(seg.idNext);
+                            if (n) exitBridge.push({ lat: n.data.lat, lon: n.data.lon });
+                        }
+                    }
+                }
+                exitBridge.push({ lat: endPoint.lat, lon: endPoint.lon });
+            }
+
+            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryBridge, ...rotated, ...exitBridge];
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
