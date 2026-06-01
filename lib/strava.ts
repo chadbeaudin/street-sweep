@@ -90,6 +90,7 @@ export async function fetchAllStravaActivities(creds?: { clientId?: string; clie
 
         if (!response.ok) {
             const errorText = await response.text();
+            console.error(`[Strava] Activities fetch failed. Status: ${response.status}, Body: ${errorText.substring(0, 500)}`);
             if (errorText.trimStart().startsWith('<')) {
                 throw new Error('Strava is temporarily unavailable. Please try again in a few minutes.');
             }

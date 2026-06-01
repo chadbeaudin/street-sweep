@@ -973,7 +973,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 Generating...
                             </>
                         ) : (
-                            'Generate Route'
+                            'Regenerate Route'
                         )}
                     </button>
                 </div>
