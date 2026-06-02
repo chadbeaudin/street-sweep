@@ -1,9 +1,9 @@
 import { BoundingBox, OverpassResponse } from './types';
 
 const OVERPASS_ENDPOINTS = [
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass-api.de/api/interpreter',
   'https://lz4.overpass-api.de/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.osm.ch/api/interpreter'
 ];
 
@@ -83,7 +83,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
           try {
             console.log(`${ts()} Fetching OSM data from ${endpoint}...`);
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
+            const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout
 
             const response = await fetch(endpoint, {
               method: 'POST',
