@@ -1,8 +1,9 @@
-import { fetchOSMData } from './overpass';
+import { fetchOSMData, resetCircuitBreakers } from './overpass';
 
 describe('fetchOSMData robustness', () => {
     beforeEach(() => {
         global.fetch = jest.fn();
+        resetCircuitBreakers();
     });
 
     afterEach(() => {

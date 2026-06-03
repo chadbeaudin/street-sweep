@@ -17,11 +17,29 @@ const OSM_CACHE = new Map<string, { data: OverpassResponse; timestamp: number }>
 const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
 const IN_FLIGHT_REQUESTS = new Map<string, Promise<OverpassResponse>>();
 
-/**
- * Clears the OSM cache. Useful if mirrors return poisoned (empty) data.
- */
+// Circuit breaker: skip mirrors that failed recently
+const MIRROR_FAILURES = new Map<string, number>();
+const CIRCUIT_OPEN_TTL = 5 * 60 * 1000; // 5 minutes
+
+function isCircuitOpen(endpoint: string): boolean {
+  const lastFail = MIRROR_FAILURES.get(endpoint);
+  return !!lastFail && (Date.now() - lastFail < CIRCUIT_OPEN_TTL);
+}
+
+function recordFailure(endpoint: string) {
+  MIRROR_FAILURES.set(endpoint, Date.now());
+}
+
+function recordSuccess(endpoint: string) {
+  MIRROR_FAILURES.delete(endpoint);
+}
+
 export function clearOSMCache() {
   OSM_CACHE.clear();
+}
+
+export function resetCircuitBreakers() {
+  MIRROR_FAILURES.clear();
 }
 
 export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse> {
@@ -80,6 +98,10 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
     try {
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         for (const endpoint of OVERPASS_ENDPOINTS) {
+          if (isCircuitOpen(endpoint)) {
+            console.log(`${ts()} Skipping ${endpoint} (circuit open)`);
+            continue;
+          }
           try {
             console.log(`${ts()} Fetching OSM data from ${endpoint}...`);
             const controller = new AbortController();
@@ -89,7 +111,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
               method: 'POST',
               body: 'data=' + encodeURIComponent(bikeQuery),
               signal: controller.signal,
-              headers: { 
+              headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Accept': 'application/json',
                 'User-Agent': 'StreetSweep/1.0 (Local Development)'
@@ -104,9 +126,11 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
               // it's VERY likely the mirror is returning incomplete data.
               if (data.elements.length === 0) {
                 console.warn(`${ts()} Mirror ${endpoint} returned 0 elements. Trying next mirror...`);
+                recordFailure(endpoint);
                 continue;
               }
 
+              recordSuccess(endpoint);
               OSM_CACHE.set(cacheKey, { data, timestamp: Date.now() });
               return data;
             }
@@ -114,13 +138,16 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
             if (response.status === 504 || response.status === 429) {
               console.warn(`${ts()} Endpoint ${endpoint} failed with ${response.status}. Trying next...`);
               lastError = new Error(`Overpass API error: ${response.status}`);
+              recordFailure(endpoint);
               continue;
             }
 
             const errorText = await response.text();
+            recordFailure(endpoint);
             throw new Error(`Overpass API error: ${response.status}. ${errorText.substring(0, 100)}`);
           } catch (error: any) {
             console.error(`${ts()} Request to ${endpoint} failed:`, error.message);
+            recordFailure(endpoint);
             lastError = error;
           }
         }
