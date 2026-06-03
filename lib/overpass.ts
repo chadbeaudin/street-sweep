@@ -86,8 +86,16 @@ function parseOSMXML(xml: string): OverpassResponse {
 }
 
 async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | null> {
+  // OSM API rejects requests where area > 0.25 sq degrees
+  const latSpan = bbox.north - bbox.south;
+  const lonSpan = bbox.east - bbox.west;
+  if (latSpan * lonSpan > 0.25) {
+    console.warn(`${ts()} OSM API fallback skipped — bbox too large (${(latSpan * lonSpan).toFixed(3)} sq deg)`);
+    return null;
+  }
+
   const url = `${OSM_API_ENDPOINT}?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
-  console.log(`${ts()} Trying OSM API fallback...`);
+  console.log(`${ts()} Trying OSM API fallback (${latSpan.toFixed(3)}x${lonSpan.toFixed(3)})...`);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 30000);
   try {
@@ -97,7 +105,8 @@ async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | nu
     });
     clearTimeout(timeoutId);
     if (!response.ok) {
-      console.warn(`${ts()} OSM API returned ${response.status}`);
+      const body = await response.text();
+      console.warn(`${ts()} OSM API returned ${response.status}: ${body.substring(0, 200)}`);
       return null;
     }
     const xml = await response.text();
