@@ -1,4 +1,4 @@
-import { BoundingBox, OverpassResponse } from './types';
+import { BoundingBox, OverpassResponse, OSMElement } from './types';
 
 const OVERPASS_ENDPOINTS = [
   'https://lz4.overpass-api.de/api/interpreter',
@@ -32,6 +32,87 @@ function recordFailure(endpoint: string) {
 
 function recordSuccess(endpoint: string) {
   MIRROR_FAILURES.delete(endpoint);
+}
+
+const OSM_API_ENDPOINT = 'https://api.openstreetmap.org/api/0.6/map';
+
+function parseOSMXML(xml: string): OverpassResponse {
+  const elements: OSMElement[] = [];
+
+  // Parse standalone nodes (needed as geometry lookup for ways)
+  const nodeRe = /<node\b([^>]*?)(?:\/>|>[\s\S]*?<\/node>)/g;
+  let m: RegExpExecArray | null;
+  while ((m = nodeRe.exec(xml)) !== null) {
+    const attrs = m[1];
+    const id = /\bid="(\d+)"/.exec(attrs);
+    const lat = /\blat="([^"]+)"/.exec(attrs);
+    const lon = /\blon="([^"]+)"/.exec(attrs);
+    if (id && lat && lon) {
+      elements.push({ type: 'node', id: +id[1], lat: +lat[1], lon: +lon[1] });
+    }
+  }
+
+  // Parse ways
+  const wayRe = /<way\b([^>]*)>([\s\S]*?)<\/way>/g;
+  while ((m = wayRe.exec(xml)) !== null) {
+    const attrs = m[1];
+    const body = m[2];
+    const id = /\bid="(\d+)"/.exec(attrs);
+    if (!id) continue;
+
+    const tags: Record<string, string> = {};
+    const tagRe = /<tag\b[^>]*\bk="([^"]+)"[^>]*\bv="([^"]*)"[^>]*>/g;
+    let t: RegExpExecArray | null;
+    while ((t = tagRe.exec(body)) !== null) tags[t[1]] = t[2];
+
+    if (!tags['highway']) continue;
+    if (tags['access'] === 'private' || tags['access'] === 'no') continue;
+
+    const nodes: number[] = [];
+    const ndRe = /<nd\b[^>]*\bref="(\d+)"/g;
+    let nd: RegExpExecArray | null;
+    while ((nd = ndRe.exec(body)) !== null) nodes.push(+nd[1]);
+    if (nodes.length < 2) continue;
+
+    elements.push({ type: 'way', id: +id[1], nodes, tags });
+  }
+
+  return {
+    version: 0.6,
+    generator: 'OpenStreetMap API',
+    osm3s: { timestamp_osm_base: new Date().toISOString(), copyright: 'OpenStreetMap contributors' },
+    elements
+  };
+}
+
+async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | null> {
+  const url = `${OSM_API_ENDPOINT}?bbox=${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+  console.log(`${ts()} Trying OSM API fallback...`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'StreetSweep/1.0 (Local Development)' }
+    });
+    clearTimeout(timeoutId);
+    if (!response.ok) {
+      console.warn(`${ts()} OSM API returned ${response.status}`);
+      return null;
+    }
+    const xml = await response.text();
+    const data = parseOSMXML(xml);
+    if (data.elements.length === 0) {
+      console.warn(`${ts()} OSM API returned 0 elements`);
+      return null;
+    }
+    console.log(`${ts()} OSM API fallback succeeded (${data.elements.length} elements)`);
+    return data;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    console.error(`${ts()} OSM API fallback failed:`, err.message);
+    return null;
+  }
 }
 
 export function clearOSMCache() {
@@ -153,8 +234,13 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
         }
       }
 
-      // If we exhausted all mirrors and still have nothing, but at least ONE mirror was technically "ok" but empty,
-      // we return that empty result rather than throwing.
+      // All Overpass mirrors failed — try the official OSM API as a last resort
+      const osmApiData = await fetchFromOSMAPI(bbox);
+      if (osmApiData) {
+        OSM_CACHE.set(cacheKey, { data: osmApiData, timestamp: Date.now() });
+        return osmApiData;
+      }
+
       return {
         version: 0.6,
         generator: 'StreetSweep fallback',
