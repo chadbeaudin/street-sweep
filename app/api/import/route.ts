@@ -6,8 +6,7 @@ type Coord = [number, number] | [number, number, number]; // [lon, lat] | [lon, 
 const SEMICIRCLES_TO_DEG = 180 / Math.pow(2, 31);
 
 function parseFit(buffer: Buffer): Coord[] {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { Decoder, Stream } = require('@garmin/fitsdk');
+    const { Decoder, Stream } = require('@garmin/fitsdk'); // eslint-disable-line
     const stream = Stream.fromBuffer(buffer);
     const decoder = new Decoder(stream);
     const { messages } = decoder.read();
