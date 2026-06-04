@@ -359,6 +359,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     const mapRef = React.useRef<L.Map | null>(null);
     const selectionStartRef = React.useRef<L.Point | null>(null);
 
+    const areaEndPoint = React.useMemo(() => {
+        if (!route || route.length === 0 || !selectionBoxes || selectionBoxes.length === 0) return null;
+        const last = route[route.length - 1];
+        return { lat: last[1], lon: last[0] };
+    }, [route, selectionBoxes]);
+
     const handleOverlayMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         const rect = e.currentTarget.getBoundingClientRect();
         selectionStartRef.current = L.point(e.clientX - rect.left, e.clientY - rect.top);
@@ -703,6 +709,22 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         />
                     );
                 })}
+
+                {/* Red end-point dot at the far corner when a selection box is active */}
+                {areaEndPoint && (
+                    <Marker
+                        key="area-end-marker"
+                        position={[areaEndPoint.lat, areaEndPoint.lon]}
+                        interactive={false}
+                        zIndexOffset={600}
+                        icon={L.divIcon({
+                            className: '',
+                            html: '<div style="width:14px;height:14px;background:#EF4444;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.3)"></div>',
+                            iconSize: [14, 14],
+                            iconAnchor: [7, 7],
+                        })}
+                    />
+                )}
 
                 <HoverMarker point={hoveredPoint} />
             </MapContainer>

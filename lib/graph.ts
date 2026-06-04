@@ -886,31 +886,9 @@ export class StreetGraph {
                 }
             }
 
-            // Exit bridge: area path end → endPoint (if endPoint is outside the area)
-            const isEndOutsideArea = endPoint && selectionBoxes.every(box =>
-                endPoint!.lat < box.south || endPoint!.lat > box.north ||
-                endPoint!.lon < box.west  || endPoint!.lon > box.east
-            );
-            const exitBridge: { lat: number; lon: number }[] = [];
-            if (isEndOutsideArea && endPoint) {
-                const areaExitPt = areaPath[areaPath.length - 1];
-                const exitNodeId = this.findClosestNode(areaExitPt.lat, areaExitPt.lon);
-                const destNodeId = this.findClosestNode(endPoint.lat, endPoint.lon);
-                if (exitNodeId && destNodeId && exitNodeId !== destNodeId) {
-                    const exitPath = this.findPath(exitNodeId, destNodeId);
-                    if (exitPath.length > 0) {
-                        const firstNode = this.graph.getNode(exitPath[0].id);
-                        if (firstNode) exitBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
-                        for (const seg of exitPath) {
-                            const n = this.graph.getNode(seg.idNext);
-                            if (n) exitBridge.push({ lat: n.data.lat, lon: n.data.lon });
-                        }
-                    }
-                }
-                exitBridge.push({ lat: endPoint.lat, lon: endPoint.lon });
-            }
-
-            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryBridge, ...areaPath, ...exitBridge];
+            // In mixed mode the selected points define the approach, not a post-area
+            // destination. The route ends at the far corner of the area — no exit bridge.
+            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryBridge, ...areaPath];
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
@@ -1345,8 +1323,6 @@ export class StreetGraph {
                     }
                 }
             }
-            // Filter out virtual bridge edges - we'll return the route WITHOUT the bridges
-            // This means the route may have gaps, but it's more honest than showing fake straight lines
             const coords: { lat: number; lon: number; hasConstruction?: boolean }[] = [];
 
             for (let i = 0; i < trail.length; i++) {
