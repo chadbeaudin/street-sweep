@@ -37,6 +37,7 @@ interface MapProps {
     isEraserMode?: boolean;
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
     preAreaPointCount?: number | null;
+    isImportedRoute?: boolean;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -355,7 +356,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
     const selectionStartRef = React.useRef<L.Point | null>(null);
@@ -365,6 +366,22 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         const last = route[route.length - 1];
         return { lat: last[1], lon: last[0] };
     }, [route, selectionBoxes]);
+
+    // Fit map whenever the route first appears (e.g. after import)
+    const prevRouteRef = React.useRef<typeof route>(null);
+    React.useEffect(() => {
+        const wasEmpty = !prevRouteRef.current || prevRouteRef.current.length === 0;
+        const hasRoute = route && route.length > 1;
+        if (wasEmpty && hasRoute && mapRef.current) {
+            const lats = route!.map(p => p[1]);
+            const lons = route!.map(p => p[0]);
+            mapRef.current.fitBounds(
+                [[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]],
+                { padding: [40, 40] }
+            );
+        }
+        prevRouteRef.current = route;
+    }, [route]);
 
     const handleOverlayMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -469,58 +486,47 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { normalSegments: normal, constructionSegments: construction, hasConstruction: hasAnyConstruction };
     }, [route]);
 
-    // Chevron markers: one every ~150m along the full generated route
-    const chevronMarkers = React.useMemo(() => {
-        if (!route || route.length < 2) return [];
-
+    const buildChevronMarkers = React.useCallback((pts: [number, number][]) => {
+        if (pts.length < 2) return [];
         const SPACING_M = 150;
         const markers: { lat: number; lon: number; angle: number }[] = [];
-
         const toRad = (d: number) => d * Math.PI / 180;
         const toDeg = (r: number) => r * 180 / Math.PI;
-
         const haversineM = (lat1: number, lon1: number, lat2: number, lon2: number) => {
             const R = 6371000;
-            const dLat = toRad(lat2 - lat1);
-            const dLon = toRad(lon2 - lon1);
+            const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1);
             const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         };
-
         const bearing = (lat1: number, lon1: number, lat2: number, lon2: number) => {
             const dLon = toRad(lon2 - lon1);
             const y = Math.sin(dLon) * Math.cos(toRad(lat2));
             const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
             return (toDeg(Math.atan2(y, x)) + 360) % 360;
         };
-
-        let distSinceLastChevron = SPACING_M / 2; // offset so first chevron isn't at the very start
-
-        for (let i = 1; i < route.length; i++) {
-            const [lon1, lat1] = route[i - 1];
-            const [lon2, lat2] = route[i];
+        let distSinceLastChevron = SPACING_M / 2;
+        for (let i = 1; i < pts.length; i++) {
+            const [lon1, lat1] = pts[i - 1];
+            const [lon2, lat2] = pts[i];
             const segLen = haversineM(lat1, lon1, lat2, lon2);
-            let remaining = segLen;
-            let traveled = 0;
-
+            let remaining = segLen; let traveled = 0;
             while (distSinceLastChevron + remaining >= SPACING_M) {
                 const overshoot = SPACING_M - distSinceLastChevron;
-                traveled += overshoot;
-                remaining -= overshoot;
-                distSinceLastChevron = 0;
-
+                traveled += overshoot; remaining -= overshoot; distSinceLastChevron = 0;
                 const frac = traveled / segLen;
-                const cLat = lat1 + (lat2 - lat1) * frac;
-                const cLon = lon1 + (lon2 - lon1) * frac;
-                markers.push({ lat: cLat, lon: cLon, angle: bearing(lat1, lon1, lat2, lon2) });
-                distSinceLastChevron = 0;
+                markers.push({ lat: lat1 + (lat2 - lat1) * frac, lon: lon1 + (lon2 - lon1) * frac, angle: bearing(lat1, lon1, lat2, lon2) });
             }
-
             distSinceLastChevron += remaining;
         }
-
         return markers;
-    }, [route]);
+    }, []);
+
+    // Chevron markers: one every ~150m along the full generated route
+    const chevronMarkers = React.useMemo(() => {
+        if (!route || route.length < 2) return [];
+        return buildChevronMarkers(route.map(p => [p[0], p[1]] as [number, number]));
+    }, [route, buildChevronMarkers]);
+
 
 
     return (
@@ -665,7 +671,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onDragEnd={onPointMoveEnd}
                     isSelectionMode={isSelectionMode}
                     isEraserMode={isEraserMode}
-                    hideVisualLines={!!(route && selectionBoxes && selectionBoxes.length > 0)}
+                    hideVisualLines={isImportedRoute || !!(route && selectionBoxes && selectionBoxes.length > 0)}
                 />
 
                 {/* Markers for selected points */}

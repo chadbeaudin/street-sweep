@@ -53,6 +53,10 @@ export default function Home() {
     const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
     const [isGarminUploading, setIsGarminUploading] = useState(false);
     const [routeName, setRouteName] = useState('StreetSweep Route');
+    const [isImporting, setIsImporting] = useState(false);
+    const [isImportedRoute, setIsImportedRoute] = useState(false);
+    const importFileRef = useRef<HTMLInputElement>(null);
+    const isImportedRouteRef = useRef(false);
     const [activeSteps, setActiveSteps] = useState(0);
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -211,6 +215,9 @@ export default function Home() {
     }, [bbox]);
 
     const handleGenerate = useCallback(async (isSilent = false) => {
+        // Don't auto-regenerate while the imported route is the active display
+        if (isSilent && isImportedRouteRef.current) return;
+
         const currentBbox = bboxRef.current;
         if (!currentBbox) {
             if (!isSilent) setError({ message: "Please move the map to set an area." });
@@ -402,6 +409,74 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
     };
 
+    const handleImportFile = useCallback(async (file: File) => {
+        setIsImporting(true);
+        setError(null);
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            const res = await fetch('/api/import', { method: 'POST', body: form });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Import failed');
+
+            const coords: [number, number, number?][] = data.coordinates;
+
+            // Build start/end selectedPoints
+            const startId = Math.random().toString(36).substr(2, 9);
+            const endId = Math.random().toString(36).substr(2, 9);
+            const firstCoord = coords[0];
+            const lastCoord = coords[coords.length - 1];
+            const startPt = { lat: firstCoord[1], lon: firstCoord[0], id: startId, status: 'snapped' as const };
+            const endPt   = { lat: lastCoord[1],  lon: lastCoord[0],  id: endId,   status: 'snapped' as const };
+            const newPoints = [startPt, endPt];
+
+            // Downsample to ~150 pts for the hitbox — full coords stay in `route` for display.
+            // A smaller polyline is much faster to hit-test and avoids interactivity issues.
+            const MAX_HITBOX_PTS = 150;
+            const step = Math.max(1, Math.floor(coords.length / MAX_HITBOX_PTS));
+            const sampledCoords: [number, number][] = [];
+            for (let i = 0; i < coords.length; i += step) sampledCoords.push([coords[i][0], coords[i][1]]);
+            const lastOrig = coords[coords.length - 1];
+            const lastSamp = sampledCoords[sampledCoords.length - 1];
+            if (lastSamp[0] !== lastOrig[0] || lastSamp[1] !== lastOrig[1])
+                sampledCoords.push([lastOrig[0], lastOrig[1]]);
+            const newManualRoute = [sampledCoords];
+
+            // Set route as full coordinate array for display, chevrons, eraser
+            const routeCoords: [number, number, number?, number?][] = coords.map(c =>
+                c.length === 3 ? [c[0], c[1], c[2]] : [c[0], c[1]]
+            );
+
+            // Update refs (source of truth for async callbacks)
+            pointsRef.current = newPoints;
+            manualRouteRef.current = newManualRoute;
+            selectionBoxesRef.current = [];
+            preAreaPointCountRef.current = null;
+            historyIndexRef.current = 0;
+            const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], preAreaPointCount: null };
+            historyRef.current = [snapshot];
+
+            // Mark as imported so auto-generation is suppressed
+            isImportedRouteRef.current = true;
+            setIsImportedRoute(true);
+
+            // Update all state
+            setSelectedPoints(newPoints);
+            setManualRoute(newManualRoute);
+            setSelectionBoxes([]);
+            setPreAreaPointCount(null);
+            setRoute(routeCoords);
+            setElevationData(data.elevationProfile);
+            setTotalDistance(data.totalDistance);
+            setHistory([snapshot]);
+            setHistoryIndex(0);
+        } catch (err: any) {
+            setError({ message: `Import failed: ${err.message}` });
+        } finally {
+            setIsImporting(false);
+        }
+    }, []);
+
     const isDraggingRef = useRef(false);
 
     // Safety net: if a drag ends outside the component (blur, touch cancel, etc.),
@@ -414,6 +489,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
     const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
         if (isDraggingRef.current) return;
+        isImportedRouteRef.current = false;
+        setIsImportedRoute(false);
 
         const currentBbox = bboxRef.current;
         if (!currentBbox) return;
@@ -602,8 +679,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
     }, []);
 
     const handleRouteSegmentInsert = useCallback((segmentIdx: number, rawPoint: { lat: number; lon: number }) => {
+        const wasImported = isImportedRouteRef.current;
+        isImportedRouteRef.current = false;
+        setIsImportedRoute(false);
         const currentBbox = bboxRef.current;
         if (!currentBbox) return;
+
+        // Clear the imported route display immediately so the old solid line doesn't linger
+        if (wasImported) setRoute(null);
 
         const newId = Math.random().toString(36).substr(2, 9);
         const pendingPoint: Waypoint = { ...rawPoint, id: newId, status: 'pending' };
@@ -711,8 +794,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         historyIndexRef.current = -1;
         clickChainRef.current = Promise.resolve();
         preAreaPointCountRef.current = null;
+        isImportedRouteRef.current = false;
 
         // Reset state
+        setIsImportedRoute(false);
         setSelectedPoints([]);
         setManualRoute([]);
         setHistory([]);
@@ -835,6 +920,43 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             setStravaRefreshKey(k => k + 1);
                         }}
                     />
+
+                    <input
+                        ref={importFileRef}
+                        type="file"
+                        accept=".gpx,.tcx,.fit"
+                        className="hidden"
+                        onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (file) handleImportFile(file);
+                            e.target.value = '';
+                        }}
+                    />
+                    <button
+                        onClick={() => importFileRef.current?.click()}
+                        disabled={isImporting}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm disabled:opacity-60"
+                        title="Import a GPX, TCX, or FIT route file"
+                    >
+                        {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : (
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                            </svg>
+                        )}
+                        Import
+                    </button>
+                    {isImportedRoute && route && (
+                        <button
+                            onClick={clearPoints}
+                            className="flex items-center gap-1 px-2 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-md text-sm font-medium hover:bg-purple-100 transition-colors"
+                            title="Clear imported route"
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Imported
+                        </button>
+                    )}
 
                     <button
                         onClick={() => setShowAbout(true)}
@@ -1161,6 +1283,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     onSelectionModeChange={setIsSelectionMode}
                     isEraserMode={isEraserMode}
                     onRouteUpdate={setRoute}
+                    isImportedRoute={isImportedRoute}
                 />
 
                 {elevationData && (
