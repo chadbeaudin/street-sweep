@@ -19,16 +19,19 @@ const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
 const IN_FLIGHT_REQUESTS = new Map<string, Promise<OverpassResponse>>();
 
 // Circuit breaker: skip mirrors that failed recently
-const MIRROR_FAILURES = new Map<string, number>();
-const CIRCUIT_OPEN_TTL = 5 * 60 * 1000; // 5 minutes
+const MIRROR_FAILURES = new Map<string, { time: number; transient: boolean }>();
+const CIRCUIT_OPEN_TTL = 5 * 60 * 1000;         // 5 min for hard errors
+const CIRCUIT_OPEN_TTL_TRANSIENT = 60 * 1000;    // 1 min for 429/504 (clears fast)
 
 function isCircuitOpen(endpoint: string): boolean {
-  const lastFail = MIRROR_FAILURES.get(endpoint);
-  return !!lastFail && (Date.now() - lastFail < CIRCUIT_OPEN_TTL);
+  const rec = MIRROR_FAILURES.get(endpoint);
+  if (!rec) return false;
+  const ttl = rec.transient ? CIRCUIT_OPEN_TTL_TRANSIENT : CIRCUIT_OPEN_TTL;
+  return Date.now() - rec.time < ttl;
 }
 
-function recordFailure(endpoint: string) {
-  MIRROR_FAILURES.set(endpoint, Date.now());
+function recordFailure(endpoint: string, transient = false) {
+  MIRROR_FAILURES.set(endpoint, { time: Date.now(), transient });
 }
 
 function recordSuccess(endpoint: string) {
@@ -263,19 +266,29 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
             if (response.status === 504 || response.status === 429) {
               console.warn(`${ts()} Endpoint ${endpoint} failed with ${response.status}. Trying next...`);
               lastError = new Error(`Overpass API error: ${response.status}`);
-              recordFailure(endpoint);
+              recordFailure(endpoint, true); // transient — short circuit TTL
               continue;
             }
 
             const errorText = await response.text();
-            recordFailure(endpoint);
+            recordFailure(endpoint, false);
             throw new Error(`Overpass API error: ${response.status}. ${errorText.substring(0, 100)}`);
           } catch (error: any) {
+            const isAbort = error.name === 'AbortError';
             console.error(`${ts()} Request to ${endpoint} failed:`, error.message);
-            recordFailure(endpoint);
+            recordFailure(endpoint, isAbort); // timeouts are transient
             lastError = error;
           }
         }
+      }
+
+      // All Overpass endpoints failed — try the direct OSM API as a last resort
+      console.warn(`${ts()} All Overpass endpoints exhausted. Trying OSM API fallback...`);
+      const osmFallback = await fetchFromOSMAPI(bbox);
+      if (osmFallback && osmFallback.elements.length > 0) {
+        OSM_CACHE.set(cacheKey, { data: osmFallback, timestamp: Date.now() });
+        setDbCached(cacheKey, osmFallback);
+        return osmFallback;
       }
 
       return {
