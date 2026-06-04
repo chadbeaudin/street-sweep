@@ -7,7 +7,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, routingOptions } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, routingOptions, preAreaPointCount, exitRoute } = await request.json();
 
         // Backward compatibility: Convert single selectionBox to array if present
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
@@ -73,8 +73,15 @@ export async function POST(request: Request) {
 
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
-        const endPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[selectedPoints.length - 1] : undefined;
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes);
+        // In mixed mode (manualRoute + selectionBoxes), only pass endPoint when there are
+        // genuine post-area waypoints. Approach-only waypoints must not trigger an exit bridge.
+        const hasPostAreaPoints = selectionBoxes?.length > 0
+            && preAreaPointCount != null
+            && selectedPoints?.length > preAreaPointCount;
+        const endPoint = hasPostAreaPoints
+            ? selectedPoints[selectedPoints.length - 1]
+            : (selectionBoxes?.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes, exitRoute);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {

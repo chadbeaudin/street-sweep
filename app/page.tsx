@@ -32,7 +32,7 @@ export default function Home() {
     const [isStravaLoading, setIsStravaLoading] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
-    const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[] }[]>([]);
+    const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[], preAreaPointCount: number | null }[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
     const [routingOptions, setRoutingOptions] = useState({
         avoidGravel: false,
@@ -60,8 +60,10 @@ export default function Home() {
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
-    const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[] }[]>([]);
+    const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[], preAreaPointCount: number | null }[]>([]);
     const selectionBoxesRef = useRef<{ north: number; south: number; east: number; west: number }[]>([]);
+    const preAreaPointCountRef = useRef<number | null>(null);
+    const [preAreaPointCount, setPreAreaPointCount] = useState<number | null>(null);
     const historyIndexRef = useRef(-1);
     const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
     const stravaRoadsRef = useRef<[number, number][][] | null>(null);
@@ -234,7 +236,13 @@ export default function Home() {
                 routingOptions: routingOptionsRef.current,
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
-                manualRoute: (currentPoints.length >= 2) ? manualRouteRef.current.flat() : []
+                manualRoute: (currentPoints.length >= 2) ? manualRouteRef.current.flat() : [],
+                preAreaPointCount: preAreaPointCountRef.current,
+                // Road segments between post-area points (C→D, D→E, ...) so the exit bridge
+                // honours all intermediate post-area waypoints, not just the final one.
+                exitRoute: (preAreaPointCountRef.current !== null && manualRouteRef.current.length > preAreaPointCountRef.current)
+                    ? manualRouteRef.current.slice(preAreaPointCountRef.current).flat()
+                    : []
             };
 
             console.log('[handleGenerate] Sending request to build route...');
@@ -451,7 +459,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     // route to this location even without a road-following path segment.
                     pointsRef.current[tempIdx] = { ...newPoint, status: 'snapped' as const };
                     setSelectedPoints([...pointsRef.current]);
-                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current] };
+                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
                     historyRef.current = [...historyRef.current.slice(0, historyIndexRef.current + 1), snapshot];
                     historyIndexRef.current = historyRef.current.length - 1;
                     setHistory(historyRef.current);
@@ -474,7 +482,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 // Update refs (source of truth for subsequent clicks)
                 manualRouteRef.current = currentSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current] };
+                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
                 // Truncate history based on current index (for redo safety)
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
@@ -565,7 +573,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 manualRouteRef.current = updatedSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current] };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -680,7 +688,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 }
 
                 manualRouteRef.current = updatedSegments;
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current] };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -702,6 +710,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         historyRef.current = [];
         historyIndexRef.current = -1;
         clickChainRef.current = Promise.resolve();
+        preAreaPointCountRef.current = null;
 
         // Reset state
         setSelectedPoints([]);
@@ -712,6 +721,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setElevationData(null);
         setTotalDistance(null);
         setSelectionBoxes([]);
+        setPreAreaPointCount(null);
         setActiveSteps(0);
     }, []);
 
@@ -723,11 +733,13 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             pointsRef.current = [...snapshot.points];
             manualRouteRef.current = [...snapshot.route];
             selectionBoxesRef.current = [...snapshot.selectionBoxes];
+            preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
             historyIndexRef.current = prevIndex;
 
             setSelectedPoints(pointsRef.current);
             setManualRoute(manualRouteRef.current);
             setSelectionBoxes(selectionBoxesRef.current);
+            setPreAreaPointCount(preAreaPointCountRef.current);
             setHistoryIndex(prevIndex);
         } else if (historyIndexRef.current === 0) {
             clearPoints();
@@ -742,11 +754,13 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             pointsRef.current = [...snapshot.points];
             manualRouteRef.current = [...snapshot.route];
             selectionBoxesRef.current = [...snapshot.selectionBoxes];
+            preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
             historyIndexRef.current = nextIndex;
 
             setSelectedPoints(pointsRef.current);
             setManualRoute(manualRouteRef.current);
             setSelectionBoxes(selectionBoxesRef.current);
+            setPreAreaPointCount(preAreaPointCountRef.current);
             setHistoryIndex(nextIndex);
         }
     }, []);
@@ -1123,12 +1137,18 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     allRoads={allRoads}
                     isSelectionMode={isSelectionMode}
                     selectionBoxes={selectionBoxes}
+                    preAreaPointCount={preAreaPointCount}
                     onSelectionChange={(box: { north: number; south: number; east: number; west: number } | null) => {
                         if (box) {
                             const newBoxes = [...selectionBoxesRef.current, box];
                             selectionBoxesRef.current = newBoxes;
                             setSelectionBoxes(newBoxes);
-                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes };
+                            // Lock in how many approach points existed when the first box was drawn
+                            if (preAreaPointCountRef.current === null) {
+                                preAreaPointCountRef.current = pointsRef.current.length;
+                                setPreAreaPointCount(pointsRef.current.length);
+                            }
+                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes, preAreaPointCount: preAreaPointCountRef.current };
                             const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                             historyRef.current = [...newHistory, snapshot];
                             historyIndexRef.current = historyRef.current.length - 1;

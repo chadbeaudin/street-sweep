@@ -36,6 +36,7 @@ interface MapProps {
     onSelectionModeChange?: (isSelectionMode: boolean) => void;
     isEraserMode?: boolean;
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
+    preAreaPointCount?: number | null;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -354,7 +355,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
     const selectionStartRef = React.useRef<L.Point | null>(null);
@@ -670,7 +671,8 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 {/* Markers for selected points */}
                 {selectedPoints.map((point, idx) => {
                     const isFirst = idx === 0;
-                    const isLast = idx === selectedPoints.length - 1;
+                    const isPostAreaPoint = preAreaPointCount != null && idx >= preAreaPointCount;
+                    const isLast = idx === selectedPoints.length - 1 && (selectionBoxes.length === 0 || isPostAreaPoint);
                     const color = isFirst ? '#10B981' : (isLast ? '#EF4444' : '#3B82F6');
 
                     const markerIcon = L.divIcon({

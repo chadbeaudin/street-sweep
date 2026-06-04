@@ -837,7 +837,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][]): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -886,9 +886,40 @@ export class StreetGraph {
                 }
             }
 
-            // In mixed mode the selected points define the approach, not a post-area
-            // destination. The route ends at the far corner of the area — no exit bridge.
-            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryBridge, ...areaPath];
+            // Exit bridge: area end → first post-area point (road bridge), then follow
+            // pre-computed exit segments between subsequent post-area waypoints.
+            // Only built when endPoint is a genuine post-area destination (caller's responsibility).
+            const exitBridge: { lat: number; lon: number }[] = [];
+            if (endPoint) {
+                // Bridge target: first point of exitRoute (first post-area point), or endPoint directly
+                const hasExitRoute = exitRoute && exitRoute.length > 0;
+                const bridgeTarget = hasExitRoute
+                    ? { lat: exitRoute![0][1], lon: exitRoute![0][0] }
+                    : endPoint;
+
+                const areaEndNodeId = this.findClosestNode(areaPath[areaPath.length - 1].lat, areaPath[areaPath.length - 1].lon);
+                const exitStartNodeId = this.findClosestNode(bridgeTarget.lat, bridgeTarget.lon);
+                if (areaEndNodeId && exitStartNodeId && areaEndNodeId !== exitStartNodeId) {
+                    const bridgePath = this.findPath(areaEndNodeId, exitStartNodeId);
+                    if (bridgePath.length > 0) {
+                        const firstNode = this.graph.getNode(bridgePath[0].id);
+                        if (firstNode) exitBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
+                        for (const seg of bridgePath) {
+                            const n = this.graph.getNode(seg.idNext);
+                            if (n) exitBridge.push({ lat: n.data.lat, lon: n.data.lon });
+                        }
+                    }
+                }
+
+                // Append pre-computed road segments between post-area points (C→D, D→E, ...)
+                if (hasExitRoute) {
+                    for (const p of exitRoute!) {
+                        exitBridge.push({ lat: p[1], lon: p[0] });
+                    }
+                }
+            }
+
+            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryBridge, ...areaPath, ...exitBridge];
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
