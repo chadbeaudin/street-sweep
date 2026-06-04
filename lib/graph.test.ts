@@ -290,6 +290,66 @@ describe('StreetGraph', () => {
         expect(last.lon).not.toBeCloseTo(0.002, 9);
     });
 
+    test('mixed mode (manualRoute + selectionBox) produces open path ending at far corner, not back at entry', () => {
+        // 3x3 grid — approach from outside the NW corner, selection box covers all 9 nodes.
+        // NW=1(0.002,0) - 2(0.002,0.001) - NE=3(0.002,0.002)
+        //      |                |                    |
+        //      4(0.001,0) - 5(0.001,0.001) - 6(0.001,0.002)
+        //      |                |                    |
+        // SW=7(0,0)     - 8(0,0.001)      - SE=9(0,0.002)
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0.002, lon: 0 },
+                { type: 'node', id: 2, lat: 0.002, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0.002, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0.001, lon: 0 },
+                { type: 'node', id: 5, lat: 0.001, lon: 0.001 },
+                { type: 'node', id: 6, lat: 0.001, lon: 0.002 },
+                { type: 'node', id: 7, lat: 0, lon: 0 },
+                { type: 'node', id: 8, lat: 0, lon: 0.001 },
+                { type: 'node', id: 9, lat: 0, lon: 0.002 },
+                { type: 'way', id: 10, nodes: [1, 2, 3] },
+                { type: 'way', id: 11, nodes: [4, 5, 6] },
+                { type: 'way', id: 12, nodes: [7, 8, 9] },
+                { type: 'way', id: 13, nodes: [1, 4, 7] },
+                { type: 'way', id: 14, nodes: [2, 5, 8] },
+                { type: 'way', id: 15, nodes: [3, 6, 9] },
+            ]
+        };
+
+        graph.buildFromOSM(mockData);
+
+        // Manual route approaches from north (outside the box), arriving at NW corner.
+        // Format: [lon, lat]
+        const manualRoute: [number, number][] = [
+            [0, 0.003], // approach start: slightly north of NW corner, outside the box
+            [0, 0.002], // arrives at NW corner (node 1)
+        ];
+
+        const selectionBoxes = [{ north: 0.002, south: 0, east: 0.002, west: 0 }];
+
+        const result = graph.solveCPP(undefined, undefined, manualRoute, selectionBoxes);
+
+        expect(result.length).toBeGreaterThan(4);
+
+        // Must start at approachStart (manualRoute[0] in [lon,lat] form)
+        expect(result[0].lat).toBeCloseTo(0.003, 4);
+        expect(result[0].lon).toBeCloseTo(0, 4);
+
+        // Must end near the SE corner (node 9: lat=0, lon=0.002) —
+        // the corner farthest from the NW approach start.
+        const end = result[result.length - 1];
+        expect(end.lat).toBeCloseTo(0, 2);
+        expect(end.lon).toBeCloseTo(0.002, 2);
+
+        // Must NOT end back near the entry point (would indicate a closed circuit bug).
+        const distFromEntry = Math.hypot(end.lat - 0.003, end.lon - 0);
+        expect(distFromEntry).toBeGreaterThan(0.001);
+    });
+
     test('rotates circuit to start at startNode', () => {
         // Square 1-2-3-4-1
         const mockData: OverpassResponse = {
