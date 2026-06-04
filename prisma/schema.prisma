@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model OsmCache {
+  key       String   @id
+  data      Json
+  fetchedAt DateTime @default(now())
+
+  @@map("osm_cache")
+}
+
+model Route {
+  id          String            @id @default(cuid())
+  name        String?
+  coordinates Json
+  distance    Float?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  collections CollectionRoute[]
+
+  @@map("routes")
+}
+
+model Collection {
+  id        String            @id @default(cuid())
+  name      String
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  routes    CollectionRoute[]
+
+  @@map("collections")
+}
+
+model CollectionRoute {
+  collectionId String
+  routeId      String
+  addedAt      DateTime   @default(now())
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  route        Route      @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, routeId])
+  @@map("collection_routes")
+}
+
+model StravaActivity {
+  stravaId  String    @id
+  name      String?
+  polyline  String
+  startDate DateTime?
+  fetchedAt DateTime  @default(now())
+
+  @@map("strava_activities")
+}

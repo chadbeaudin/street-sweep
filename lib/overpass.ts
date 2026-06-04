@@ -1,4 +1,5 @@
 import { BoundingBox, OverpassResponse, OSMElement } from './types';
+import { prisma } from './prisma';
 
 const OVERPASS_ENDPOINTS = [
   'https://lz4.overpass-api.de/api/interpreter',
@@ -124,6 +125,34 @@ async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | nu
   }
 }
 
+const DB_CACHE_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
+
+async function getDbCached(key: string): Promise<OverpassResponse | null> {
+  try {
+    const row = await prisma.osmCache.findUnique({ where: { key } });
+    if (!row) return null;
+    if (Date.now() - row.fetchedAt.getTime() > DB_CACHE_TTL) {
+      await prisma.osmCache.delete({ where: { key } }).catch(() => {});
+      return null;
+    }
+    return row.data as unknown as OverpassResponse;
+  } catch {
+    return null;
+  }
+}
+
+async function setDbCached(key: string, data: OverpassResponse): Promise<void> {
+  try {
+    await prisma.osmCache.upsert({
+      where: { key },
+      update: { data: data as any, fetchedAt: new Date() },
+      create: { key, data: data as any }
+    });
+  } catch (e: any) {
+    console.error(`${ts()} DB cache write failed:`, e.message);
+  }
+}
+
 export function clearOSMCache() {
   OSM_CACHE.clear();
 }
@@ -152,20 +181,25 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
   const cacheKey = `v2_${round(bbox.south)},${round(bbox.west)},${round(bbox.north)},${round(bbox.east)}`;
   const now = Date.now();
 
-  // 1. Check persistent memory cache
+  // 1. Check in-memory cache
   const cached = OSM_CACHE.get(cacheKey);
   if (cached && (now - cached.timestamp < CACHE_TTL)) {
-    // If cache has data, return it. If it has 0 elements, we might want to re-verify, 
-    // but for now let's hope the non-poisoned mirrors are working.
     if (cached.data.elements.length > 0) {
       console.log(`${ts()} Returning cached OSM data (${cached.data.elements.length} elems) for ${cacheKey}`);
       return cached.data;
     }
-    // If it was cached with 0 elements and it's relatively fresh, we'll try to re-fetch to be safe
     console.log(`${ts()} Cached data for ${cacheKey} is empty. Retrying network...`);
   }
 
-  // 2. Check for in-flight requests to avoid concurrent duplicate network calls
+  // 2. Check persistent DB cache (survives server restarts)
+  const dbCached = await getDbCached(cacheKey);
+  if (dbCached && dbCached.elements.length > 0) {
+    console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
+    OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now }); // warm memory cache
+    return dbCached;
+  }
+
+  // 3. Check for in-flight requests to avoid concurrent duplicate network calls
   const inFlight = IN_FLIGHT_REQUESTS.get(cacheKey);
   if (inFlight) {
     console.log(`${ts()} Joining in-flight request for ${cacheKey}`);
@@ -222,6 +256,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
 
               recordSuccess(endpoint);
               OSM_CACHE.set(cacheKey, { data, timestamp: Date.now() });
+              setDbCached(cacheKey, data); // fire-and-forget
               return data;
             }
 
@@ -241,13 +276,6 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
             lastError = error;
           }
         }
-      }
-
-      // All Overpass mirrors failed — try the official OSM API as a last resort
-      const osmApiData = await fetchFromOSMAPI(bbox);
-      if (osmApiData) {
-        OSM_CACHE.set(cacheKey, { data: osmApiData, timestamp: Date.now() });
-        return osmApiData;
       }
 
       return {

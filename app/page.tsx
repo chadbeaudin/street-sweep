@@ -396,6 +396,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
     const isDraggingRef = useRef(false);
 
+    // Safety net: if a drag ends outside the component (blur, touch cancel, etc.),
+    // the ref can get stuck at true. Reset it on any document pointerup.
+    useEffect(() => {
+        const reset = () => { if (isDraggingRef.current) setTimeout(() => { isDraggingRef.current = false; }, 500); };
+        document.addEventListener('pointerup', reset);
+        return () => document.removeEventListener('pointerup', reset);
+    }, []);
+
     const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
         if (isDraggingRef.current) return;
 

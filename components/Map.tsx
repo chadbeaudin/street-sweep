@@ -55,11 +55,14 @@ function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => 
         // Initial fetch
         handleMove();
 
+        const handleClick = (e: L.LeafletMouseEvent) => onMapClick(e.latlng);
+
         map.on('moveend', handleMove);
-        // Removed global click handler - points now only drop on interactive roads
+        map.on('click', handleClick);
 
         return () => {
             map.off('moveend', handleMove);
+            map.off('click', handleClick);
         };
     }, [map, onBBoxChange, onMapClick]);
 
@@ -523,7 +526,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 wheelPxPerZoomLevel={120}
                 wheelDebounceTime={40}
                 zoomControl={false}
-                className={`absolute inset-0 ${isSelectionMode ? 'selection-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''}`}
+                className={`absolute inset-0 ${isSelectionMode ? 'selection-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''} ${!isSelectionMode && !isEraserMode ? 'point-mode' : ''}`}
             >
                 <TileLayer
                     attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -747,6 +750,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 }
                 .leaflet-container {
                     cursor: grab !important;
+                }
+                .leaflet-container.point-mode {
+                    cursor: crosshair !important;
                 }
                 .leaflet-container.selection-mode,
                 .leaflet-container.selection-mode path,

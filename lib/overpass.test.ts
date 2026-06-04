@@ -1,3 +1,13 @@
+jest.mock('./prisma', () => ({
+    prisma: {
+        osmCache: {
+            findUnique: jest.fn().mockResolvedValue(null),
+            upsert: jest.fn().mockResolvedValue({}),
+            delete: jest.fn().mockResolvedValue({}),
+        }
+    }
+}));
+
 import { fetchOSMData, resetCircuitBreakers } from './overpass';
 
 describe('fetchOSMData robustness', () => {

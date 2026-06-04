@@ -31,3 +31,6 @@ ts-debug.log*
 
 # Local environment variables (contains secrets)
 .env.local
+
+/lib/generated/prisma
+/data/
