@@ -2,7 +2,8 @@
 FROM node:20-slim AS deps
 RUN apt-get update && apt-get install -y libc6-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json prisma.config.ts ./
+COPY prisma ./prisma
 RUN npm ci
 
 # Rebuild the source code only when needed
