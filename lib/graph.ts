@@ -33,6 +33,11 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const GRAPH_CACHE = new Map<string, { graph: StreetGraph; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
+// How much more expensive a previously-ridden road is vs a virgin one.
+// Used in T-join matching (odd-node pairing) and bridge routing so the solver
+// strongly prefers unridden streets and only uses ridden ones when unavoidable.
+const RIDDEN_PENALTY = 50;
+
 // Spatial index cell size in degrees (~55m at equator). Small enough to
 // keep cell buckets tiny, large enough that typical clicks find candidates
 // within a 1-2 ring expansion.
@@ -486,7 +491,7 @@ export class StreetGraph {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
                 const v = (link.fromId === u ? link.toId : link.fromId).toString();
                 // Penalise ridden roads heavily so T-join matching prefers unridden bridges
-                const weight = link.data.weight * (link.data.isRidden ? 10 : 1);
+                const weight = link.data.weight * (link.data.isRidden ? RIDDEN_PENALTY : 1);
                 const alt = distU + weight;
 
                 if (!distances.has(v) || alt < distances.get(v)!) {
@@ -642,7 +647,7 @@ export class StreetGraph {
     private buildRiddenPenaltyMap(): Map<string, number> {
         const penalties = new Map<string, number>();
         this.graph.forEachLink((link: any) => {
-            if (link.data.isRidden) penalties.set(link.id, 10);
+            if (link.data.isRidden) penalties.set(link.id, RIDDEN_PENALTY);
         });
         return penalties;
     }
