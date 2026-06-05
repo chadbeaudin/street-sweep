@@ -5,7 +5,9 @@ const OVERPASS_ENDPOINTS = [
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.osm.ch/api/interpreter'
+  'https://overpass.osm.ch/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
 ];
 
 async function delay(ms: number) {
@@ -56,7 +58,11 @@ function parseOSMXML(xml: string): OverpassResponse {
     }
   }
 
-  // Parse ways
+  // Parse ways — must match the highway types in the Overpass query
+  const ALLOWED_HIGHWAYS = new Set(['motorway','trunk','primary','secondary','tertiary',
+    'unclassified','residential','living_street','motorway_link','trunk_link',
+    'primary_link','secondary_link','tertiary_link','track','cycleway']);
+
   const wayRe = /<way\b([^>]*)>([\s\S]*?)<\/way>/g;
   while ((m = wayRe.exec(xml)) !== null) {
     const attrs = m[1];
@@ -69,7 +75,7 @@ function parseOSMXML(xml: string): OverpassResponse {
     let t: RegExpExecArray | null;
     while ((t = tagRe.exec(body)) !== null) tags[t[1]] = t[2];
 
-    if (!tags['highway']) continue;
+    if (!tags['highway'] || !ALLOWED_HIGHWAYS.has(tags['highway'])) continue;
     if (tags['access'] === 'private' || tags['access'] === 'no') continue;
 
     const nodes: number[] = [];
@@ -90,11 +96,12 @@ function parseOSMXML(xml: string): OverpassResponse {
 }
 
 async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | null> {
-  // OSM API rejects requests where area > 0.25 sq degrees
+  // OSM API has a 50k-node limit that trips even in small cities at ~0.003 sq deg.
+  // Only attempt it for very small bboxes where it's likely to succeed.
   const latSpan = bbox.north - bbox.south;
   const lonSpan = bbox.east - bbox.west;
-  if (latSpan * lonSpan > 0.25) {
-    console.warn(`${ts()} OSM API fallback skipped — bbox too large (${(latSpan * lonSpan).toFixed(3)} sq deg)`);
+  if (latSpan * lonSpan > 0.004) {
+    console.warn(`${ts()} OSM API fallback skipped — bbox too large (${(latSpan * lonSpan).toFixed(4)} sq deg)`);
     return null;
   }
 
@@ -111,6 +118,8 @@ async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | nu
     if (!response.ok) {
       const body = await response.text();
       console.warn(`${ts()} OSM API returned ${response.status}: ${body.substring(0, 200)}`);
+      // 509 = rate limited — signal the split not to retry
+      if (response.status === 509 || response.status === 429) throw Object.assign(new Error('rate-limited'), { rateLimit: true });
       return null;
     }
     const xml = await response.text();
@@ -123,14 +132,62 @@ async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | nu
     return data;
   } catch (err: any) {
     clearTimeout(timeoutId);
+    if (err.rateLimit) throw err; // propagate so quadrant split can bail early
     console.error(`${ts()} OSM API fallback failed:`, err.message);
     return null;
   }
 }
 
+async function fetchFromOSMAPIWithSplit(bbox: BoundingBox): Promise<OverpassResponse | null> {
+  try {
+    const result = await fetchFromOSMAPI(bbox);
+    if (result) return result;
+  } catch (e: any) {
+    if (e.rateLimit) { console.warn(`${ts()} OSM API rate-limited — skipping quadrant split`); return null; }
+    throw e;
+  }
+
+  // Single call failed (likely node limit) — split into 2×2 quadrants sequentially to avoid
+  // hammering the API with parallel requests and triggering a 509 rate limit.
+  const midLat = (bbox.north + bbox.south) / 2;
+  const midLon = (bbox.east + bbox.west) / 2;
+  const quadrants: BoundingBox[] = [
+    { south: bbox.south, west: bbox.west, north: midLat,      east: midLon      },
+    { south: bbox.south, west: midLon,    north: midLat,      east: bbox.east   },
+    { south: midLat,     west: bbox.west, north: bbox.north,  east: midLon      },
+    { south: midLat,     west: midLon,    north: bbox.north,  east: bbox.east   },
+  ];
+
+  console.log(`${ts()} OSM API single call failed — trying 2×2 quadrant split...`);
+  const merged: OSMElement[] = [];
+  const seenIds = new Set<string>();
+
+  for (const q of quadrants) {
+    try {
+      const r = await fetchFromOSMAPI(q);
+      if (!r) continue;
+      for (const el of r.elements) {
+        const key = `${el.type}:${el.id}`;
+        if (!seenIds.has(key)) { seenIds.add(key); merged.push(el); }
+      }
+    } catch (e: any) {
+      if (e.rateLimit) { console.warn(`${ts()} OSM API rate-limited mid-split — using partial results`); break; }
+    }
+  }
+
+  if (merged.length === 0) return null;
+  console.log(`${ts()} OSM API quadrant split succeeded (${merged.length} elements)`);
+  return {
+    version: 0.6,
+    generator: 'OpenStreetMap API (split)',
+    osm3s: { timestamp_osm_base: new Date().toISOString(), copyright: 'OpenStreetMap contributors' },
+    elements: merged,
+  };
+}
+
 const DB_CACHE_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-async function getDbCached(key: string): Promise<OverpassResponse | null> {
+async function getDbCached(key: string, minElements = 0): Promise<OverpassResponse | null> {
   try {
     const row = await prisma.osmCache.findUnique({ where: { key } });
     if (!row) return null;
@@ -138,7 +195,19 @@ async function getDbCached(key: string): Promise<OverpassResponse | null> {
       await prisma.osmCache.delete({ where: { key } }).catch(() => {});
       return null;
     }
-    return row.data as unknown as OverpassResponse;
+    const data = row.data as unknown as OverpassResponse;
+    // If the response is suspiciously sparse for the requested area and was not
+    // fetched recently (i.e. it's not a legitimately sparse area we just confirmed),
+    // invalidate so the next request re-fetches fresh data.
+    if (minElements > 0 && data.elements.length < minElements) {
+      const ageMs = Date.now() - row.fetchedAt.getTime();
+      if (ageMs > 3600000) { // older than 1 hour → not a "just confirmed sparse" entry
+        console.warn(`${ts()} DB cache for ${key} is stale+sparse (${data.elements.length} < ${minElements} elems) — invalidating`);
+        await prisma.osmCache.delete({ where: { key } }).catch(() => {});
+        return null;
+      }
+    }
+    return data;
   } catch {
     return null;
   }
@@ -184,18 +253,32 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
   const cacheKey = `v2_${round(bbox.south)},${round(bbox.west)},${round(bbox.north)},${round(bbox.east)}`;
   const now = Date.now();
 
+  // For medium/large areas, reject cached responses that are clearly incomplete.
+  // 500 is conservative: even sparse residential grids return thousands of elements.
+  // Entries fetched within the last hour are trusted (they may be legitimately sparse).
+  const bboxArea = latSpan * lonSpan;
+  const minElements = bboxArea > 0.001 ? 500 : 0;
+
   // 1. Check in-memory cache
   const cached = OSM_CACHE.get(cacheKey);
   if (cached && (now - cached.timestamp < CACHE_TTL)) {
     if (cached.data.elements.length > 0) {
-      console.log(`${ts()} Returning cached OSM data (${cached.data.elements.length} elems) for ${cacheKey}`);
-      return cached.data;
+      const isSparse = minElements > 0 && cached.data.elements.length < minElements;
+      const isStale = now - cached.timestamp > 3600000; // older than 1 hour in memory
+      if (isSparse && isStale) {
+        console.warn(`${ts()} In-memory cache for ${cacheKey} is stale+sparse (${cached.data.elements.length} elems) — invalidating`);
+        OSM_CACHE.delete(cacheKey);
+      } else {
+        console.log(`${ts()} Returning cached OSM data (${cached.data.elements.length} elems) for ${cacheKey}`);
+        return cached.data;
+      }
+    } else {
+      console.log(`${ts()} Cached data for ${cacheKey} is empty. Retrying network...`);
     }
-    console.log(`${ts()} Cached data for ${cacheKey} is empty. Retrying network...`);
   }
 
   // 2. Check persistent DB cache (survives server restarts)
-  const dbCached = await getDbCached(cacheKey);
+  const dbCached = await getDbCached(cacheKey, minElements);
   if (dbCached && dbCached.elements.length > 0) {
     console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
     OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now }); // warm memory cache
@@ -232,7 +315,7 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
           try {
             console.log(`${ts()} Fetching OSM data from ${endpoint}...`);
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout
+            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
             const response = await fetch(endpoint, {
               method: 'POST',
@@ -274,17 +357,18 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
             recordFailure(endpoint, false);
             throw new Error(`Overpass API error: ${response.status}. ${errorText.substring(0, 100)}`);
           } catch (error: any) {
-            const isAbort = error.name === 'AbortError';
             console.error(`${ts()} Request to ${endpoint} failed:`, error.message);
-            recordFailure(endpoint, isAbort); // timeouts are transient
+            // Timeouts (AbortError) mean the endpoint is slow/overloaded — use full TTL
+            recordFailure(endpoint, false);
             lastError = error;
           }
         }
       }
 
-      // All Overpass endpoints failed — try the direct OSM API as a last resort
+      // All Overpass endpoints failed — try the direct OSM API as a last resort.
+      // If the bbox is too large for one call, split it into a 2×2 grid and merge.
       console.warn(`${ts()} All Overpass endpoints exhausted. Trying OSM API fallback...`);
-      const osmFallback = await fetchFromOSMAPI(bbox);
+      const osmFallback = await fetchFromOSMAPIWithSplit(bbox);
       if (osmFallback && osmFallback.elements.length > 0) {
         OSM_CACHE.set(cacheKey, { data: osmFallback, timestamp: Date.now() });
         setDbCached(cacheKey, osmFallback);

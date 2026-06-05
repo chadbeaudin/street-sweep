@@ -367,6 +367,17 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { lat: last[1], lon: last[0] };
     }, [route, selectionBoxes]);
 
+    // Start/end markers for area-only mode (no manual waypoints)
+    const routeStartPoint = React.useMemo(() => {
+        if (!route || route.length === 0 || selectedPoints.length > 0) return null;
+        return { lat: route[0][1], lon: route[0][0] };
+    }, [route, selectedPoints]);
+
+    const routeEndPoint = React.useMemo(() => {
+        if (!route || route.length === 0 || selectedPoints.length > 0) return null;
+        return { lat: route[route.length - 1][1], lon: route[route.length - 1][0] };
+    }, [route, selectedPoints]);
+
     // Fit map whenever the route first appears (e.g. after import)
     const prevRouteRef = React.useRef<typeof route>(null);
     React.useEffect(() => {
@@ -717,6 +728,36 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         />
                     );
                 })}
+
+                {/* Start/end markers for area-only mode (no manual waypoints) */}
+                {routeStartPoint && (
+                    <Marker
+                        key="route-start"
+                        position={[routeStartPoint.lat, routeStartPoint.lon]}
+                        interactive={false}
+                        zIndexOffset={500}
+                        icon={L.divIcon({
+                            className: '',
+                            html: '<div style="width:14px;height:14px;background:#10B981;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.3)"></div>',
+                            iconSize: [14, 14],
+                            iconAnchor: [7, 7],
+                        })}
+                    />
+                )}
+                {routeEndPoint && (
+                    <Marker
+                        key="route-end"
+                        position={[routeEndPoint.lat, routeEndPoint.lon]}
+                        interactive={false}
+                        zIndexOffset={500}
+                        icon={L.divIcon({
+                            className: '',
+                            html: '<div style="width:14px;height:14px;background:#EF4444;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.3)"></div>',
+                            iconSize: [14, 14],
+                            iconAnchor: [7, 7],
+                        })}
+                    />
+                )}
 
                 {/* Red end-point dot at the far corner when a selection box is active */}
                 {areaEndPoint && (

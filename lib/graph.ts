@@ -136,6 +136,13 @@ export class StreetGraph {
 
                 const highway = way.tags?.highway;
 
+                // Reject non-routable highway types regardless of data source (cache may contain
+                // footways/paths from an earlier fetch before the OSM API filter was added).
+                const ROUTABLE_HIGHWAYS = new Set(['motorway','trunk','primary','secondary','tertiary',
+                    'unclassified','residential','living_street','motorway_link','trunk_link',
+                    'primary_link','secondary_link','tertiary_link','track','cycleway']);
+                if (!highway || !ROUTABLE_HIGHWAYS.has(highway)) continue;
+
                 // SAFETY: Exclude actual motorway lanes — cyclists cannot ride on them.
                 // trunk is kept (with isAvoided=true) so divided-highway crossings remain connected.
                 if (highway === 'motorway') {
@@ -242,19 +249,42 @@ export class StreetGraph {
     private checkIfRidden(u: { lat: number, lon: number }, v: { lat: number, lon: number }, riddenRoads: [number, number][][] | null): boolean {
         if (!riddenRoads || riddenRoads.length === 0 || !this.riddenIndex) return false;
 
-        const thresholdMeters = 20;
-        const midLat = (u.lat + v.lat) / 2;
-        const midLon = (u.lon + v.lon) / 2;
-        const centerLat = Math.floor(midLat / GRID_DEG);
-        const centerLon = Math.floor(midLon / GRID_DEG);
+        // Use segment-to-point distance: for each Strava GPS point near this edge,
+        // compute the perpendicular distance to the segment u→v rather than checking
+        // fixed sample positions. This handles sparse summary_polylines correctly — a
+        // GPS point 100m along a 200m edge will be caught regardless of where u/v fall.
+        const thresholdMeters = 25;
 
-        // 1-ring expansion: GRID_DEG (~55m) > threshold (20m), so neighbors cover all candidates
-        for (let dLat = -1; dLat <= 1; dLat++) {
-            for (let dLon = -1; dLon <= 1; dLon++) {
-                const bucket = this.riddenIndex.get(`${centerLat + dLat}:${centerLon + dLon}`);
+        // Collect all grid cells that overlap the edge bounding box + threshold
+        const minLat = Math.min(u.lat, v.lat);
+        const maxLat = Math.max(u.lat, v.lat);
+        const minLon = Math.min(u.lon, v.lon);
+        const maxLon = Math.max(u.lon, v.lon);
+        const pad = thresholdMeters / 111320; // approx degrees per meter
+
+        const cellMinLat = Math.floor((minLat - pad) / GRID_DEG);
+        const cellMaxLat = Math.floor((maxLat + pad) / GRID_DEG);
+        const cellMinLon = Math.floor((minLon - pad) / GRID_DEG);
+        const cellMaxLon = Math.floor((maxLon + pad) / GRID_DEG);
+
+        // Pre-compute segment in flat (meter-like) coords for projection
+        const cosLat = Math.cos(((u.lat + v.lat) / 2) * Math.PI / 180);
+        const uX = u.lon * cosLat, uY = u.lat;
+        const vX = v.lon * cosLat, vY = v.lat;
+        const dx = vX - uX, dy = vY - uY;
+        const lenSq = dx * dx + dy * dy;
+
+        for (let cLat = cellMinLat; cLat <= cellMaxLat; cLat++) {
+            for (let cLon = cellMinLon; cLon <= cellMaxLon; cLon++) {
+                const bucket = this.riddenIndex.get(`${cLat}:${cLon}`);
                 if (!bucket) continue;
                 for (const point of bucket) {
-                    if (this.haversine(midLat, midLon, point[0], point[1]) < thresholdMeters) return true;
+                    // Project point onto segment, clamp to [0,1], measure distance
+                    const pX = point[1] * cosLat, pY = point[0];
+                    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((pX - uX) * dx + (pY - uY) * dy) / lenSq));
+                    const closestLat = uY + t * dy;
+                    const closestLon = (uX + t * dx) / cosLat;
+                    if (this.haversine(point[0], point[1], closestLat, closestLon) < thresholdMeters) return true;
                 }
             }
         }
@@ -471,7 +501,8 @@ export class StreetGraph {
             node?.links?.forEach((link: any) => {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
                 const v = (link.fromId === u ? link.toId : link.fromId).toString();
-                const weight = link.data.weight;
+                // Penalise ridden roads heavily so T-join matching prefers unridden bridges
+                const weight = link.data.weight * (link.data.isRidden ? 10 : 1);
                 const alt = distU + weight;
 
                 if (!distances.has(v) || alt < distances.get(v)!) {
@@ -550,13 +581,22 @@ export class StreetGraph {
     }
 
     public findPath(
-        fromId: string, 
-        toId: string, 
-        allowedLinks?: Set<string>, 
+        fromId: string,
+        toId: string,
+        allowedLinks?: Set<string>,
         penalizedLinks?: Map<string, number>
     ): { id: string, idNext: string, weight: number }[] {
         const result = this.findClosestTarget(fromId, new Set([toId]), allowedLinks, penalizedLinks);
         return result ? result.path : [];
+    }
+
+    /** Returns a penalty map (10×) for all ridden edges, for use when bridging disconnected components. */
+    private buildRiddenPenaltyMap(): Map<string, number> {
+        const penalties = new Map<string, number>();
+        this.graph.forEachLink((link: any) => {
+            if (link.data.isRidden) penalties.set(link.id, 10);
+        });
+        return penalties;
     }
 
     /**
@@ -1004,14 +1044,14 @@ export class StreetGraph {
                 const v = this.graph.getNode(link.toId);
 
                 if (u && v) {
-                    // Expand each box by ~20m to catch streets just outside the drawn edge
-                    const BOX_BUFFER = 0.0002;
+                    // ~10m buffer to catch streets exactly on the drawn boundary
+                    const BOX_BUFFER = 0.0001;
                     const isRequired = selectionBoxes.some(box => {
                         const uIn = u.data.lat <= box.north + BOX_BUFFER && u.data.lat >= box.south - BOX_BUFFER &&
                             u.data.lon <= box.east + BOX_BUFFER && u.data.lon >= box.west - BOX_BUFFER;
                         const vIn = v.data.lat <= box.north + BOX_BUFFER && v.data.lat >= box.south - BOX_BUFFER &&
                             v.data.lon <= box.east + BOX_BUFFER && v.data.lon >= box.west - BOX_BUFFER;
-                        return uIn || vIn;
+                        return uIn && vIn; // both endpoints must be inside — prevents boundary-spanning edges (e.g. park paths) from becoming required
                     });
 
                     if (isRequired) {
@@ -1032,6 +1072,8 @@ export class StreetGraph {
             this.graph.forEachLink((link: any) => {
                 if (link.fromId < link.toId) {
                     if (!link.data.isRidden && !link.data.isAvoided) {
+                        const key = edgeKey(link.fromId.toString(), link.toId.toString());
+                        requiredEdgeKeys.add(key); // needed for BFS component detection
                         requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
                         unriddenNodes.add(link.fromId.toString());
                         unriddenNodes.add(link.toId.toString());
@@ -1061,13 +1103,14 @@ export class StreetGraph {
                     const u = stack.pop()!;
                     component.push(u);
                     this.graph.getNode(u)?.links?.forEach((link: any) => {
-                        // We allow traversal across ANY link to discover connectivity,
-                        // even if we only "require" some of them.
                         const v = (link.fromId === u ? link.toId : link.fromId).toString();
-                        if (!visitedNodes.has(v)) {
-                            visitedNodes.add(v);
-                            stack.push(v);
-                        }
+                        if (visitedNodes.has(v)) return;
+                        // Only walk required edges so we correctly detect disconnected
+                        // pockets in the required-edge subgraph. Ridden/non-required
+                        // roads provide bridges later (findClosestTarget), not here.
+                        if (!requiredEdgeKeys.has(edgeKey(u, v))) return;
+                        visitedNodes.add(v);
+                        stack.push(v);
                     });
                 }
                 components.push(component);
@@ -1077,6 +1120,7 @@ export class StreetGraph {
 
         const edgesInFinalGraph: { u: string, v: string, data: EdgeData }[] = [];
         const reachableNodes = new Set(components[0]);
+        const riddenPenalty = this.buildRiddenPenaltyMap();
 
         for (let i = 1; i < components.length; i++) {
             const island = components[i];
@@ -1086,7 +1130,7 @@ export class StreetGraph {
             const searchLimit = Math.min(island.length, 1000);
             for (let j = 0; j < searchLimit; j++) {
                 // IMPORTANT: When connecting islands, we allow using ANY link in the graph (not just allowedLinks)
-                const res = this.findClosestTarget(island[j], reachableNodes);
+                const res = this.findClosestTarget(island[j], reachableNodes, undefined, riddenPenalty);
                 if (res) {
                     const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
                     if (w < minW) { minW = w; bestResult = res; }
@@ -1177,7 +1221,7 @@ export class StreetGraph {
         for (const u of Array.from(unmatched)) {
              unmatched.delete(u);
              console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge.`);
-             const forced = this.findClosestTarget(u, reachableNodes);
+             const forced = this.findClosestTarget(u, reachableNodes, undefined, riddenPenalty);
              if (forced) {
                  forced.path.forEach((p: any) => {
                      const link = this.graph.getLink(p.id, p.idNext);
@@ -1281,7 +1325,7 @@ export class StreetGraph {
                             let minW = Infinity;
                             const limit = Math.min(island.length, 1000);
                             for (let j = 0; j < limit; j++) {
-                                const res = this.findClosestTarget(island[j], mainComp);
+                                const res = this.findClosestTarget(island[j], mainComp, undefined, riddenPenalty);
                                 if (res) {
                                     const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
                                     if (w < minW) { minW = w; bestRepair = res; }

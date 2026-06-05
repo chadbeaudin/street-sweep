@@ -22,9 +22,11 @@ interface ElevationData {
 interface ElevationProfileProps {
     data: ElevationData[];
     onHover: (point: { lat: number; lon: number } | null) => void;
+    totalDistance?: string | null;
+    totalElevationGain?: number;
 }
 
-const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover }) => {
+const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover, totalDistance, totalElevationGain }) => {
     const yDomain = useMemo(() => {
         if (!data || data.length === 0) return [0, 100];
         const elevations = data.map(d => d.elevation);
@@ -39,9 +41,26 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover 
     if (!data || data.length === 0) return null;
 
     return (
-        <div className="w-full h-48 bg-white border-t border-gray-200 p-4 shadow-inner relative z-10">
+        <div className="w-full h-48 bg-white border-t border-gray-200 shadow-inner relative z-10 flex">
+            {(totalDistance || totalElevationGain !== undefined) && (
+                <div className="flex flex-col items-center justify-center gap-6 px-5 py-4 border-r border-gray-200 shrink-0 w-36">
+                    {totalDistance && (
+                        <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-2xl font-bold text-indigo-700 leading-none">{totalDistance}</span>
+                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">miles</span>
+                        </div>
+                    )}
+                    {totalElevationGain !== undefined && (
+                        <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-2xl font-bold text-emerald-600 leading-none">{totalElevationGain}</span>
+                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">ft gain</span>
+                        </div>
+                    )}
+                </div>
+            )}
+            <div className="flex-1 flex flex-col p-4 min-w-0">
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Elevation Profile (feet)</h3>
-            <div className="w-full h-32">
+            <div className="flex-1">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
                         data={data}
@@ -94,6 +113,7 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover 
                         />
                     </AreaChart>
                 </ResponsiveContainer>
+            </div>
             </div>
         </div>
     );

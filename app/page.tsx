@@ -1047,16 +1047,6 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     </div>
                     {route && (
                         <>
-                            <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-md text-sm font-medium text-indigo-700 flex items-center gap-2">
-                                <span className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse"></span>
-                                {totalDistance} mi
-                            </div>
-                            <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-md text-sm font-medium text-emerald-700 flex items-center gap-2" title="Total elevation gain">
-                                <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                                </svg>
-                                {totalElevationGain} ft
-                            </div>
                             <button
                                 onClick={downloadGPX}
                                 className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400"
@@ -1290,6 +1280,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     <ElevationProfile
                         data={elevationData}
                         onHover={setHoveredPoint}
+                        totalDistance={totalDistance}
+                        totalElevationGain={totalElevationGain}
                     />
                 )}
 

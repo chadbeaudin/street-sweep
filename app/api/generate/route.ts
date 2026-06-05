@@ -67,6 +67,7 @@ export async function POST(request: Request) {
 
         if (osmData.elements.length === 0) {
             console.warn(`${ts()} OSM data is empty for bbox:`, bufferedBbox);
+            return NextResponse.json({ error: 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.' }, { status: 503 });
         }
 
         const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads, routingOptions);

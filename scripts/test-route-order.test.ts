@@ -19,12 +19,12 @@ describe('Route Ordering', () => {
                 { type: 'node', id: 8, lat: 2, lon: 1 },
                 { type: 'node', id: 9, lat: 2, lon: 2 },
                 
-                { type: 'way', id: 101, nodes: [1, 2, 3] },
-                { type: 'way', id: 102, nodes: [4, 5, 6] },
-                { type: 'way', id: 103, nodes: [7, 8, 9] },
-                { type: 'way', id: 104, nodes: [1, 4, 7] },
-                { type: 'way', id: 105, nodes: [2, 5, 8] },
-                { type: 'way', id: 106, nodes: [3, 6, 9] },
+                { type: 'way', id: 101, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                { type: 'way', id: 102, nodes: [4, 5, 6], tags: { highway: 'residential' } },
+                { type: 'way', id: 103, nodes: [7, 8, 9], tags: { highway: 'residential' } },
+                { type: 'way', id: 104, nodes: [1, 4, 7], tags: { highway: 'residential' } },
+                { type: 'way', id: 105, nodes: [2, 5, 8], tags: { highway: 'residential' } },
+                { type: 'way', id: 106, nodes: [3, 6, 9], tags: { highway: 'residential' } },
             ]
         };
 
