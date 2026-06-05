@@ -20,7 +20,9 @@ describe('fetchOSMData robustness', () => {
         jest.restoreAllMocks();
     });
 
-    const mockBBox = { south: 40.0, west: -105.0, north: 40.1, east: -104.9 };
+    // Small bbox snapping to a single 0.05×0.05 tile (0.0025 sq deg) so 2-element
+    // mock responses aren't rejected by the sparse-data guard (threshold > 0.003 sq deg).
+    const mockBBox = { south: 40.01, west: -105.04, north: 40.04, east: -105.01 };
 
     it('returns empty fallback when ALL mirrors fail with 504 Gateway Timeout', async () => {
         (global.fetch as jest.Mock).mockResolvedValue({

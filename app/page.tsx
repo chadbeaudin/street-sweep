@@ -249,6 +249,11 @@ export default function Home() {
                 // honours all intermediate post-area waypoints, not just the final one.
                 exitRoute: (preAreaPointCountRef.current !== null && manualRouteRef.current.length > preAreaPointCountRef.current)
                     ? manualRouteRef.current.slice(preAreaPointCountRef.current).flat()
+                    : [],
+                // Road segments between pre-area waypoints (A→B, B→C, ...) so the entry bridge
+                // walks through intermediate approach points before bridging to the area.
+                approachRoute: (preAreaPointCountRef.current !== null && preAreaPointCountRef.current > 1)
+                    ? manualRouteRef.current.slice(0, preAreaPointCountRef.current - 1).flat()
                     : []
             };
 

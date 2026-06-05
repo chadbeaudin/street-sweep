@@ -100,7 +100,7 @@ export class StreetGraph {
         const newGraph = new StreetGraph();
         newGraph.buildFromOSM(data, riddenRoads, options);
         // Don't cache empty graphs — OSM data may have been transiently unavailable
-        if (newGraph.graph.getNodeCount() > 0) {
+        if (newGraph.graph.getNodesCount() > 0) {
             GRAPH_CACHE.set(key, { graph: newGraph, timestamp: now });
         }
         return newGraph;
@@ -279,9 +279,13 @@ export class StreetGraph {
                 const bucket = this.riddenIndex.get(`${cLat}:${cLon}`);
                 if (!bucket) continue;
                 for (const point of bucket) {
-                    // Project point onto segment, clamp to [0,1], measure distance
+                    // Project point onto segment, clamp to [0,1], measure distance.
+                    // Skip endpoint hits (t < 0.05 or t > 0.95): a GPS point at an
+                    // intersection is shared by all roads meeting there, so it cannot
+                    // prove the rider actually traveled *this* segment.
                     const pX = point[1] * cosLat, pY = point[0];
                     const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((pX - uX) * dx + (pY - uY) * dy) / lenSq));
+                    if (t < 0.05 || t > 0.95) continue;
                     const closestLat = uY + t * dy;
                     const closestLon = (uX + t * dx) / cosLat;
                     if (this.haversine(point[0], point[1], closestLat, closestLon) < thresholdMeters) return true;
@@ -302,26 +306,6 @@ export class StreetGraph {
             Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
         const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         return R * c;
-    }
-
-    public getOddDegreeNodes(): string[] {
-        const oddNodes: string[] = [];
-        this.graph.forEachNode((node: any) => {
-            let degree = 0;
-            if (node.links) {
-                if (typeof node.links.size === 'number') {
-                    degree = node.links.size;
-                } else if (typeof node.links.length === 'number') {
-                    degree = node.links.length;
-                } else {
-                    node.links.forEach(() => degree++);
-                }
-            }
-            if ((degree / 2) % 2 !== 0) {
-                oddNodes.push(node.id.toString());
-            }
-        });
-        return oddNodes;
     }
 
     private calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -588,6 +572,70 @@ export class StreetGraph {
     ): { id: string, idNext: string, weight: number }[] {
         const result = this.findClosestTarget(fromId, new Set([toId]), allowedLinks, penalizedLinks);
         return result ? result.path : [];
+    }
+
+    /**
+     * Multi-source Dijkstra: seeds the queue with every node in `fromIds` at distance 0
+     * and returns the shortest path to whichever node in `targetIds` is reached first.
+     * Used for bridging disconnected components in one pass instead of N single-source runs.
+     */
+    public findClosestTargetMultiSource(
+        fromIds: Set<string>,
+        targetIds: Set<string>,
+        allowedLinks?: Set<string>,
+        penalizedLinks?: Map<string, number>
+    ): { path: { id: string, idNext: string, weight: number }[], sourceId: string, targetId: string } | null {
+        const distances = new Map<string, number>();
+        const previous = new Map<string, { id: string, weight: number }>();
+        const sourceOf = new Map<string, string>();
+        const queue = new MinHeap<{ id: string; weight: number }>();
+
+        for (const src of fromIds) {
+            queue.push({ id: src, weight: 0 }, 0);
+            distances.set(src, 0);
+            sourceOf.set(src, src);
+        }
+
+        while (queue.size() > 0) {
+            const { id: u, weight: distU } = queue.pop()!;
+
+            const known = distances.get(u);
+            if (known !== undefined && known < distU) continue;
+
+            // First popped target outside the source set is the shortest bridge.
+            if (targetIds.has(u) && !fromIds.has(u)) {
+                const sourceId = sourceOf.get(u)!;
+                const p: { id: string, idNext: string, weight: number }[] = [];
+                let curr = u;
+                while (curr !== sourceId) {
+                    const prev = previous.get(curr)!;
+                    p.unshift({ id: prev.id, idNext: curr, weight: prev.weight });
+                    curr = prev.id;
+                }
+                return { path: p, sourceId, targetId: u };
+            }
+
+            const node = this.graph.getNode(u);
+            node?.links?.forEach((link: any) => {
+                if (allowedLinks && !allowedLinks.has(link.id)) return;
+                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+
+                let weight = link.data.weight;
+                if (penalizedLinks && penalizedLinks.has(link.id)) {
+                    weight *= penalizedLinks.get(link.id)!;
+                }
+                const alt = distU + weight;
+
+                if (!distances.has(v) || alt < distances.get(v)!) {
+                    distances.set(v, alt);
+                    previous.set(v, { id: u, weight });
+                    sourceOf.set(v, sourceOf.get(u)!);
+                    queue.push({ id: v, weight: alt }, alt);
+                }
+            });
+        }
+
+        return null;
     }
 
     /** Returns a penalty map (10×) for all ridden edges, for use when bridging disconnected components. */
@@ -877,7 +925,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][]): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -886,10 +934,9 @@ export class StreetGraph {
         // bridge edges radiating from the junction across the entire area.
         // Then rotate the circuit so it begins at the point closest to the junction.
         if (manualRoute && manualRoute.length > 1 && selectionBoxes && selectionBoxes.length > 0) {
-            // Mixed mode: ignore the manualRoute path (which may detour around the area due to
-            // road topology) and instead bridge directly from startPoint → area → endPoint.
-            // This avoids detours where the road-following path dips away from the area before
-            // entering it, which made the route appear to "visit" the exit destination first.
+            // Mixed mode: walk pre-area waypoints (approachRoute) → area sweep → walk post-area
+            // waypoints (exitRoute). The full manualRoute is not used as-is because its final
+            // approach→post-area segment would otherwise route around the area instead of through it.
             const approachStart = startPoint ?? { lat: manualRoute[0][1], lon: manualRoute[0][0] };
 
             // Find the corner of the selection area farthest from approachStart.
@@ -907,15 +954,36 @@ export class StreetGraph {
                 }
             }
 
-            const areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes);
+            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes);
+            if (areaPath.length === 0) {
+                // All area streets already ridden — re-solve including ridden roads so the
+                // route still physically connects through the area rather than cutting off.
+                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true);
+            }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
-            // Entry bridge: approachStart → area path start (road-following)
-            const startNodeId = this.findClosestNode(approachStart.lat, approachStart.lon);
+            // Walk pre-computed approach segments through any intermediate pre-area waypoints,
+            // then bridge from the last approach point to the area entry.
+            // When no approachRoute is supplied, bridge directly from approachStart.
+            const hasApproachRoute = approachRoute && approachRoute.length > 0;
+            const entryWalk: { lat: number; lon: number }[] = [];
+            let bridgeSource = approachStart;
+            if (hasApproachRoute) {
+                for (const p of approachRoute!) {
+                    entryWalk.push({ lat: p[1], lon: p[0] });
+                }
+                const last = approachRoute![approachRoute!.length - 1];
+                bridgeSource = { lat: last[1], lon: last[0] };
+            }
+
+            // Prefer fresh streets over already-ridden ones when bridging into/out of the area.
+            const bridgePenalty = this.buildRiddenPenaltyMap();
+
+            const startNodeId = this.findClosestNode(bridgeSource.lat, bridgeSource.lon);
             const areaEntryNodeId = this.findClosestNode(areaPath[0].lat, areaPath[0].lon);
             const entryBridge: { lat: number; lon: number }[] = [];
             if (startNodeId && areaEntryNodeId && startNodeId !== areaEntryNodeId) {
-                const bridgePath = this.findPath(startNodeId, areaEntryNodeId);
+                const bridgePath = this.findPath(startNodeId, areaEntryNodeId, undefined, bridgePenalty);
                 if (bridgePath.length > 0) {
                     const firstNode = this.graph.getNode(bridgePath[0].id);
                     if (firstNode) entryBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
@@ -940,7 +1008,7 @@ export class StreetGraph {
                 const areaEndNodeId = this.findClosestNode(areaPath[areaPath.length - 1].lat, areaPath[areaPath.length - 1].lon);
                 const exitStartNodeId = this.findClosestNode(bridgeTarget.lat, bridgeTarget.lon);
                 if (areaEndNodeId && exitStartNodeId && areaEndNodeId !== exitStartNodeId) {
-                    const bridgePath = this.findPath(areaEndNodeId, exitStartNodeId);
+                    const bridgePath = this.findPath(areaEndNodeId, exitStartNodeId, undefined, bridgePenalty);
                     if (bridgePath.length > 0) {
                         const firstNode = this.graph.getNode(bridgePath[0].id);
                         if (firstNode) exitBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
@@ -959,7 +1027,7 @@ export class StreetGraph {
                 }
             }
 
-            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryBridge, ...areaPath, ...exitBridge];
+            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryWalk, ...entryBridge, ...areaPath, ...exitBridge];
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
@@ -1038,7 +1106,7 @@ export class StreetGraph {
 
             this.graph.forEachLink((link: any) => {
                 if (link.data.isAvoided) return;
-                if (link.data.isRidden) return;
+                if (link.data.isRidden && !includeRidden) return;
 
                 const u = this.graph.getNode(link.fromId);
                 const v = this.graph.getNode(link.toId);
@@ -1051,7 +1119,7 @@ export class StreetGraph {
                             u.data.lon <= box.east + BOX_BUFFER && u.data.lon >= box.west - BOX_BUFFER;
                         const vIn = v.data.lat <= box.north + BOX_BUFFER && v.data.lat >= box.south - BOX_BUFFER &&
                             v.data.lon <= box.east + BOX_BUFFER && v.data.lon >= box.west - BOX_BUFFER;
-                        return uIn && vIn; // both endpoints must be inside — prevents boundary-spanning edges (e.g. park paths) from becoming required
+                        return uIn || vIn;
                     });
 
                     if (isRequired) {
@@ -1124,18 +1192,10 @@ export class StreetGraph {
 
         for (let i = 1; i < components.length; i++) {
             const island = components[i];
-            let bestResult: any = null;
-            let minW = Infinity;
-            // Increase search limit for bridging components to 1000 (effectively infinite for local chunks)
-            const searchLimit = Math.min(island.length, 1000);
-            for (let j = 0; j < searchLimit; j++) {
-                // IMPORTANT: When connecting islands, we allow using ANY link in the graph (not just allowedLinks)
-                const res = this.findClosestTarget(island[j], reachableNodes, undefined, riddenPenalty);
-                if (res) {
-                    const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
-                    if (w < minW) { minW = w; bestResult = res; }
-                }
-            }
+            // Single multi-source Dijkstra from every island node finds the closest
+            // (island, reachable) pair in one pass. When connecting islands we allow
+            // using ANY link in the graph (no allowedLinks restriction).
+            const bestResult = this.findClosestTargetMultiSource(new Set(island), reachableNodes, undefined, riddenPenalty);
             if (bestResult) {
                 island.forEach(n => reachableNodes.add(n));
                 bestResult.path.forEach((p: any) => {
@@ -1321,16 +1381,7 @@ export class StreetGraph {
                         const mainComp = new Set(repairComponents[0]);
                         for (let i = 1; i < repairComponents.length; i++) {
                             const island = repairComponents[i];
-                            let bestRepair: any = null;
-                            let minW = Infinity;
-                            const limit = Math.min(island.length, 1000);
-                            for (let j = 0; j < limit; j++) {
-                                const res = this.findClosestTarget(island[j], mainComp, undefined, riddenPenalty);
-                                if (res) {
-                                    const w = res.path.reduce((sum: number, p: any) => sum + p.weight, 0);
-                                    if (w < minW) { minW = w; bestRepair = res; }
-                                }
-                            }
+                            const bestRepair = this.findClosestTargetMultiSource(new Set(island), mainComp, undefined, riddenPenalty);
 
                             if (bestRepair) {
                                 island.forEach(n => mainComp.add(n));

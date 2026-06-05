@@ -201,7 +201,7 @@ async function getDbCached(key: string, minElements = 0): Promise<OverpassRespon
     // invalidate so the next request re-fetches fresh data.
     if (minElements > 0 && data.elements.length < minElements) {
       const ageMs = Date.now() - row.fetchedAt.getTime();
-      if (ageMs > 3600000) { // older than 1 hour → not a "just confirmed sparse" entry
+      if (ageMs > 300000) { // older than 5 min → not a "just confirmed sparse" entry
         console.warn(`${ts()} DB cache for ${key} is stale+sparse (${data.elements.length} < ${minElements} elems) — invalidating`);
         await prisma.osmCache.delete({ where: { key } }).catch(() => {});
         return null;
@@ -233,7 +233,25 @@ export function resetCircuitBreakers() {
   MIRROR_FAILURES.clear();
 }
 
-export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse> {
+// Tile size in degrees. ~5.5km at the equator, ~3.7km at latitude 47.
+// Any requested bbox is snapped UP to align with this grid, so panning within
+// the same tile-set always hits the cache.
+const TILE_DEG = 0.05;
+
+export function snapBboxToTileGrid(bbox: BoundingBox): BoundingBox {
+  const snap = (n: number, dir: 'floor' | 'ceil') => Math[dir](n / TILE_DEG) * TILE_DEG;
+  return {
+    south: snap(bbox.south, 'floor'),
+    west:  snap(bbox.west,  'floor'),
+    north: snap(bbox.north, 'ceil'),
+    east:  snap(bbox.east,  'ceil'),
+  };
+}
+
+export async function fetchOSMData(requestedBbox: BoundingBox): Promise<OverpassResponse> {
+  // Snap request up to the tile grid so adjacent/overlapping requests share cache entries.
+  const bbox = snapBboxToTileGrid(requestedBbox);
+
   // Guard against excessively large bounding boxes that crash mirrors
   const latSpan = Math.abs(bbox.north - bbox.south);
   const lonSpan = Math.abs(bbox.east - bbox.west);
@@ -247,24 +265,29 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
     };
   }
 
-  // Round to 3 decimal places (~110m) for much better cache hit rate
-  const round = (n: number) => Math.round(n * 1000) / 1000;
-  // v2: removed footway and path to avoid parallel sidewalk inflation
-  const cacheKey = `v2_${round(bbox.south)},${round(bbox.west)},${round(bbox.north)},${round(bbox.east)}`;
+  // Tile coords are already multiples of TILE_DEG; format to fixed precision for a stable key.
+  const k = (n: number) => n.toFixed(3);
+  // v3: tile-aligned cache keys (was: 3-decimal rounded). Old v2 entries are now ignored.
+  const cacheKey = `v3_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
   const now = Date.now();
 
   // For medium/large areas, reject cached responses that are clearly incomplete.
   // 500 is conservative: even sparse residential grids return thousands of elements.
   // Entries fetched within the last hour are trusted (they may be legitimately sparse).
   const bboxArea = latSpan * lonSpan;
-  const minElements = bboxArea > 0.001 ? 500 : 0;
+  // Density-based floor: ~3M elements per sq deg is well below the ~50M we see from
+  // healthy urban Overpass responses, but high enough to flag partial/corrupt fetches.
+  // Cap at 5000 so large bboxes with legitimately sparse data (rural roads API) still pass.
+  // Minimum tile area is TILE_DEG² = 0.0025 sq deg; threshold of 0.003 excludes single-tile
+  // bboxes (common in tests/small selections) while still catching the problem tiles (≥ 0.005).
+  const minElements = bboxArea > 0.003 ? Math.min(5000, Math.round(bboxArea * 3_000_000)) : 0;
 
   // 1. Check in-memory cache
   const cached = OSM_CACHE.get(cacheKey);
   if (cached && (now - cached.timestamp < CACHE_TTL)) {
     if (cached.data.elements.length > 0) {
       const isSparse = minElements > 0 && cached.data.elements.length < minElements;
-      const isStale = now - cached.timestamp > 3600000; // older than 1 hour in memory
+      const isStale = now - cached.timestamp > 300000; // older than 5 min in memory
       if (isSparse && isStale) {
         console.warn(`${ts()} In-memory cache for ${cacheKey} is stale+sparse (${cached.data.elements.length} elems) — invalidating`);
         OSM_CACHE.delete(cacheKey);
@@ -332,10 +355,11 @@ export async function fetchOSMData(bbox: BoundingBox): Promise<OverpassResponse>
             if (response.ok) {
               const data = (await response.json()) as OverpassResponse;
 
-              // HEURISTIC: If we get 0 elements from a major mirror for a road query,
-              // it's VERY likely the mirror is returning incomplete data.
-              if (data.elements.length === 0) {
-                console.warn(`${ts()} Mirror ${endpoint} returned 0 elements. Trying next mirror...`);
+              // Reject responses that are clearly incomplete for the requested area.
+              // A healthy urban tile returns ~50M elements/sq deg; our floor is ~1M.
+              const sparseFloor = Math.min(2000, Math.round(bboxArea * 1_000_000));
+              if (data.elements.length === 0 || (bboxArea > 0.003 && data.elements.length < sparseFloor)) {
+                console.warn(`${ts()} Mirror ${endpoint} returned ${data.elements.length} elements (floor ${sparseFloor}). Trying next mirror...`);
                 recordFailure(endpoint);
                 continue;
               }

@@ -7,7 +7,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, routingOptions, preAreaPointCount, exitRoute } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = await request.json();
 
         // Backward compatibility: Convert single selectionBox to array if present
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
         const endPoint = hasPostAreaPoints
             ? selectedPoints[selectedPoints.length - 1]
             : (selectionBoxes?.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes, exitRoute);
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes, exitRoute, approachRoute);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {

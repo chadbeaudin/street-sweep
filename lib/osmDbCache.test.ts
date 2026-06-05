@@ -16,7 +16,9 @@ import { fetchOSMData, resetCircuitBreakers, clearOSMCache } from './overpass';
 const mockFindUnique = prisma.osmCache.findUnique as jest.Mock;
 const mockUpsert = prisma.osmCache.upsert as jest.Mock;
 
-const mockBBox = { south: 47.6, west: -117.5, north: 47.7, east: -117.3 };
+// Small bbox that snaps to a single 0.05×0.05 tile (0.0025 sq deg) — below the
+// sparse-check threshold so 2-element mock data isn't rejected as incomplete.
+const mockBBox = { south: 47.61, west: -117.49, north: 47.64, east: -117.46 };
 
 const mockOsmData = {
     version: 0.6,
@@ -43,7 +45,7 @@ describe('OSM DB cache', () => {
 
     it('returns DB-cached data without hitting the network', async () => {
         mockFindUnique.mockResolvedValue({
-            key: 'v2_47.6,-117.5,47.7,-117.3',
+            key: 'v3_47.600,-117.500,47.700,-117.300',
             data: mockOsmData,
             fetchedAt: new Date()
         });
@@ -70,7 +72,7 @@ describe('OSM DB cache', () => {
     it('falls through to network when DB cache is expired', async () => {
         const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
         mockFindUnique.mockResolvedValue({
-            key: 'v2_47.6,-117.5,47.7,-117.3',
+            key: 'v3_47.600,-117.500,47.700,-117.300',
             data: mockOsmData,
             fetchedAt: thirtyOneDaysAgo
         });
@@ -97,14 +99,14 @@ describe('OSM DB cache', () => {
         // Allow fire-and-forget upsert to resolve
         await new Promise(resolve => setTimeout(resolve, 10));
         expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
-            where: { key: expect.stringContaining('v2_') },
+            where: { key: expect.stringContaining('v3_') },
             create: expect.objectContaining({ data: mockOsmData })
         }));
     });
 
     it('warms memory cache from DB so second call skips both DB and network', async () => {
         mockFindUnique.mockResolvedValueOnce({
-            key: 'v2_47.6,-117.5,47.7,-117.3',
+            key: 'v3_47.600,-117.500,47.700,-117.300',
             data: mockOsmData,
             fetchedAt: new Date()
         });
