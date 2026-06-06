@@ -26,6 +26,7 @@ export interface RoutingOptions {
     avoidGravel?: boolean;
     avoidHighways?: boolean;
     avoidTrails?: boolean;
+    riddenPenalty?: number;
 }
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -33,10 +34,8 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const GRAPH_CACHE = new Map<string, { graph: StreetGraph; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
-// How much more expensive a previously-ridden road is vs a virgin one.
-// Used in T-join matching (odd-node pairing) and bridge routing so the solver
-// strongly prefers unridden streets and only uses ridden ones when unavoidable.
-const RIDDEN_PENALTY = 50;
+// Default penalty for previously-ridden roads. Can be overridden per-request.
+const DEFAULT_RIDDEN_PENALTY = 15;
 
 // Spatial index cell size in degrees (~55m at equator). Small enough to
 // keep cell buckets tiny, large enough that typical clicks find candidates
@@ -455,7 +454,7 @@ export class StreetGraph {
         }
     }
 
-    public findAllTargets(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>): Map<string, { path: { id: string, idNext: string, weight: number }[], weight: number }> {
+    public findAllTargets(fromId: string, targetIds: Set<string>, allowedLinks?: Set<string>, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): Map<string, { path: { id: string, idNext: string, weight: number }[], weight: number }> {
         const distances = new Map<string, number>();
         const previous = new Map<string, { id: string, weight: number }>();
         const queue = new MinHeap<{ id: string; weight: number }>();
@@ -491,7 +490,7 @@ export class StreetGraph {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
                 const v = (link.fromId === u ? link.toId : link.fromId).toString();
                 // Penalise ridden roads heavily so T-join matching prefers unridden bridges
-                const weight = link.data.weight * (link.data.isRidden ? RIDDEN_PENALTY : 1);
+                const weight = link.data.weight * (link.data.isRidden ? riddenPenalty : 1);
                 const alt = distU + weight;
 
                 if (!distances.has(v) || alt < distances.get(v)!) {
@@ -644,10 +643,10 @@ export class StreetGraph {
     }
 
     /** Returns a penalty map (10×) for all ridden edges, for use when bridging disconnected components. */
-    private buildRiddenPenaltyMap(): Map<string, number> {
+    private buildRiddenPenaltyMap(riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): Map<string, number> {
         const penalties = new Map<string, number>();
         this.graph.forEachLink((link: any) => {
-            if (link.data.isRidden) penalties.set(link.id, RIDDEN_PENALTY);
+            if (link.data.isRidden) penalties.set(link.id, riddenPenalty);
         });
         return penalties;
     }
@@ -930,7 +929,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -959,11 +958,11 @@ export class StreetGraph {
                 }
             }
 
-            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes);
+            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty);
             if (areaPath.length === 0) {
                 // All area streets already ridden — re-solve including ridden roads so the
                 // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true);
+                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty);
             }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
@@ -982,7 +981,7 @@ export class StreetGraph {
             }
 
             // Prefer fresh streets over already-ridden ones when bridging into/out of the area.
-            const bridgePenalty = this.buildRiddenPenaltyMap();
+            const bridgePenalty = this.buildRiddenPenaltyMap(riddenPenalty);
 
             const startNodeId = this.findClosestNode(bridgeSource.lat, bridgeSource.lon);
             const areaEntryNodeId = this.findClosestNode(areaPath[0].lat, areaPath[0].lon);
@@ -1193,14 +1192,14 @@ export class StreetGraph {
 
         const edgesInFinalGraph: { u: string, v: string, data: EdgeData }[] = [];
         const reachableNodes = new Set(components[0]);
-        const riddenPenalty = this.buildRiddenPenaltyMap();
+        const riddenPenaltyMap = this.buildRiddenPenaltyMap(riddenPenalty);
 
         for (let i = 1; i < components.length; i++) {
             const island = components[i];
             // Single multi-source Dijkstra from every island node finds the closest
             // (island, reachable) pair in one pass. When connecting islands we allow
             // using ANY link in the graph (no allowedLinks restriction).
-            const bestResult = this.findClosestTargetMultiSource(new Set(island), reachableNodes, undefined, riddenPenalty);
+            const bestResult = this.findClosestTargetMultiSource(new Set(island), reachableNodes, undefined, riddenPenaltyMap);
             if (bestResult) {
                 island.forEach(n => reachableNodes.add(n));
                 bestResult.path.forEach((p: any) => {
@@ -1247,7 +1246,7 @@ export class StreetGraph {
         
         // 1. Compute APSP for odd nodes
         for (const u of oddArray) {
-            const res = this.findAllTargets(u, remainingOdd);
+            const res = this.findAllTargets(u, remainingOdd, undefined, riddenPenalty);
             distMatrix.set(u, res);
         }
 
@@ -1286,7 +1285,7 @@ export class StreetGraph {
         for (const u of Array.from(unmatched)) {
              unmatched.delete(u);
              console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge.`);
-             const forced = this.findClosestTarget(u, reachableNodes, undefined, riddenPenalty);
+             const forced = this.findClosestTarget(u, reachableNodes, undefined, riddenPenaltyMap);
              if (forced) {
                  forced.path.forEach((p: any) => {
                      const link = this.graph.getLink(p.id, p.idNext);
@@ -1386,7 +1385,7 @@ export class StreetGraph {
                         const mainComp = new Set(repairComponents[0]);
                         for (let i = 1; i < repairComponents.length; i++) {
                             const island = repairComponents[i];
-                            const bestRepair = this.findClosestTargetMultiSource(new Set(island), mainComp, undefined, riddenPenalty);
+                            const bestRepair = this.findClosestTargetMultiSource(new Set(island), mainComp, undefined, riddenPenaltyMap);
 
                             if (bestRepair) {
                                 island.forEach(n => mainComp.add(n));

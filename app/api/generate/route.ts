@@ -82,7 +82,8 @@ export async function POST(request: Request) {
         const endPoint = hasPostAreaPoints
             ? selectedPoints[selectedPoints.length - 1]
             : (selectionBoxes?.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes, exitRoute, approachRoute);
+        const riddenPenalty = routingOptions?.riddenPenalty || 15; // Default to 15 if not specified
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes, exitRoute, approachRoute, false, riddenPenalty);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {

@@ -37,7 +37,8 @@ export default function Home() {
     const [routingOptions, setRoutingOptions] = useState({
         avoidGravel: false,
         avoidHighways: false,
-        avoidTrails: false
+        avoidTrails: false,
+        riddenPenalty: 15
     });
     const [showOptions, setShowOptions] = useState(false);
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
@@ -1025,6 +1026,20 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                                 </div>
                                                 {routingOptions.avoidTrails && <Check className="w-4 h-4 text-green-600" />}
                                             </button>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Ridden Road Penalty: {routingOptions.riddenPenalty}x
+                                                </label>
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="100"
+                                                    value={routingOptions.riddenPenalty}
+                                                    onChange={(e) => setRoutingOptions({ ...routingOptions, riddenPenalty: parseInt(e.target.value) })}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-2">Higher values strongly prefer unridden roads (less backtracking)</p>
+                                            </div>
                                         </div>
                                     </div>
                                 </>
