@@ -378,6 +378,44 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { lat: route[route.length - 1][1], lon: route[route.length - 1][0] };
     }, [route, selectedPoints]);
 
+    // Deduplicate overlapping activity traces. Groups roads by their endpoints (±0.0005 degrees tolerance)
+    // and keeps only the most detailed version from each group to avoid rendering overlapping polylines.
+    const deduplicatedStravaRoads = React.useMemo(() => {
+        if (!stravaRoads || stravaRoads.length === 0) return [];
+
+        const TOLERANCE = 0.0005; // ~50m at equator
+        const groups: Map<string, number[][]> = new Map();
+
+        for (const road of stravaRoads) {
+            if (road.length < 2) continue;
+
+            const start = road[0];
+            const end = road[road.length - 1];
+
+            // Create a key based on rounded endpoints to group similar roads
+            // Check both forward and reverse directions
+            const key1 = `${Math.round(start[0] / TOLERANCE)},${Math.round(start[1] / TOLERANCE)}-${Math.round(end[0] / TOLERANCE)},${Math.round(end[1] / TOLERANCE)}`;
+            const key2 = `${Math.round(end[0] / TOLERANCE)},${Math.round(end[1] / TOLERANCE)}-${Math.round(start[0] / TOLERANCE)},${Math.round(start[1] / TOLERANCE)}`;
+
+            const key = key1 <= key2 ? key1 : key2;
+
+            const group = groups.get(key) || [];
+            if (!groups.has(key)) {
+                groups.set(key, group);
+            }
+            group.push(road);
+        }
+
+        // For each group, keep the road with the most detail (most points)
+        const deduplicated: [number, number][][] = [];
+        for (const group of groups.values()) {
+            const best = group.reduce((a, b) => a.length > b.length ? a : b);
+            deduplicated.push(best);
+        }
+
+        return deduplicated;
+    }, [stravaRoads]);
+
     // Fit map whenever the route first appears (e.g. after import)
     const prevRouteRef = React.useRef<typeof route>(null);
     React.useEffect(() => {
@@ -603,8 +641,8 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 )}
 
                 {/* Strava roads - visual background */}
-                {/* Visual styling: High opacity to look like solid coverage, not heatmap */}
-                {stravaRoads && stravaRoads.map((road, idx) => (
+                {/* Deduplicated to show one line per road, avoiding overlapping activity traces */}
+                {deduplicatedStravaRoads.map((road, idx) => (
                     <Polyline
                         key={`strava-${idx}`}
                         positions={road as [number, number][]}
