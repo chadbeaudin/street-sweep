@@ -98,8 +98,9 @@ export default function Home() {
         const handleKeyDown = (e: KeyboardEvent) => {
             const tag = (e.target as HTMLElement)?.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA' || e.metaKey || e.ctrlKey || e.altKey) return;
-            if (e.key === 'a') setIsSelectionMode(true);
-            if (e.key === 'p') setIsSelectionMode(false);
+            if (e.key === 'p') { setIsSelectionMode(false); setIsLassoMode(false); }
+            if (e.key === 'a') { setIsSelectionMode(true); setIsLassoMode(false); }
+            if (e.key === 'l') { setIsLassoMode(true); setIsSelectionMode(false); }
         };
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
@@ -243,6 +244,7 @@ export default function Home() {
                 riddenRoads: stravaRoadsRef.current,
                 selectedPoints: currentPoints,
                 selectionBoxes: selectionBoxesRef.current,
+                selectionPolygons: selectionPolygons,
                 routingOptions: routingOptionsRef.current,
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.

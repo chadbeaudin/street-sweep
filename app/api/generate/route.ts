@@ -7,10 +7,11 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, selectionPolygons: selectionPolygonsRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = await request.json();
 
         // Backward compatibility: Convert single selectionBox to array if present
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
+        const selectionPolygons = selectionPolygonsRaw || [];
 
         if (!bbox || !bbox.north || !bbox.south || !bbox.east || !bbox.west) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
@@ -54,6 +55,18 @@ export async function POST(request: Request) {
             });
         }
 
+        // Expand to include all selection polygons
+        if (selectionPolygons && selectionPolygons.length > 0) {
+            selectionPolygons.forEach((polygon: [number, number][]) => {
+                polygon.forEach(([lat, lon]) => {
+                    minLat = Math.min(minLat, lat);
+                    maxLat = Math.max(maxLat, lat);
+                    minLon = Math.min(minLon, lon);
+                    maxLon = Math.max(maxLon, lon);
+                });
+            });
+        }
+
         const bufferedBbox = {
             south: minLat - BUFFER,
             west: minLon - BUFFER,
@@ -74,16 +87,38 @@ export async function POST(request: Request) {
 
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
-        // In mixed mode (manualRoute + selectionBoxes), only pass endPoint when there are
+
+        // Combine selection boxes with polygon bounding boxes
+        const combinedSelections: Array<{ north: number; south: number; east: number; west: number }> = [...(selectionBoxes || [])];
+        if (selectionPolygons && selectionPolygons.length > 0) {
+            selectionPolygons.forEach((polygon: [number, number][]) => {
+                let minLat = polygon[0][0], maxLat = polygon[0][0];
+                let minLon = polygon[0][1], maxLon = polygon[0][1];
+                for (const [lat, lon] of polygon) {
+                    minLat = Math.min(minLat, lat);
+                    maxLat = Math.max(maxLat, lat);
+                    minLon = Math.min(minLon, lon);
+                    maxLon = Math.max(maxLon, lon);
+                }
+                combinedSelections.push({
+                    south: minLat,
+                    north: maxLat,
+                    west: minLon,
+                    east: maxLon
+                });
+            });
+        }
+
+        // In mixed mode (manualRoute + selections), only pass endPoint when there are
         // genuine post-area waypoints. Approach-only waypoints must not trigger an exit bridge.
-        const hasPostAreaPoints = selectionBoxes?.length > 0
+        const hasPostAreaPoints = combinedSelections.length > 0
             && preAreaPointCount != null
             && selectedPoints?.length > preAreaPointCount;
         const endPoint = hasPostAreaPoints
             ? selectedPoints[selectedPoints.length - 1]
-            : (selectionBoxes?.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
+            : (combinedSelections.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
         const riddenPenalty = routingOptions?.riddenPenalty || 15; // Default to 15 if not specified
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, selectionBoxes, exitRoute, approachRoute, false, riddenPenalty);
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {
