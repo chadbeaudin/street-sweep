@@ -726,13 +726,26 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 {drawingLasso && drawingLasso.length > 0 && (
                     <Polyline
                         positions={drawingLasso as [number, number][]}
-                        color="#3B82F6"
-                        weight={2}
-                        opacity={0.8}
+                        color="#EC4899"
+                        weight={3}
+                        opacity={0.9}
                         dashArray="5, 5"
                         interactive={false}
                     />
                 )}
+
+                {/* Completed lasso polygons */}
+                {selectionPolygons && selectionPolygons.map((polygon, idx) => (
+                    <Polyline
+                        key={`lasso-${idx}`}
+                        positions={polygon as [number, number][]}
+                        color="#EC4899"
+                        weight={2}
+                        opacity={0.7}
+                        dashArray="5, 5"
+                        interactive={false}
+                    />
+                ))}
 
                 {/* Strava roads - snapped to OSM geometry */}
                 {/* Activities snapped to road network, so overlapping rides follow exact same path */}
