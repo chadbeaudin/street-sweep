@@ -1150,8 +1150,12 @@ export class StreetGraph {
         // Add all roads that fall within any of the selection boxes to required edges
         if (selectionBoxes && selectionBoxes.length > 0) {
             console.log(`${ts()} Identifying roads in ${selectionBoxes.length} selection boxes...`);
+            const boxStartTime = Date.now();
+            let roadsChecked = 0;
+            let roadsIncluded = 0;
 
             this.graph.forEachLink((link: any) => {
+                roadsChecked++;
                 if (link.data.isAvoided) return;
                 if (link.data.isRidden && !includeRidden) return;
 
@@ -1170,6 +1174,7 @@ export class StreetGraph {
                     });
 
                     if (isRequired) {
+                        roadsIncluded++;
                         allowedLinks.add(link.id);
                         const key = edgeKey(link.fromId.toString(), link.toId.toString());
                         if (!requiredEdgeKeys.has(key)) {
@@ -1181,13 +1186,18 @@ export class StreetGraph {
                     }
                 }
             });
+            console.log(`${ts()} Box filtering: ${roadsIncluded}/${roadsChecked} roads selected (${Date.now() - boxStartTime}ms)`);
         }
 
         // Add all roads that fall within any of the selection polygons to required edges
         if (selectionPolygons && selectionPolygons.length > 0) {
             console.log(`${ts()} Identifying roads in ${selectionPolygons.length} selection polygons...`);
+            const polygonStartTime = Date.now();
+            let roadsChecked = 0;
+            let roadsIncluded = 0;
 
             this.graph.forEachLink((link: any) => {
+                roadsChecked++;
                 if (link.data.isAvoided) return;
                 if (link.data.isRidden && !includeRidden) return;
 
@@ -1201,6 +1211,7 @@ export class StreetGraph {
                     const isRequired = pointInAnyPolygon(uPoint, selectionPolygons) || pointInAnyPolygon(vPoint, selectionPolygons);
 
                     if (isRequired) {
+                        roadsIncluded++;
                         allowedLinks.add(link.id);
                         const key = edgeKey(link.fromId.toString(), link.toId.toString());
                         if (!requiredEdgeKeys.has(key)) {
@@ -1212,6 +1223,7 @@ export class StreetGraph {
                     }
                 }
             });
+            console.log(`${ts()} Polygon filtering: ${roadsIncluded}/${roadsChecked} roads selected (${Date.now() - polygonStartTime}ms)`);
         }
 
         if ((!manualRoute || manualRoute.length === 0) && (!selectionBoxes || selectionBoxes.length === 0) && (!selectionPolygons || selectionPolygons.length === 0)) {
