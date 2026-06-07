@@ -88,9 +88,7 @@ export async function POST(request: Request) {
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
 
-        // TODO: Implement proper polygon-based routing in graph.solveCPP
-        // For now, only use rectangular selection boxes for routing
-        // Polygons are stored but not used for routing until the graph supports point-in-polygon checks
+        // Use both rectangular boxes and polygons for routing
         const combinedSelections: Array<{ north: number; south: number; east: number; west: number }> = [...(selectionBoxes || [])];
 
         // In mixed mode (manualRoute + selections), only pass endPoint when there are
@@ -102,7 +100,7 @@ export async function POST(request: Request) {
             ? selectedPoints[selectedPoints.length - 1]
             : (combinedSelections.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
         const riddenPenalty = routingOptions?.riddenPenalty || 15; // Default to 15 if not specified
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty);
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty, selectionPolygons.length > 0 ? selectionPolygons : null);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {

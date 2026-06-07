@@ -42,6 +42,27 @@ const DEFAULT_RIDDEN_PENALTY = 15;
 // within a 1-2 ring expansion.
 const GRID_DEG = 0.0005;
 
+// Check if a point [lat, lon] is inside a polygon using ray casting algorithm
+function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+    const [x, y] = point;
+    let inside = false;
+
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const [xi, yi] = polygon[i];
+        const [xj, yj] = polygon[j];
+
+        const intersect = ((yi > y) !== (yj > y)) && (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+    }
+
+    return inside;
+}
+
+// Check if a point is inside any of the given polygons
+function pointInAnyPolygon(point: [number, number], polygons: [number, number][][]): boolean {
+    return polygons.some(polygon => pointInPolygon(point, polygon));
+}
+
 // Binary min-heap for Dijkstra. Replaces the previous `queue.sort()` on
 // every iteration (which was O(n log n) per dequeue, making pathfinding
 // O(V^2 log V) instead of O((V+E) log V)).
@@ -929,7 +950,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -958,11 +979,11 @@ export class StreetGraph {
                 }
             }
 
-            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty);
+            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons);
             if (areaPath.length === 0) {
                 // All area streets already ridden — re-solve including ridden roads so the
                 // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty);
+                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons);
             }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
@@ -1140,7 +1161,38 @@ export class StreetGraph {
             });
         }
 
-        if ((!manualRoute || manualRoute.length === 0) && (!selectionBoxes || selectionBoxes.length === 0)) {
+        // Add all roads that fall within any of the selection polygons to required edges
+        if (selectionPolygons && selectionPolygons.length > 0) {
+            console.log(`${ts()} Identifying roads in ${selectionPolygons.length} selection polygons...`);
+
+            this.graph.forEachLink((link: any) => {
+                if (link.data.isAvoided) return;
+                if (link.data.isRidden && !includeRidden) return;
+
+                const u = this.graph.getNode(link.fromId);
+                const v = this.graph.getNode(link.toId);
+
+                if (u && v) {
+                    // Check if either endpoint is inside any polygon
+                    const uPoint: [number, number] = [u.data.lat, u.data.lon];
+                    const vPoint: [number, number] = [v.data.lat, v.data.lon];
+                    const isRequired = pointInAnyPolygon(uPoint, selectionPolygons) || pointInAnyPolygon(vPoint, selectionPolygons);
+
+                    if (isRequired) {
+                        allowedLinks.add(link.id);
+                        const key = edgeKey(link.fromId.toString(), link.toId.toString());
+                        if (!requiredEdgeKeys.has(key)) {
+                            requiredEdgeKeys.add(key);
+                            requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
+                            unriddenNodes.add(link.fromId.toString());
+                            unriddenNodes.add(link.toId.toString());
+                        }
+                    }
+                }
+            });
+        }
+
+        if ((!manualRoute || manualRoute.length === 0) && (!selectionBoxes || selectionBoxes.length === 0) && (!selectionPolygons || selectionPolygons.length === 0)) {
             this.graph.forEachLink((link: any) => {
                 if (link.fromId < link.toId) {
                     if (!link.data.isRidden && !link.data.isAvoided) {
