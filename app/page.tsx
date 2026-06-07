@@ -323,8 +323,9 @@ export default function Home() {
     useEffect(() => {
         const hasManualRoute = selectedPoints.length >= 2;
         const hasSelectionBoxes = selectionBoxes.length > 0;
-        
-        if (!hasManualRoute && !hasSelectionBoxes) {
+        const hasSelectionPolygons = selectionPolygons.length > 0;
+
+        if (!hasManualRoute && !hasSelectionBoxes && !hasSelectionPolygons) {
             return;
         }
 
@@ -339,7 +340,7 @@ export default function Home() {
         }, 1500); // 1.5s debounce to allow for multiple rapid clicks/box draws
 
         return () => clearTimeout(timer);
-    }, [manualRoute, selectionBoxes, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
+    }, [manualRoute, selectionBoxes, selectionPolygons, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
 
     const downloadGPX = () => {
         if (!route) return;
