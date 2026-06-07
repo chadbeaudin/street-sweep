@@ -275,12 +275,10 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   // 500 is conservative: even sparse residential grids return thousands of elements.
   // Entries fetched within the last hour are trusted (they may be legitimately sparse).
   const bboxArea = latSpan * lonSpan;
-  // Density-based floor: ~3M elements per sq deg is well below the ~50M we see from
-  // healthy urban Overpass responses, but high enough to flag partial/corrupt fetches.
-  // Cap at 5000 so large bboxes with legitimately sparse data (rural roads API) still pass.
-  // Minimum tile area is TILE_DEG² = 0.0025 sq deg; threshold of 0.003 excludes single-tile
-  // bboxes (common in tests/small selections) while still catching the problem tiles (≥ 0.005).
-  const minElements = bboxArea > 0.003 ? Math.min(5000, Math.round(bboxArea * 3_000_000)) : 0;
+  // Density-based floor: ~1M elements per sq deg catches severely sparse/corrupt fetches
+  // while allowing legitimate small-area caches. Small selections (< 0.003 sq deg) are
+  // trusted entirely; larger areas need at least 2000 elements to be considered complete.
+  const minElements = bboxArea > 0.003 ? Math.min(2000, Math.round(bboxArea * 1_000_000)) : 0;
 
   // 1. Check in-memory cache
   const cached = OSM_CACHE.get(cacheKey);
