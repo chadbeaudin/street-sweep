@@ -42,11 +42,33 @@ const DEFAULT_RIDDEN_PENALTY = 15;
 // within a 1-2 ring expansion.
 const GRID_DEG = 0.0005;
 
+// Cache polygon bounding boxes for faster rejection
+const polygonBounds = new globalThis.Map<number, { minLat: number; maxLat: number; minLon: number; maxLon: number }>();
+
+function getPolygonBounds(polygon: [number, number][]): { minLat: number; maxLat: number; minLon: number; maxLon: number } {
+    let minLat = polygon[0][0], maxLat = polygon[0][0];
+    let minLon = polygon[0][1], maxLon = polygon[0][1];
+    for (const [lat, lon] of polygon) {
+        minLat = Math.min(minLat, lat);
+        maxLat = Math.max(maxLat, lat);
+        minLon = Math.min(minLon, lon);
+        maxLon = Math.max(maxLon, lon);
+    }
+    return { minLat, maxLat, minLon, maxLon };
+}
+
 // Check if a point [lat, lon] is inside a polygon using ray casting algorithm
 function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
     const [x, y] = point;
-    let inside = false;
 
+    // Quick bounding box check first (much faster than ray casting)
+    const bounds = getPolygonBounds(polygon);
+    if (x < bounds.minLat || x > bounds.maxLat || y < bounds.minLon || y > bounds.maxLon) {
+        return false;
+    }
+
+    // Ray casting algorithm for actual point-in-polygon test
+    let inside = false;
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
         const [xi, yi] = polygon[i];
         const [xj, yj] = polygon[j];
