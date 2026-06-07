@@ -69,6 +69,7 @@ export default function Home() {
     const manualRouteRef = useRef<[number, number][][]>([]);
     const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[], preAreaPointCount: number | null }[]>([]);
     const selectionBoxesRef = useRef<{ north: number; south: number; east: number; west: number }[]>([]);
+    const selectionPolygonsRef = useRef<[number, number][][]>([]);
     const preAreaPointCountRef = useRef<number | null>(null);
     const [preAreaPointCount, setPreAreaPointCount] = useState<number | null>(null);
     const historyIndexRef = useRef(-1);
@@ -89,6 +90,9 @@ export default function Home() {
         selectionBoxesRef.current = selectionBoxes;
     }, [selectionBoxes]);
 
+    useEffect(() => {
+        selectionPolygonsRef.current = selectionPolygons;
+    }, [selectionPolygons]);
 
     useEffect(() => {
         routingOptionsRef.current = routingOptions;
@@ -244,7 +248,7 @@ export default function Home() {
                 riddenRoads: stravaRoadsRef.current,
                 selectedPoints: currentPoints,
                 selectionBoxes: selectionBoxesRef.current,
-                selectionPolygons: selectionPolygons,
+                selectionPolygons: selectionPolygonsRef.current,
                 routingOptions: routingOptionsRef.current,
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
