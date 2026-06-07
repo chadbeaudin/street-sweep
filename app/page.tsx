@@ -1304,6 +1304,17 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             setSelectionBoxes([]);
                         }
                     }}
+                    onSelectionPolygonChange={(polygon: [number, number][] | null) => {
+                        if (polygon) {
+                            const newPolygons = [...selectionPolygons, polygon];
+                            setSelectionPolygons(newPolygons);
+                            // Lock in how many approach points existed when the first polygon was drawn
+                            if (preAreaPointCountRef.current === null) {
+                                preAreaPointCountRef.current = pointsRef.current.length;
+                                setPreAreaPointCount(pointsRef.current.length);
+                            }
+                        }
+                    }}
                     onSelectionModeChange={setIsSelectionMode}
                     isEraserMode={isEraserMode}
                     onRouteUpdate={setRoute}

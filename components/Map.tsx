@@ -359,10 +359,12 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, selectionBoxes, onSelectionChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
+    const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
     const selectionStartRef = React.useRef<L.Point | null>(null);
+    const isDrawingLassoRef = React.useRef(false);
 
     const areaEndPoint = React.useMemo(() => {
         if (!route || route.length === 0 || !selectionBoxes || selectionBoxes.length === 0) return null;
@@ -515,10 +517,60 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
     }, [isSelectionMode, onSelectionModeChange]);
 
+    const handleLassoMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (!isLassoMode || !mapRef.current) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pos = L.point(e.clientX - rect.left, e.clientY - rect.top);
+        const latlng = mapRef.current.containerPointToLatLng(pos);
+        isDrawingLassoRef.current = true;
+        setDrawingLasso([[latlng.lat, latlng.lng]]);
+        mapRef.current.dragging.disable();
+    }, [isLassoMode]);
+
+    const handleLassoMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+        if (!isDrawingLassoRef.current || !drawingLasso || !mapRef.current) return;
+        const rect = e.currentTarget.getBoundingClientRect();
+        const pos = L.point(e.clientX - rect.left, e.clientY - rect.top);
+        const latlng = mapRef.current.containerPointToLatLng(pos);
+        setDrawingLasso([...drawingLasso, [latlng.lat, latlng.lng]]);
+    }, [drawingLasso]);
+
+    const handleLassoMouseUp = useCallback(() => {
+        if (!isDrawingLassoRef.current || !drawingLasso || drawingLasso.length < 3) {
+            isDrawingLassoRef.current = false;
+            setDrawingLasso(null);
+            if (mapRef.current) mapRef.current.dragging.enable();
+            return;
+        }
+
+        // Close the polygon by adding the first point at the end
+        const closedPolygon = [...drawingLasso, drawingLasso[0]];
+        onSelectionPolygonChange?.(closedPolygon);
+        isDrawingLassoRef.current = false;
+        setDrawingLasso(null);
+        if (mapRef.current) mapRef.current.dragging.enable();
+    }, [drawingLasso, onSelectionPolygonChange]);
+
+    React.useEffect(() => {
+        if (!isLassoMode) {
+            isDrawingLassoRef.current = false;
+            setDrawingLasso(null);
+            return;
+        }
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape') return;
+            isDrawingLassoRef.current = false;
+            flushSync(() => setDrawingLasso(null));
+            if (mapRef.current) mapRef.current.dragging.enable();
+        };
+        window.addEventListener('keydown', handleKeyDown, { capture: true });
+        return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+    }, [isLassoMode]);
+
     const handleMapClick = useCallback((latlng: L.LatLng) => {
-        if (isSelectionMode || isEraserMode) return;
+        if (isSelectionMode || isLassoMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
-    }, [onPointAdd, isSelectionMode, isEraserMode]);
+    }, [onPointAdd, isSelectionMode, isLassoMode, isEraserMode]);
 
     // Split route into normal and construction segments
     const { normalSegments, constructionSegments, hasConstruction } = React.useMemo(() => {
@@ -667,6 +719,18 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         fillColor="#F59E0B"
                         fillOpacity={0.1}
                         dashArray="2, 2"
+                    />
+                )}
+
+                {/* Currently drawing lasso */}
+                {drawingLasso && drawingLasso.length > 0 && (
+                    <Polyline
+                        positions={drawingLasso as [number, number][]}
+                        color="#3B82F6"
+                        weight={2}
+                        opacity={0.8}
+                        dashArray="5, 5"
+                        interactive={false}
                     />
                 )}
 
@@ -853,6 +917,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onMouseDown={handleOverlayMouseDown}
                     onMouseMove={handleOverlayMouseMove}
                     onMouseUp={handleOverlayMouseUp}
+                />
+            )}
+
+            {isLassoMode && (
+                <div
+                    className="absolute inset-0"
+                    style={{ cursor: 'crosshair', zIndex: 999, userSelect: 'none' }}
+                    onMouseDown={handleLassoMouseDown}
+                    onMouseMove={handleLassoMouseMove}
+                    onMouseUp={handleLassoMouseUp}
                 />
             )}
 
