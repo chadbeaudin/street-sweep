@@ -31,8 +31,11 @@ interface MapProps {
     manualRoute: [number, number][][];
     allRoads: [number, number][][];
     isSelectionMode?: boolean;
+    isLassoMode?: boolean;
     selectionBoxes: { north: number; south: number; east: number; west: number }[];
+    selectionPolygons: [number, number][][];
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
+    onSelectionPolygonChange?: (polygon: [number, number][] | null) => void;
     onSelectionModeChange?: (isSelectionMode: boolean) => void;
     isEraserMode?: boolean;
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
@@ -378,43 +381,70 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { lat: route[route.length - 1][1], lon: route[route.length - 1][0] };
     }, [route, selectedPoints]);
 
-    // Deduplicate overlapping activity traces. Groups roads by their endpoints (±0.0005 degrees tolerance)
-    // and keeps only the most detailed version from each group to avoid rendering overlapping polylines.
-    const deduplicatedStravaRoads = React.useMemo(() => {
-        if (!stravaRoads || stravaRoads.length === 0) return [];
+    // Snap activity GPS traces to OSM roads, then deduplicate identical snapped paths.
+    const snappedStravaRoads = React.useMemo(() => {
+        if (!stravaRoads || stravaRoads.length === 0 || !allRoads || allRoads.length === 0) return stravaRoads;
 
-        const TOLERANCE = 0.0005; // ~50m at equator
-        const groups: Map<string, number[][]> = new Map();
+        const SNAP_TOLERANCE = 0.003; // ~300m at equator
+        const GRID_SIZE = 0.01;
+        const roadGrid = new globalThis.Map<string, number[]>();
 
-        for (const road of stravaRoads) {
-            if (road.length < 2) continue;
-
-            const start = road[0];
-            const end = road[road.length - 1];
-
-            // Create a key based on rounded endpoints to group similar roads
-            // Check both forward and reverse directions
-            const key1 = `${Math.round(start[0] / TOLERANCE)},${Math.round(start[1] / TOLERANCE)}-${Math.round(end[0] / TOLERANCE)},${Math.round(end[1] / TOLERANCE)}`;
-            const key2 = `${Math.round(end[0] / TOLERANCE)},${Math.round(end[1] / TOLERANCE)}-${Math.round(start[0] / TOLERANCE)},${Math.round(start[1] / TOLERANCE)}`;
-
-            const key = key1 <= key2 ? key1 : key2;
-
-            const group = groups.get(key) || [];
-            if (!groups.has(key)) {
-                groups.set(key, group);
+        // Build spatial index
+        for (let i = 0; i < allRoads.length; i++) {
+            const road = allRoads[i];
+            for (const [lat, lon] of road) {
+                const cellKey = `${Math.floor(lat / GRID_SIZE)},${Math.floor(lon / GRID_SIZE)}`;
+                const cell = roadGrid.get(cellKey) || [];
+                if (!roadGrid.has(cellKey)) roadGrid.set(cellKey, cell);
+                if (!cell.includes(i)) cell.push(i);
             }
-            group.push(road);
         }
 
-        // For each group, keep the road with the most detail (most points)
+        // Find nearest OSM road point to a GPS point
+        const findNearestRoadPoint = (gpsLat: number, gpsLon: number): [number, number] | null => {
+            const cellKey = `${Math.floor(gpsLat / GRID_SIZE)},${Math.floor(gpsLon / GRID_SIZE)}`;
+            const roadIndices = roadGrid.get(cellKey) || [];
+            let nearest: [number, number] | null = null;
+            let minDist = SNAP_TOLERANCE;
+
+            for (const roadIdx of roadIndices) {
+                for (const [roadLat, roadLon] of allRoads[roadIdx]) {
+                    const dist = Math.abs(gpsLat - roadLat) + Math.abs(gpsLon - roadLon);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearest = [roadLat, roadLon];
+                    }
+                }
+            }
+            return nearest;
+        };
+
+        // Snap all activities to road geometry
+        const snapped = stravaRoads.map(activity => {
+            const snappedActivity: [number, number][] = [];
+            for (const gpsPoint of activity) {
+                const roadPoint = findNearestRoadPoint(gpsPoint[0], gpsPoint[1]);
+                snappedActivity.push(roadPoint || gpsPoint);
+            }
+            return snappedActivity;
+        });
+
+        // Deduplicate: if two snapped activities are nearly identical, keep only one
+        const seen = new Set<string>();
         const deduplicated: [number, number][][] = [];
-        for (const group of groups.values()) {
-            const best = group.reduce((a, b) => a.length > b.length ? a : b);
-            deduplicated.push(best);
+
+        for (const activity of snapped) {
+            // Create a compact hash of the snapped path
+            const pathHash = activity.map(p => `${Math.round(p[0]*10000)},${Math.round(p[1]*10000)}`).join('|');
+
+            if (!seen.has(pathHash)) {
+                seen.add(pathHash);
+                deduplicated.push(activity);
+            }
         }
 
         return deduplicated;
-    }, [stravaRoads]);
+    }, [stravaRoads, allRoads]);
 
     // Fit map whenever the route first appears (e.g. after import)
     const prevRouteRef = React.useRef<typeof route>(null);
@@ -640,9 +670,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 )}
 
-                {/* Strava roads - visual background */}
-                {/* Deduplicated to show one line per road, avoiding overlapping activity traces */}
-                {deduplicatedStravaRoads.map((road, idx) => (
+                {/* Strava roads - snapped to OSM geometry */}
+                {/* Activities snapped to road network, so overlapping rides follow exact same path */}
+                {snappedStravaRoads.map((road, idx) => (
                     <Polyline
                         key={`strava-${idx}`}
                         positions={road as [number, number][]}
