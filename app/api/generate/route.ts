@@ -88,26 +88,10 @@ export async function POST(request: Request) {
         console.log(`${ts()} Solving Routing Problem...`);
         const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
 
-        // Combine selection boxes with polygon bounding boxes
+        // TODO: Implement proper polygon-based routing in graph.solveCPP
+        // For now, only use rectangular selection boxes for routing
+        // Polygons are stored but not used for routing until the graph supports point-in-polygon checks
         const combinedSelections: Array<{ north: number; south: number; east: number; west: number }> = [...(selectionBoxes || [])];
-        if (selectionPolygons && selectionPolygons.length > 0) {
-            selectionPolygons.forEach((polygon: [number, number][]) => {
-                let minLat = polygon[0][0], maxLat = polygon[0][0];
-                let minLon = polygon[0][1], maxLon = polygon[0][1];
-                for (const [lat, lon] of polygon) {
-                    minLat = Math.min(minLat, lat);
-                    maxLat = Math.max(maxLat, lat);
-                    minLon = Math.min(minLon, lon);
-                    maxLon = Math.max(maxLon, lon);
-                }
-                combinedSelections.push({
-                    south: minLat,
-                    north: maxLat,
-                    west: minLon,
-                    east: maxLon
-                });
-            });
-        }
 
         // In mixed mode (manualRoute + selections), only pass endPoint when there are
         // genuine post-area waypoints. Approach-only waypoints must not trigger an exit bridge.
