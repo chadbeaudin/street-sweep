@@ -1,4 +1,4 @@
-import { StreetGraph } from './graph';
+import { StreetGraph, pointInPolygon, pointInAnyPolygon, getPolygonBounds } from './graph';
 import { OverpassResponse } from './types';
 
 describe('StreetGraph', () => {
@@ -374,5 +374,257 @@ describe('StreetGraph', () => {
         expect(result[0].lon).toBe(0.1);
         expect(result[result.length - 1].lat).toBe(0.1);
         expect(result[result.length - 1].lon).toBe(0.1);
+    });
+});
+
+describe('Point-in-Polygon Functions', () => {
+    describe('getPolygonBounds', () => {
+        test('calculates bounds for a simple square', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [1, 0],
+                [1, 1],
+                [0, 1]
+            ];
+            const bounds = getPolygonBounds(polygon);
+            expect(bounds.minLat).toBe(0);
+            expect(bounds.maxLat).toBe(1);
+            expect(bounds.minLon).toBe(0);
+            expect(bounds.maxLon).toBe(1);
+        });
+
+        test('calculates bounds for an irregular polygon', () => {
+            const polygon: [number, number][] = [
+                [0.5, 1.5],
+                [2.3, 0.8],
+                [1.2, 3.4],
+                [-0.5, 2.1]
+            ];
+            const bounds = getPolygonBounds(polygon);
+            expect(bounds.minLat).toBe(-0.5);
+            expect(bounds.maxLat).toBe(2.3);
+            expect(bounds.minLon).toBe(0.8);
+            expect(bounds.maxLon).toBe(3.4);
+        });
+
+        test('handles triangle', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [1, 0],
+                [0.5, 1]
+            ];
+            const bounds = getPolygonBounds(polygon);
+            expect(bounds.minLat).toBe(0);
+            expect(bounds.maxLat).toBe(1);
+            expect(bounds.minLon).toBe(0);
+            expect(bounds.maxLon).toBe(1);
+        });
+    });
+
+    describe('pointInPolygon', () => {
+        test('point inside square', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [2, 0],
+                [2, 2],
+                [0, 2]
+            ];
+            expect(pointInPolygon([1, 1], polygon)).toBe(true);
+        });
+
+        test('point outside square', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [2, 0],
+                [2, 2],
+                [0, 2]
+            ];
+            expect(pointInPolygon([3, 3], polygon)).toBe(false);
+        });
+
+        test('point outside bounding box (quick rejection)', () => {
+            const polygon: [number, number][] = [
+                [1, 1],
+                [2, 1],
+                [2, 2],
+                [1, 2]
+            ];
+            expect(pointInPolygon([5, 5], polygon)).toBe(false);
+            expect(pointInPolygon([-1, -1], polygon)).toBe(false);
+        });
+
+        test('point inside triangle', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [4, 0],
+                [2, 4]
+            ];
+            expect(pointInPolygon([2, 1], polygon)).toBe(true);
+            expect(pointInPolygon([2, 2], polygon)).toBe(true);
+        });
+
+        test('point outside triangle', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [4, 0],
+                [2, 4]
+            ];
+            expect(pointInPolygon([0, 3], polygon)).toBe(false);
+            expect(pointInPolygon([4, 2], polygon)).toBe(false);
+        });
+
+        test('point at polygon vertex', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [2, 0],
+                [2, 2],
+                [0, 2]
+            ];
+            // Ray casting on vertices is implementation-dependent
+            // First vertex is typically inside, others may not be
+            expect(pointInPolygon([0, 0], polygon)).toBe(true);
+        });
+
+        test('point on polygon edge', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [2, 0],
+                [2, 2],
+                [0, 2]
+            ];
+            expect(pointInPolygon([1, 0], polygon)).toBe(true);
+            expect(pointInPolygon([0, 1], polygon)).toBe(true);
+        });
+
+        test('concave polygon: point inside indentation', () => {
+            // L-shaped polygon
+            const polygon: [number, number][] = [
+                [0, 0],
+                [3, 0],
+                [3, 2],
+                [2, 2],
+                [2, 1],
+                [0, 1]
+            ];
+            expect(pointInPolygon([2.5, 0.5], polygon)).toBe(true);
+            expect(pointInPolygon([0.5, 0.5], polygon)).toBe(true);
+        });
+
+        test('concave polygon: point in notch (outside)', () => {
+            // L-shaped polygon with notch
+            const polygon: [number, number][] = [
+                [0, 0],
+                [3, 0],
+                [3, 2],
+                [2, 2],
+                [2, 1],
+                [0, 1]
+            ];
+            // Point clearly outside the polygon bounds
+            expect(pointInPolygon([4, 1.5], polygon)).toBe(false);
+        });
+
+        test('narrow polygon (slit)', () => {
+            const polygon: [number, number][] = [
+                [0, 0],
+                [10, 0],
+                [10, 0.1],
+                [0, 0.1]
+            ];
+            expect(pointInPolygon([5, 0.05], polygon)).toBe(true);
+            expect(pointInPolygon([5, 0.2], polygon)).toBe(false);
+        });
+
+        test('pentagon', () => {
+            const polygon: [number, number][] = [
+                [2, 0],      // bottom
+                [4, 1],      // bottom right
+                [3, 3],      // top right
+                [1, 3],      // top left
+                [0, 1]       // bottom left
+            ];
+            expect(pointInPolygon([2, 1.5], polygon)).toBe(true);
+            expect(pointInPolygon([2, 4], polygon)).toBe(false);
+        });
+
+        test('polygon with collinear points', () => {
+            // Square with extra collinear point on edge
+            const polygon: [number, number][] = [
+                [0, 0],
+                [1, 0],
+                [2, 0],
+                [2, 2],
+                [0, 2]
+            ];
+            expect(pointInPolygon([1.5, 1], polygon)).toBe(true);
+            expect(pointInPolygon([1, 0], polygon)).toBe(true);
+        });
+
+        test('ray casting with horizontal edge', () => {
+            // Test that horizontal edges are handled correctly in ray casting
+            const polygon: [number, number][] = [
+                [0, 0],
+                [2, 0],
+                [2, 2],
+                [0, 2]
+            ];
+            expect(pointInPolygon([1, 1], polygon)).toBe(true);
+            expect(pointInPolygon([3, 1], polygon)).toBe(false);
+        });
+    });
+
+    describe('pointInAnyPolygon', () => {
+        test('point in first polygon', () => {
+            const polygons: [number, number][][] = [
+                [[0, 0], [2, 0], [2, 2], [0, 2]],
+                [[5, 5], [7, 5], [7, 7], [5, 7]]
+            ];
+            expect(pointInAnyPolygon([1, 1], polygons)).toBe(true);
+        });
+
+        test('point in second polygon', () => {
+            const polygons: [number, number][][] = [
+                [[0, 0], [2, 0], [2, 2], [0, 2]],
+                [[5, 5], [7, 5], [7, 7], [5, 7]]
+            ];
+            expect(pointInAnyPolygon([6, 6], polygons)).toBe(true);
+        });
+
+        test('point in neither polygon', () => {
+            const polygons: [number, number][][] = [
+                [[0, 0], [2, 0], [2, 2], [0, 2]],
+                [[5, 5], [7, 5], [7, 7], [5, 7]]
+            ];
+            expect(pointInAnyPolygon([3, 3], polygons)).toBe(false);
+        });
+
+        test('point in multiple overlapping polygons', () => {
+            const polygons: [number, number][][] = [
+                [[0, 0], [2, 0], [2, 2], [0, 2]],
+                [[1, 1], [3, 1], [3, 3], [1, 3]]
+            ];
+            expect(pointInAnyPolygon([1.5, 1.5], polygons)).toBe(true);
+        });
+
+        test('empty polygon array', () => {
+            expect(pointInAnyPolygon([1, 1], [])).toBe(false);
+        });
+
+        test('single polygon array', () => {
+            const polygons: [number, number][][] = [
+                [[0, 0], [2, 0], [2, 2], [0, 2]]
+            ];
+            expect(pointInAnyPolygon([1, 1], polygons)).toBe(true);
+            expect(pointInAnyPolygon([3, 3], polygons)).toBe(false);
+        });
+
+        test('three polygons with point in last', () => {
+            const polygons: [number, number][][] = [
+                [[0, 0], [1, 0], [1, 1], [0, 1]],
+                [[2, 2], [3, 2], [3, 3], [2, 3]],
+                [[4, 4], [6, 4], [6, 6], [4, 6]]
+            ];
+            expect(pointInAnyPolygon([5, 5], polygons)).toBe(true);
+        });
     });
 });

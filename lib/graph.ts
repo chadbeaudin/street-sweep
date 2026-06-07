@@ -45,7 +45,7 @@ const GRID_DEG = 0.0005;
 // Cache polygon bounding boxes for faster rejection
 const polygonBounds = new globalThis.Map<number, { minLat: number; maxLat: number; minLon: number; maxLon: number }>();
 
-function getPolygonBounds(polygon: [number, number][]): { minLat: number; maxLat: number; minLon: number; maxLon: number } {
+export function getPolygonBounds(polygon: [number, number][]): { minLat: number; maxLat: number; minLon: number; maxLon: number } {
     let minLat = polygon[0][0], maxLat = polygon[0][0];
     let minLon = polygon[0][1], maxLon = polygon[0][1];
     for (const [lat, lon] of polygon) {
@@ -58,7 +58,7 @@ function getPolygonBounds(polygon: [number, number][]): { minLat: number; maxLat
 }
 
 // Check if a point [lat, lon] is inside a polygon using ray casting algorithm
-function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+export function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
     const [x, y] = point;
 
     // Quick bounding box check first (much faster than ray casting)
@@ -81,7 +81,7 @@ function pointInPolygon(point: [number, number], polygon: [number, number][]): b
 }
 
 // Check if a point is inside any of the given polygons
-function pointInAnyPolygon(point: [number, number], polygons: [number, number][][]): boolean {
+export function pointInAnyPolygon(point: [number, number], polygons: [number, number][][]): boolean {
     return polygons.some(polygon => pointInPolygon(point, polygon));
 }
 
