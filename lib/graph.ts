@@ -422,38 +422,52 @@ export class StreetGraph {
             } else {
                 let bestIdx = 0;
 
-                // Always use bearing heuristic to prefer straight continuations
-                if (stack.length >= 2) {
-                    const prevNodeId = stack[stack.length - 2];
-                    const prevNode = this.graph.getNode(prevNodeId);
+                if (unused.length > 1) {
+                    const prevNodeId = stack.length >= 2 ? stack[stack.length - 2] : null;
+                    const prevNode = prevNodeId ? this.graph.getNode(prevNodeId) : null;
                     const currNode = this.graph.getNode(curr);
+                    const inBearing = (prevNode && currNode)
+                        ? this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon)
+                        : null;
 
-                    if (prevNode && currNode) {
-                        const inBearing = this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon);
+                    let bestScore = -Infinity;
+                    for (let i = 0; i < unused.length; i++) {
+                        const candidate = unused[i];
+                        const nextNodeId = candidate.target;
 
-                        let bestScore = -Infinity;
-                        for (let i = 0; i < unused.length; i++) {
-                            const nextNodeId = unused[i].target;
+                        // Avoid immediate U-turns where possible
+                        if (nextNodeId === prevNodeId) {
+                            const score = -1e9;
+                            if (score > bestScore) { bestScore = score; bestIdx = i; }
+                            continue;
+                        }
 
-                            if (nextNodeId === prevNodeId) {
-                                // Heavily penalize immediate U-turns
-                                const score = -1000;
-                                if (score > bestScore) { bestScore = score; bestIdx = i; }
-                                continue;
-                            }
+                        // Count remaining unused edges at the target node (excluding the one
+                        // we'd be using to get there). Fewer = closer to a dead-end, so we
+                        // should drain that branch before moving on.
+                        const targetNeighbors = adj.get(nextNodeId) || [];
+                        let targetUnusedCount = 0;
+                        for (const tn of targetNeighbors) {
+                            if (tn.id !== candidate.id && !usedEdges.has(tn.id)) targetUnusedCount++;
+                        }
 
+                        // Primary: drain dead-ends first (heavily prefer low unused count).
+                        // Multiplier of 1000 dominates the bearing tiebreaker.
+                        let score = -targetUnusedCount * 1000;
+
+                        // Tiebreaker: prefer straighter continuations among equal dead-end-ness.
+                        if (inBearing !== null && currNode) {
                             const nextNode = this.graph.getNode(nextNodeId);
                             if (nextNode) {
                                 const outBearing = this.calculateBearing(currNode.data.lat, currNode.data.lon, nextNode.data.lat, nextNode.data.lon);
                                 const diff = this.getAngleDifference(inBearing, outBearing);
-
-                                // We want the smallest angle difference (closest to 0) to "go straight"
-                                const score = -diff;
-                                if (score > bestScore) {
-                                    bestScore = score;
-                                    bestIdx = i;
-                                }
+                                score += -diff;
                             }
+                        }
+
+                        if (score > bestScore) {
+                            bestScore = score;
+                            bestIdx = i;
                         }
                     }
                 }
