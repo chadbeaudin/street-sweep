@@ -201,8 +201,8 @@ async function getDbCached(key: string, minElements = 0): Promise<OverpassRespon
     // invalidate so the next request re-fetches fresh data.
     if (minElements > 0 && data.elements.length < minElements) {
       const ageMs = Date.now() - row.fetchedAt.getTime();
-      if (ageMs > 300000) { // older than 5 min → not a "just confirmed sparse" entry
-        console.warn(`${ts()} DB cache for ${key} is stale+sparse (${data.elements.length} < ${minElements} elems) — invalidating`);
+      if (ageMs > 60000) { // older than 1 min → invalidate sparse cache more aggressively
+        console.warn(`${ts()} DB cache for ${key} is sparse (${data.elements.length} < ${minElements} elems) — invalidating`);
         await prisma.osmCache.delete({ where: { key } }).catch(() => {});
         return null;
       }
