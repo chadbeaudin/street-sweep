@@ -280,7 +280,13 @@ export function snapBboxToTileGrid(bbox: BoundingBox): BoundingBox {
 
 export async function fetchOSMData(requestedBbox: BoundingBox): Promise<OverpassResponse> {
   // Snap request up to the tile grid so adjacent/overlapping requests share cache entries.
-  const bbox = snapBboxToTileGrid(requestedBbox);
+  // But only snap if the area is large enough; small selections shouldn't be snapped to avoid
+  // fetching massive tiles that contain roads far outside the selection area.
+  const latSpan = Math.abs(requestedBbox.north - requestedBbox.south);
+  const lonSpan = Math.abs(requestedBbox.east - requestedBbox.west);
+  const bboxArea = latSpan * lonSpan;
+
+  const bbox = (bboxArea > 0.01) ? snapBboxToTileGrid(requestedBbox) : requestedBbox;
 
   // Guard against excessively large bounding boxes that crash mirrors
   const latSpan = Math.abs(bbox.north - bbox.south);
