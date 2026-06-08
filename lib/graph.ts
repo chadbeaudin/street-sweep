@@ -1192,9 +1192,14 @@ export class StreetGraph {
         // Add all roads that fall within any of the selection polygons to required edges
         if (selectionPolygons && selectionPolygons.length > 0) {
             console.log(`${ts()} Identifying roads in ${selectionPolygons.length} selection polygons...`);
+            for (let i = 0; i < selectionPolygons.length; i++) {
+                const bounds = getPolygonBounds(selectionPolygons[i]);
+                console.log(`${ts()}   Polygon ${i}: bounds=[${bounds.minLat.toFixed(4)},${bounds.minLon.toFixed(4)} to ${bounds.maxLat.toFixed(4)},${bounds.maxLon.toFixed(4)}], ${selectionPolygons[i].length} points`);
+            }
             const polygonStartTime = Date.now();
             let roadsChecked = 0;
             let roadsIncluded = 0;
+            let sampleLogged = 0;
 
             this.graph.forEachLink((link: any) => {
                 roadsChecked++;
@@ -1209,6 +1214,12 @@ export class StreetGraph {
                     const uPoint: [number, number] = [u.data.lat, u.data.lon];
                     const vPoint: [number, number] = [v.data.lat, v.data.lon];
                     const isRequired = pointInAnyPolygon(uPoint, selectionPolygons) || pointInAnyPolygon(vPoint, selectionPolygons);
+
+                    if (sampleLogged < 3) {
+                        const inPoly = pointInAnyPolygon(uPoint, selectionPolygons);
+                        console.log(`${ts()}   Sample road: u=[${uPoint[0].toFixed(4)},${uPoint[1].toFixed(4)}] in=${inPoly}`);
+                        sampleLogged++;
+                    }
 
                     if (isRequired) {
                         roadsIncluded++;
