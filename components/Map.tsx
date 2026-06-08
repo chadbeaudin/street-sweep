@@ -385,7 +385,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
     // Snap activity GPS traces to OSM roads, then deduplicate identical snapped paths.
     const snappedStravaRoads = React.useMemo(() => {
-        if (!stravaRoads || stravaRoads.length === 0 || !allRoads || allRoads.length === 0) return stravaRoads;
+        if (!stravaRoads || stravaRoads.length === 0 || !allRoads || allRoads.length === 0) return [];
 
         const SNAP_TOLERANCE = 0.003; // ~300m at equator
         const GRID_SIZE = 0.01;
