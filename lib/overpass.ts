@@ -187,7 +187,7 @@ async function fetchFromOSMAPIWithSplit(bbox: BoundingBox): Promise<OverpassResp
 
 const DB_CACHE_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-async function getDbCached(key: string, minElements = 0): Promise<OverpassResponse | null> {
+async function getDbCached(key: string, minElements = 0, requestedBbox?: BoundingBox): Promise<OverpassResponse | null> {
   try {
     const row = await prisma.osmCache.findUnique({ where: { key } });
     if (!row) return null;
@@ -196,13 +196,39 @@ async function getDbCached(key: string, minElements = 0): Promise<OverpassRespon
       return null;
     }
     const data = row.data as unknown as OverpassResponse;
+
+    // Validate that cached data actually covers the requested area
+    if (requestedBbox && data.elements.length > 0) {
+      const nodeElements = data.elements.filter(e => e.type === 'node');
+      if (nodeElements.length > 0) {
+        const lats = nodeElements.map((n: any) => n.lat);
+        const lons = nodeElements.map((n: any) => n.lon);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+
+        // Check if actual data bounds cover the requested area (with 1% margin)
+        const margin = 0.001;
+        const covers = minLat <= requestedBbox.south + margin &&
+                       maxLat >= requestedBbox.north - margin &&
+                       minLon <= requestedBbox.west + margin &&
+                       maxLon >= requestedBbox.east - margin;
+
+        if (!covers) {
+          console.warn(`${ts()} DB cache for ${key} doesn't cover requested bbox (data: [${minLat.toFixed(4)},${minLon.toFixed(4)} to ${maxLat.toFixed(4)},${maxLon.toFixed(4)}], requested: [${requestedBbox.south.toFixed(4)},${requestedBbox.west.toFixed(4)} to ${requestedBbox.north.toFixed(4)},${requestedBbox.east.toFixed(4)}]) — invalidating`);
+          await prisma.osmCache.delete({ where: { key } }).catch(() => {});
+          return null;
+        }
+      }
+    }
     // If the response is suspiciously sparse for the requested area and was not
     // fetched recently (i.e. it's not a legitimately sparse area we just confirmed),
     // invalidate so the next request re-fetches fresh data.
     if (minElements > 0 && data.elements.length < minElements) {
       const ageMs = Date.now() - row.fetchedAt.getTime();
-      if (ageMs > 60000) { // older than 1 min → invalidate sparse cache more aggressively
-        console.warn(`${ts()} DB cache for ${key} is sparse (${data.elements.length} < ${minElements} elems) — invalidating`);
+      if (ageMs > 300000) { // older than 5 min → not a "just confirmed sparse" entry
+        console.warn(`${ts()} DB cache for ${key} is stale+sparse (${data.elements.length} < ${minElements} elems) — invalidating`);
         await prisma.osmCache.delete({ where: { key } }).catch(() => {});
         return null;
       }
@@ -299,7 +325,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   }
 
   // 2. Check persistent DB cache (survives server restarts)
-  const dbCached = await getDbCached(cacheKey, minElements);
+  const dbCached = await getDbCached(cacheKey, minElements, bbox);
   if (dbCached && dbCached.elements.length > 0) {
     console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
     OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now }); // warm memory cache
