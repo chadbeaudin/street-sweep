@@ -548,6 +548,15 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
         // Close the polygon by adding the first point at the end
         const closedPolygon = [...drawingLasso, drawingLasso[0]];
+        console.log('[Lasso] Polygon completed:', {
+            points: closedPolygon.length,
+            minLat: Math.min(...closedPolygon.map(p => p[0])),
+            maxLat: Math.max(...closedPolygon.map(p => p[0])),
+            minLon: Math.min(...closedPolygon.map(p => p[1])),
+            maxLon: Math.max(...closedPolygon.map(p => p[1])),
+            first: closedPolygon[0],
+            sample: closedPolygon.slice(1, 4)
+        });
         onSelectionPolygonChange?.(closedPolygon);
         isDrawingLassoRef.current = false;
         setDrawingLasso(null);
