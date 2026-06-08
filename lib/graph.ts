@@ -386,13 +386,24 @@ export class StreetGraph {
         const adj = new Map<string, { id: number, target: string }[]>();
         let edgeCounter = 0;
 
+        // Track which geometric edges (u-v pairs) have duplicates so we can prefer
+        // "fresh" edges over edges whose copies have already been walked.
+        const edgePairKey = (a: string, b: string) => a < b ? `${a}|${b}` : `${b}|${a}`;
+        const edgePairCount = new Map<string, number>();
+
         for (const e of edges) {
             const id = edgeCounter++;
             if (!adj.has(e.u)) adj.set(e.u, []);
             if (!adj.has(e.v)) adj.set(e.v, []);
             adj.get(e.u)!.push({ id, target: e.v });
             adj.get(e.v)!.push({ id, target: e.u });
+
+            const key = edgePairKey(e.u, e.v);
+            edgePairCount.set(key, (edgePairCount.get(key) || 0) + 1);
         }
+
+        // Track per-pair used count so we can detect "first traversal of a doubled pair" vs second.
+        const edgePairUsed = new Map<string, number>();
 
         let startNode = startNodeId || edges[0].u;
         const oddNodes = Array.from(adj.entries()).filter(([_, neighbors]) => neighbors.length % 2 !== 0).map(([node]) => node);
@@ -435,27 +446,25 @@ export class StreetGraph {
                         const candidate = unused[i];
                         const nextNodeId = candidate.target;
 
-                        // Avoid immediate U-turns where possible
                         if (nextNodeId === prevNodeId) {
+                            // Heavily penalize immediate U-turns
                             const score = -1e9;
                             if (score > bestScore) { bestScore = score; bestIdx = i; }
                             continue;
                         }
 
-                        // Count remaining unused edges at the target node (excluding the one
-                        // we'd be using to get there). Fewer = closer to a dead-end, so we
-                        // should drain that branch before moving on.
-                        const targetNeighbors = adj.get(nextNodeId) || [];
-                        let targetUnusedCount = 0;
-                        for (const tn of targetNeighbors) {
-                            if (tn.id !== candidate.id && !usedEdges.has(tn.id)) targetUnusedCount++;
-                        }
+                        // Score: prefer "fresh" edges (no copy used yet) over second-traversals
+                        // of doubled edges. This defers in-out backtracks until the moment we
+                        // naturally have to be at that intersection again.
+                        const pairKey = edgePairKey(curr, nextNodeId);
+                        const pairTotal = edgePairCount.get(pairKey) || 1;
+                        const pairUsed = edgePairUsed.get(pairKey) || 0;
+                        // If this is a duplicate edge AND its first copy was already used,
+                        // we're about to do a "second traversal" – defer it.
+                        const isSecondTraversal = pairTotal > 1 && pairUsed > 0;
+                        let score = isSecondTraversal ? -10000 : 0;
 
-                        // Primary: drain dead-ends first (heavily prefer low unused count).
-                        // Multiplier of 1000 dominates the bearing tiebreaker.
-                        let score = -targetUnusedCount * 1000;
-
-                        // Tiebreaker: prefer straighter continuations among equal dead-end-ness.
+                        // Tiebreaker: bearing (prefer continuing straight)
                         if (inBearing !== null && currNode) {
                             const nextNode = this.graph.getNode(nextNodeId);
                             if (nextNode) {
@@ -474,6 +483,8 @@ export class StreetGraph {
 
                 const next = unused[bestIdx];
                 usedEdges.add(next.id);
+                const pairKey = edgePairKey(curr, next.target);
+                edgePairUsed.set(pairKey, (edgePairUsed.get(pairKey) || 0) + 1);
                 stack.push(next.target);
             }
         }

@@ -51,7 +51,8 @@
       "Bash(pkill -f \"next dev\\\\|npm run dev\")",
       "Bash(grep -n '`' /Users/chadbeaudin/dev/projects/StreetSweep/lib/graph.ts)",
       "Bash(pkill -f \"node.*start.sh\")",
-      "Bash(killall node *)"
+      "Bash(killall node *)",
+      "Bash(npx tsx *)"
     ]
   }
 }
