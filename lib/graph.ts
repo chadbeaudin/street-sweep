@@ -382,9 +382,10 @@ export class StreetGraph {
     }
 
     private buildGeographicEulerianTrail(edges: { u: string, v: string, data: any }[], startNodeId: string | null): string[] {
+        const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
         const adj = new Map<string, { id: number, target: string }[]>();
         let edgeCounter = 0;
-        
+
         for (const e of edges) {
             const id = edgeCounter++;
             if (!adj.has(e.u)) adj.set(e.u, []);
@@ -395,7 +396,7 @@ export class StreetGraph {
 
         let startNode = startNodeId || edges[0].u;
         const oddNodes = Array.from(adj.entries()).filter(([_, neighbors]) => neighbors.length % 2 !== 0).map(([node]) => node);
-        
+
         if (oddNodes.length > 0) {
             if (oddNodes.length === 2) {
                 if (!startNodeId || !oddNodes.includes(startNodeId)) {
@@ -409,42 +410,43 @@ export class StreetGraph {
         const usedEdges = new Set<number>();
         const stack: string[] = [startNode];
         const trailPath: string[] = [];
-        
+
         while (stack.length > 0) {
             const curr = stack[stack.length - 1];
             const neighbors = adj.get(curr) || [];
-            
+
             const unused = neighbors.filter(n => !usedEdges.has(n.id));
-            
+
             if (unused.length === 0) {
                 trailPath.push(stack.pop()!);
             } else {
                 let bestIdx = 0;
-                
-                if (stack.length >= 2 && unused.length > 1) {
+
+                // Always use bearing heuristic to prefer straight continuations
+                if (stack.length >= 2) {
                     const prevNodeId = stack[stack.length - 2];
                     const prevNode = this.graph.getNode(prevNodeId);
                     const currNode = this.graph.getNode(curr);
-                    
+
                     if (prevNode && currNode) {
                         const inBearing = this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon);
-                        
+
                         let bestScore = -Infinity;
                         for (let i = 0; i < unused.length; i++) {
                             const nextNodeId = unused[i].target;
-                            
+
                             if (nextNodeId === prevNodeId) {
                                 // Heavily penalize immediate U-turns
                                 const score = -1000;
                                 if (score > bestScore) { bestScore = score; bestIdx = i; }
                                 continue;
                             }
-                            
+
                             const nextNode = this.graph.getNode(nextNodeId);
                             if (nextNode) {
                                 const outBearing = this.calculateBearing(currNode.data.lat, currNode.data.lon, nextNode.data.lat, nextNode.data.lon);
                                 const diff = this.getAngleDifference(inBearing, outBearing);
-                                
+
                                 // We want the smallest angle difference (closest to 0) to "go straight"
                                 const score = -diff;
                                 if (score > bestScore) {
@@ -455,7 +457,7 @@ export class StreetGraph {
                         }
                     }
                 }
-                
+
                 const next = unused[bestIdx];
                 usedEdges.add(next.id);
                 stack.push(next.target);
@@ -463,9 +465,110 @@ export class StreetGraph {
         }
 
         trailPath.reverse();
-        
+
         if (usedEdges.size < edges.length) {
             throw new Error(`Partial solution - disconnected graph detected. Traversed ${usedEdges.size} of ${edges.length} edges.`);
+        }
+
+        // Log U-turn density to detect zig-zag patterns
+        let uTurns = 0;
+        for (let i = 1; i < trailPath.length - 1; i++) {
+            const prevNode = this.graph.getNode(trailPath[i-1]);
+            const currNode = this.graph.getNode(trailPath[i]);
+            const nextNode = this.graph.getNode(trailPath[i+1]);
+            if (prevNode && currNode && nextNode) {
+                const inBearing = this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon);
+                const outBearing = this.calculateBearing(currNode.data.lat, currNode.data.lon, nextNode.data.lat, nextNode.data.lon);
+                const diff = this.getAngleDifference(inBearing, outBearing);
+                if (diff > 150) { // >150 degrees = approximate U-turn
+                    uTurns++;
+                }
+            }
+        }
+        const uTurnPercent = (uTurns / Math.max(1, trailPath.length - 2) * 100).toFixed(1);
+        console.log(`${ts()} Trail U-turn density: ${uTurns}/${trailPath.length} (${uTurnPercent}%)`);
+
+        if (uTurns > trailPath.length * 0.08) {
+            console.warn(`${ts()} Detected zig-zag pattern - post-processing to reduce sharp turns`);
+
+            // Post-process: detect and fix adjacent sharp turns by reordering
+            // A zig-zag looks like: ...A -> B -> C... where angle(A->B->C) > 120 degrees
+            // We'll try to find segments that backtrack and defer them to the end
+            const improved: string[] = [];
+            const deferred: string[][] = [];
+            let i = 0;
+
+            while (i < trailPath.length) {
+                improved.push(trailPath[i]);
+
+                // Look ahead for sharp turn patterns
+                if (i < trailPath.length - 2) {
+                    const prevNode = this.graph.getNode(trailPath[i]);
+                    const currNode = this.graph.getNode(trailPath[i + 1]);
+                    const nextNode = this.graph.getNode(trailPath[i + 2]);
+
+                    if (prevNode && currNode && nextNode) {
+                        const inBearing = this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon);
+                        const outBearing = this.calculateBearing(currNode.data.lat, currNode.data.lon, nextNode.data.lat, nextNode.data.lon);
+                        const diff = this.getAngleDifference(inBearing, outBearing);
+
+                        // If we detect a sharp turn, try to batch subsequent sharp turns together
+                        if (diff > 120) {
+                            const segment = [trailPath[i + 1]];
+                            let j = i + 2;
+                            // Collect consecutive points involved in sharp turns
+                            while (j < trailPath.length && j < i + 8) {
+                                const p1 = this.graph.getNode(trailPath[j - 1]);
+                                const p2 = this.graph.getNode(trailPath[j]);
+                                const p3 = j + 1 < trailPath.length ? this.graph.getNode(trailPath[j + 1]) : null;
+
+                                if (p1 && p2 && p3) {
+                                    const b1 = this.calculateBearing(p1.data.lat, p1.data.lon, p2.data.lat, p2.data.lon);
+                                    const b2 = this.calculateBearing(p2.data.lat, p2.data.lon, p3.data.lat, p3.data.lon);
+                                    const d = this.getAngleDifference(b1, b2);
+                                    if (d > 120) {
+                                        segment.push(trailPath[j]);
+                                        j++;
+                                    } else {
+                                        break;
+                                    }
+                                } else {
+                                    break;
+                                }
+                            }
+                            if (segment.length > 2) {
+                                deferred.push(segment);
+                                i += segment.length;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                i++;
+            }
+
+            // Append deferred segments (they'll be at the end, but at least not interleaved)
+            for (const segment of deferred) {
+                improved.push(...segment);
+            }
+
+            if (improved.length === trailPath.length) {
+                // Recompute U-turn count
+                let uTurns2 = 0;
+                for (let i = 1; i < improved.length - 1; i++) {
+                    const prevNode = this.graph.getNode(improved[i-1]);
+                    const currNode = this.graph.getNode(improved[i]);
+                    const nextNode = this.graph.getNode(improved[i+1]);
+                    if (prevNode && currNode && nextNode) {
+                        const inBearing = this.calculateBearing(prevNode.data.lat, prevNode.data.lon, currNode.data.lat, currNode.data.lon);
+                        const outBearing = this.calculateBearing(currNode.data.lat, currNode.data.lon, nextNode.data.lat, nextNode.data.lon);
+                        const diff = this.getAngleDifference(inBearing, outBearing);
+                        if (diff > 150) uTurns2++;
+                    }
+                }
+                console.log(`${ts()}   After post-processing: ${uTurns2}/${improved.length} U-turns (${(uTurns2 / improved.length * 100).toFixed(1)}%)`);
+                return improved;
+            }
         }
 
         return trailPath;
@@ -1460,6 +1563,9 @@ export class StreetGraph {
 
         const finalMatching = bestMatching || [];
         console.log(`${ts()} Matching found with weight ${bestTotalWeight.toFixed(1)} after ${numStartAttempts} attempts.`);
+        if (finalMatching.length > 0 && finalMatching.length <= 5) {
+            console.log(`${ts()}   Matches: ${finalMatching.map(m => `(${m.u.substring(0,8)}↔${m.v.substring(0,8)}, wt=${m.weight.toFixed(0)})`).join(', ')}`);
+        }
 
         // Forced bridging for any isolated odd nodes (safety fallback)
         const unmatched = new Set(oddArray);
