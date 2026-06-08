@@ -1336,10 +1336,8 @@ export class StreetGraph {
             distMatrix.set(u, res);
         }
 
-        // 2. Global Greedy Base Matching
-        const currentMatches: { u: string, v: string, weight: number, path: any[] }[] = [];
-        const unmatched = new Set(oddArray);
-        
+        // 2. Multiple random initial matchings with 2-opt refinement
+        // Greedy alone can get stuck in local minima; try multiple starts to find better matchings
         const allPairs: { u: string, v: string, weight: number }[] = [];
         for (let i = 0; i < oddArray.length; i++) {
             for (let j = i + 1; j < oddArray.length; j++) {
@@ -1351,25 +1349,107 @@ export class StreetGraph {
                 }
             }
         }
-        
-        allPairs.sort((a, b) => a.weight - b.weight);
-        
-        for (const pair of allPairs) {
-            if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
-                unmatched.delete(pair.u);
-                unmatched.delete(pair.v);
-                currentMatches.push({
-                    u: pair.u,
-                    v: pair.v,
-                    weight: pair.weight,
-                    path: distMatrix.get(pair.u)!.get(pair.v)!.path
-                });
+
+        let bestMatching: { u: string, v: string, weight: number, path: any[] }[] | null = null;
+        let bestTotalWeight = Infinity;
+
+        // Try greedy + multiple random starts
+        const numStartAttempts = Math.min(3, Math.ceil(oddArray.length / 2));
+
+        for (let attempt = 0; attempt < numStartAttempts; attempt++) {
+            let currentMatches: { u: string, v: string, weight: number, path: any[] }[] = [];
+
+            if (attempt === 0) {
+                // First: greedy by edge weight
+                allPairs.sort((a, b) => a.weight - b.weight);
+                const unmatched = new Set(oddArray);
+                for (const pair of allPairs) {
+                    if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
+                        unmatched.delete(pair.u);
+                        unmatched.delete(pair.v);
+                        currentMatches.push({
+                            u: pair.u,
+                            v: pair.v,
+                            weight: pair.weight,
+                            path: distMatrix.get(pair.u)!.get(pair.v)!.path
+                        });
+                    }
+                }
+            } else {
+                // Random attempts: shuffle and greedily match from randomized order
+                const shuffled = allPairs.slice().sort(() => Math.random() - 0.5);
+                const unmatched = new Set(oddArray);
+                for (const pair of shuffled) {
+                    if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
+                        unmatched.delete(pair.u);
+                        unmatched.delete(pair.v);
+                        currentMatches.push({
+                            u: pair.u,
+                            v: pair.v,
+                            weight: pair.weight,
+                            path: distMatrix.get(pair.u)!.get(pair.v)!.path
+                        });
+                    }
+                }
+            }
+
+            // 3. Apply 2-opt refinement to this matching
+            let improved = true;
+            let iterations = 0;
+            while (improved && iterations < 100) {
+                improved = false;
+                iterations++;
+                for (let i = 0; i < currentMatches.length; i++) {
+                    for (let j = i + 1; j < currentMatches.length; j++) {
+                        const m1 = currentMatches[i];
+                        const m2 = currentMatches[j];
+
+                        const currentWeight = m1.weight + m2.weight;
+
+                        // Option A: Pair (m1.u, m2.u) and (m1.v, m2.v)
+                        const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u)?.weight ?? Infinity;
+                        const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v)?.weight ?? Infinity;
+                        const sumA = w_u1u2 + w_v1v2;
+
+                        // Option B: Pair (m1.u, m2.v) and (m1.v, m2.u)
+                        const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v)?.weight ?? Infinity;
+                        const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u)?.weight ?? Infinity;
+                        const sumB = w_u1v2 + w_v1u2;
+
+                        // Compare and swap if better
+                        if (sumA < currentWeight && sumA <= sumB) {
+                            currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2, path: distMatrix.get(m1.u)!.get(m2.u)!.path };
+                            currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2, path: distMatrix.get(m1.v)!.get(m2.v)!.path };
+                            improved = true;
+                            break;
+                        } else if (sumB < currentWeight) {
+                            currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2, path: distMatrix.get(m1.u)!.get(m2.v)!.path };
+                            currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2, path: distMatrix.get(m1.v)!.get(m2.u)!.path };
+                            improved = true;
+                            break;
+                        }
+                    }
+                    if (improved) break;
+                }
+            }
+
+            const totalWeight = currentMatches.reduce((sum, m) => sum + m.weight, 0);
+            if (totalWeight < bestTotalWeight) {
+                bestTotalWeight = totalWeight;
+                bestMatching = currentMatches;
             }
         }
 
+        const currentMatches = bestMatching || [];
+        console.log(`${ts()} Matching found with weight ${bestTotalWeight.toFixed(1)} after ${numStartAttempts} attempts.`);
+
         // Forced bridging for any isolated odd nodes (safety fallback)
+        const unmatched = new Set(oddArray);
+        for (const match of currentMatches) {
+            unmatched.delete(match.u);
+            unmatched.delete(match.v);
+        }
         for (const u of Array.from(unmatched)) {
-             unmatched.delete(u);
              console.error(`${ts()} Could not match odd node ${u}. Adding forced bridge.`);
              const forced = this.findClosestTarget(u, reachableNodes, undefined, riddenPenaltyMap);
              if (forced) {
@@ -1379,48 +1459,6 @@ export class StreetGraph {
                  });
              }
         }
-
-        // 3. 2-Opt Local Search to find absolute minimum weight perfect matching
-        let improved = true;
-        let iterations = 0;
-        while (improved && iterations < 100) {
-            improved = false;
-            iterations++;
-            for (let i = 0; i < currentMatches.length; i++) {
-                for (let j = i + 1; j < currentMatches.length; j++) {
-                    const m1 = currentMatches[i];
-                    const m2 = currentMatches[j];
-                    
-                    const currentWeight = m1.weight + m2.weight;
-                    
-                    // Option A: Pair (m1.u, m2.u) and (m1.v, m2.v)
-                    const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u)?.weight ?? Infinity;
-                    const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v)?.weight ?? Infinity;
-                    const sumA = w_u1u2 + w_v1v2;
-                    
-                    // Option B: Pair (m1.u, m2.v) and (m1.v, m2.u)
-                    const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v)?.weight ?? Infinity;
-                    const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u)?.weight ?? Infinity;
-                    const sumB = w_u1v2 + w_v1u2;
-                    
-                    // Compare and swap if better
-                    if (sumA < currentWeight && sumA <= sumB) {
-                        currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2, path: distMatrix.get(m1.u)!.get(m2.u)!.path };
-                        currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2, path: distMatrix.get(m1.v)!.get(m2.v)!.path };
-                        improved = true;
-                        break;
-                    } else if (sumB < currentWeight) {
-                        currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2, path: distMatrix.get(m1.u)!.get(m2.v)!.path };
-                        currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2, path: distMatrix.get(m1.v)!.get(m2.u)!.path };
-                        improved = true;
-                        break;
-                    }
-                }
-                if (improved) break; // Restart loop if improved
-            }
-        }
-        
-        console.log(`${ts()} 2-opt complete after ${iterations} iterations.`);
 
         // Apply final matched paths to the graph
         for (const match of currentMatches) {
