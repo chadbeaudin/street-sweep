@@ -1191,9 +1191,6 @@ export class StreetGraph {
 
         // Add all roads that fall within any of the selection polygons to required edges
         if (selectionPolygons && selectionPolygons.length > 0) {
-            console.log(`${ts()} [POLYGON DEBUG] Skipping polygon filtering - using all roads instead`);
-            // Temporarily disable polygon filtering to debug coordinate mismatch
-            /*
             console.log(`${ts()} Identifying roads in ${selectionPolygons.length} selection polygons...`);
             for (let i = 0; i < selectionPolygons.length; i++) {
                 const bounds = getPolygonBounds(selectionPolygons[i]);
@@ -1220,7 +1217,8 @@ export class StreetGraph {
 
                     if (sampleLogged < 3) {
                         const inPoly = pointInAnyPolygon(uPoint, selectionPolygons);
-                        console.log(`${ts()}   Sample road: u=[${uPoint[0].toFixed(4)},${uPoint[1].toFixed(4)}] in=${inPoly}`);
+                        const swapped = pointInAnyPolygon([uPoint[1], uPoint[0]], selectionPolygons);
+                        console.log(`${ts()}   Sample road: u=[${uPoint[0].toFixed(4)},${uPoint[1].toFixed(4)}] in=${inPoly}, swapped=${swapped}`);
                         sampleLogged++;
                     }
 
@@ -1238,7 +1236,6 @@ export class StreetGraph {
                 }
             });
             console.log(`${ts()} Polygon filtering: ${roadsIncluded}/${roadsChecked} roads selected (${Date.now() - polygonStartTime}ms)`);
-            */
         }
 
         if ((!manualRoute || manualRoute.length === 0) && (!selectionBoxes || selectionBoxes.length === 0) && (!selectionPolygons || selectionPolygons.length === 0)) {
