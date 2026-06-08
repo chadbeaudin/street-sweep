@@ -13,6 +13,20 @@ export async function POST(request: Request) {
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
         const selectionPolygons = selectionPolygonsRaw || [];
 
+        console.log(`${ts()} API received: boxes=${selectionBoxes?.length || 0}, polygons=${selectionPolygons.length}`);
+
+        // Debug: log polygon bounds
+        if (selectionPolygons.length > 0) {
+            for (let i = 0; i < selectionPolygons.length; i++) {
+                const poly = selectionPolygons[i];
+                const minLat = Math.min(...poly.map(p => p[0]));
+                const maxLat = Math.max(...poly.map(p => p[0]));
+                const minLon = Math.min(...poly.map(p => p[1]));
+                const maxLon = Math.max(...poly.map(p => p[1]));
+                console.log(`${ts()}   API Polygon ${i}: bounds=[${minLat.toFixed(4)},${minLon.toFixed(4)} to ${maxLat.toFixed(4)},${maxLon.toFixed(4)}], ${poly.length} points, first=[${poly[0][0].toFixed(4)},${poly[0][1].toFixed(4)}]`);
+            }
+        }
+
         if (!bbox || !bbox.north || !bbox.south || !bbox.east || !bbox.west) {
             return NextResponse.json({ error: 'Invalid bounding box' }, { status: 400 });
         }
