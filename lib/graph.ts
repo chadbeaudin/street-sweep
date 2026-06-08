@@ -165,6 +165,12 @@ export class StreetGraph {
         this.riddenIndex = null;
         const nodesMap = new Map<number, { lat: number, lon: number }>();
 
+        // Debug: log first few nodes to verify coordinate parsing
+        const nodeElements = data.elements.filter(e => e.type === 'node').slice(0, 3);
+        if (nodeElements.length > 0) {
+            console.log(`${ts()}   First ${nodeElements.length} OSM nodes:`, nodeElements.map((n: any) => `[${n.lat},${n.lon}]`));
+        }
+
         if (riddenRoads && riddenRoads.length > 0) this.buildRiddenIndex(riddenRoads);
 
         // 1. First pass: Collect any top-level node elements (for backward compatibility/tests)
