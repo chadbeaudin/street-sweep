@@ -217,10 +217,8 @@ async function getDbCached(key: string, minElements = 0, requestedBbox?: Boundin
                        minLon <= requestedBbox.west + margin &&
                        maxLon >= requestedBbox.east - margin;
 
-        console.log(`${ts()} DB cache bbox check for ${key}: data=[${minLat.toFixed(4)},${minLon.toFixed(4)} to ${maxLat.toFixed(4)},${maxLon.toFixed(4)}], requested=[${requestedBbox.south.toFixed(4)},${requestedBbox.west.toFixed(4)} to ${requestedBbox.north.toFixed(4)},${requestedBbox.east.toFixed(4)}], margin=${margin}, covers=${covers}`);
-
         if (!covers) {
-          console.warn(`${ts()} DB cache doesn't cover — invalidating`);
+          console.warn(`${ts()} DB cache for ${key} doesn't cover requested bbox — invalidating`);
           await prisma.osmCache.delete({ where: { key } }).catch(() => {});
           return null;
         }
@@ -263,10 +261,11 @@ export function resetCircuitBreakers() {
   MIRROR_FAILURES.clear();
 }
 
-// Tile size in degrees. ~5.5km at the equator, ~3.7km at latitude 47.
-// Any requested bbox is snapped UP to align with this grid, so panning within
-// the same tile-set always hits the cache.
-const TILE_DEG = 0.05;
+// Tile size in degrees. ~550m at the equator, ~370m at latitude 47.
+// Any requested bbox is snapped UP to align with this grid, so near-identical
+// requests share the same cache entry while still keeping the fetched area
+// close to what was actually requested (avoids dragging in roads from far away).
+const TILE_DEG = 0.005;
 
 export function snapBboxToTileGrid(bbox: BoundingBox): BoundingBox {
   const snap = (n: number, dir: 'floor' | 'ceil') => Math[dir](n / TILE_DEG) * TILE_DEG;
@@ -279,14 +278,9 @@ export function snapBboxToTileGrid(bbox: BoundingBox): BoundingBox {
 }
 
 export async function fetchOSMData(requestedBbox: BoundingBox): Promise<OverpassResponse> {
-  // Snap request up to the tile grid so adjacent/overlapping requests share cache entries.
-  // But only snap if the area is large enough; small selections shouldn't be snapped to avoid
-  // fetching massive tiles that contain roads far outside the selection area.
-  const latSpan = Math.abs(requestedBbox.north - requestedBbox.south);
-  const lonSpan = Math.abs(requestedBbox.east - requestedBbox.west);
-  const bboxArea = latSpan * lonSpan;
-
-  const bbox = (bboxArea > 0.01) ? snapBboxToTileGrid(requestedBbox) : requestedBbox;
+  // Snap to a fine grid (~500m) so panning/redrawing similar areas hits cache
+  // without fetching tiles much larger than the request.
+  const bbox = snapBboxToTileGrid(requestedBbox);
 
   // Guard against excessively large bounding boxes that crash mirrors
   const latSpan = Math.abs(bbox.north - bbox.south);
@@ -302,9 +296,9 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   }
 
   // Tile coords are already multiples of TILE_DEG; format to fixed precision for a stable key.
-  const k = (n: number) => n.toFixed(3);
-  // v3: tile-aligned cache keys (was: 3-decimal rounded). Old v2 entries are now ignored.
-  const cacheKey = `v3_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
+  const k = (n: number) => n.toFixed(4);
+  // v4: fine-grained tile-aligned cache keys (0.005° tiles, ~500m). Old v3 entries ignored.
+  const cacheKey = `v4_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
   const now = Date.now();
 
   // For medium/large areas, reject cached responses that are clearly incomplete.

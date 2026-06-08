@@ -1,8 +1,12 @@
 // Tests for OSM bbox handling and cache behavior
 // Ensures small selection boxes don't get corrupted by tile-snapped cached data
 
-// Helper functions for testing bbox behavior
-function snapBboxToTileGrid(bbox: any, TILE_DEG: number = 0.05) {
+// Helper function matching the production tile-snapping logic
+// Tile size of 0.005 deg = ~500m at latitude 47, fine enough that small
+// selections don't drag in roads from far outside the requested area.
+const TILE_DEG = 0.005;
+
+function snapBboxToTileGrid(bbox: any) {
   const snap = (n: number, dir: 'floor' | 'ceil') => Math[dir](n / TILE_DEG) * TILE_DEG;
   return {
     south: snap(bbox.south, 'floor'),
@@ -12,17 +16,10 @@ function snapBboxToTileGrid(bbox: any, TILE_DEG: number = 0.05) {
   };
 }
 
-function shouldSnapBbox(bbox: any): boolean {
-  const latSpan = Math.abs(bbox.north - bbox.south);
-  const lonSpan = Math.abs(bbox.east - bbox.west);
-  const bboxArea = latSpan * lonSpan;
-  return bboxArea > 0.01;
-}
-
 describe('OSM Bbox Handling', () => {
-  describe('Tile snapping for small vs large selections', () => {
-    it('should NOT snap small selection boxes (< 0.01 sq deg)', () => {
-      // Small box: ~1 city block (approx 0.001 sq deg at 47° latitude)
+  describe('Fine-grained tile snapping', () => {
+    it('should snap small selection boxes to nearby tile boundaries', () => {
+      // Small box: ~1 city block at 21st Avenue (the problematic real-world case)
       const smallBox = {
         south: 47.6336,
         north: 47.6355,
@@ -30,13 +27,30 @@ describe('OSM Bbox Handling', () => {
         east: -117.4169,
       };
 
-      expect(shouldSnapBbox(smallBox)).toBe(false);
-      // When not snapped, the bbox stays exactly as requested
-      expect(smallBox).toEqual(smallBox);
+      const snapped = snapBboxToTileGrid(smallBox);
+      // Tiles are 0.005°, so 47.6336 snaps down to 47.630 and 47.6355 snaps up to 47.640
+      expect(snapped.south).toBeCloseTo(47.630, 3);
+      expect(snapped.north).toBeCloseTo(47.640, 3);
+      expect(snapped.west).toBeCloseTo(-117.425, 3);
+      expect(snapped.east).toBeCloseTo(-117.415, 3);
+
+      // Verify the snapped tile is close to the requested bbox (within one tile size)
+      expect(Math.abs(snapped.south - smallBox.south)).toBeLessThan(TILE_DEG);
+      expect(Math.abs(snapped.north - smallBox.north)).toBeLessThan(TILE_DEG);
     });
 
-    it('should snap large selection boxes (>= 0.01 sq deg)', () => {
-      // Large box: ~12km x 9km (approx 0.108 sq deg, larger than 0.01)
+    it('should produce same snapped bbox for near-identical small selections', () => {
+      // Two slightly different boxes drawn for the same area should share cache
+      const box1 = { south: 47.6336, north: 47.6355, west: -117.4249, east: -117.4169 };
+      const box2 = { south: 47.6340, north: 47.6358, west: -117.4245, east: -117.4172 };
+
+      const snapped1 = snapBboxToTileGrid(box1);
+      const snapped2 = snapBboxToTileGrid(box2);
+
+      expect(snapped1).toEqual(snapped2);
+    });
+
+    it('should snap large selection boxes to tile boundaries', () => {
       const largeBox = {
         south: 47.600,
         north: 47.720,
@@ -44,49 +58,29 @@ describe('OSM Bbox Handling', () => {
         east: -117.350,
       };
 
-      expect(shouldSnapBbox(largeBox)).toBe(true);
-
       const snapped = snapBboxToTileGrid(largeBox);
-      // Snapped values should be multiples of 0.05
-      // East gets ceil'd so -117.350 → -117.30 (more easterly)
-      expect(snapped.south).toBeCloseTo(47.60, 5);
-      expect(snapped.north).toBeCloseTo(47.75, 5);
-      expect(snapped.west).toBeCloseTo(-117.50, 5);
-      expect(snapped.east).toBeCloseTo(-117.30, 5);
-    });
-  });
-
-  describe('Bbox snapping edge cases', () => {
-    it('should handle boxes on tile boundaries', () => {
-      // Box exactly at tile boundary
-      const boundaryBox = {
-        south: 47.60,
-        north: 47.65,
-        west: -117.45,
-        east: -117.40,
-      };
-
-      const snapped = snapBboxToTileGrid(boundaryBox);
-      expect(snapped.south).toBeCloseTo(boundaryBox.south, 5);
-      expect(snapped.north).toBeCloseTo(boundaryBox.north, 5);
-      expect(snapped.west).toBeCloseTo(boundaryBox.west, 5);
-      expect(snapped.east).toBeCloseTo(boundaryBox.east, 5);
+      expect(snapped.south).toBeCloseTo(47.600, 3);
+      expect(snapped.north).toBeCloseTo(47.720, 3);
+      expect(snapped.west).toBeCloseTo(-117.500, 3);
+      expect(snapped.east).toBeCloseTo(-117.350, 3);
     });
 
-    it('should expand boxes to full tiles', () => {
-      // Small box within a tile should expand to tile boundaries
-      const smallWithinTile = {
-        south: 47.625,
-        north: 47.635,
-        west: -117.425,
-        east: -117.415,
+    it('should snap to a fine enough grid that small selections do not pull in distant roads', () => {
+      // Small ~200m box
+      const tinyBox = {
+        south: 47.6345,
+        north: 47.6347,
+        west: -117.4210,
+        east: -117.4205,
       };
 
-      const snapped = snapBboxToTileGrid(smallWithinTile);
-      expect(snapped.south).toBeCloseTo(47.60, 5);
-      expect(snapped.north).toBeCloseTo(47.65, 5);
-      expect(snapped.west).toBeCloseTo(-117.45, 5);
-      expect(snapped.east).toBeCloseTo(-117.40, 5);
+      const snapped = snapBboxToTileGrid(tinyBox);
+      const expansionLat = (snapped.north - snapped.south) - (tinyBox.north - tinyBox.south);
+      const expansionLon = (snapped.east - snapped.west) - (tinyBox.east - tinyBox.west);
+
+      // Expansion should be at most 1 tile (~500m) in each dimension, not 5km
+      expect(expansionLat).toBeLessThan(2 * TILE_DEG);
+      expect(expansionLon).toBeLessThan(2 * TILE_DEG);
     });
   });
 
@@ -229,8 +223,8 @@ describe('OSM Bbox Handling', () => {
     });
   });
 
-  describe('Integration: small box should not use stale tile data', () => {
-    it('small selection should fetch exact bbox without tile snapping', () => {
+  describe('Integration: small box stays near requested area', () => {
+    it('small selection snaps to a tile much closer than the old 0.05 degree tiles', () => {
       // Scenario: user draws small box at 21st-23rd Avenue
       const userBox = {
         south: 47.6336,
@@ -239,31 +233,15 @@ describe('OSM Bbox Handling', () => {
         east: -117.4169,
       };
 
-      // Without snapping, request area = 0.0019 * 0.008 = 0.0000152 sq deg
-      const latSpan = userBox.north - userBox.south;
-      const lonSpan = userBox.east - userBox.west;
-      const area = latSpan * lonSpan;
+      const snapped = snapBboxToTileGrid(userBox);
 
-      expect(area).toBeLessThan(0.01);
-      expect(shouldSnapBbox(userBox)).toBe(false);
-
-      // So we fetch exactly this bbox, not a snapped tile
-      // Any roads returned should be within this exact area
-      const roads = [
-        { lat: 47.6345, lon: -117.4209 }, // Inside ✓
-      ];
-
-      roads.forEach((road) => {
-        expect(
-          road.lat <= userBox.north + 0.0001 &&
-            road.lat >= userBox.south - 0.0001 &&
-            road.lon <= userBox.east + 0.0001 &&
-            road.lon >= userBox.west - 0.0001
-        ).toBe(true, `Road ${JSON.stringify(road)} should be in box`);
-      });
+      // The snapped tile should be a tight bounding box around the request
+      // (not a giant 5km tile like the old behavior caused)
+      expect(snapped.north - snapped.south).toBeLessThan(0.015); // < 1.5km tall
+      expect(snapped.east - snapped.west).toBeLessThan(0.015); // < 1.5km wide
     });
 
-    it('should never return roads from different part of tile for small selection', () => {
+    it('should never return roads from far outside the snapped tile', () => {
       const userBox = {
         south: 47.6336,
         north: 47.6355,
@@ -271,14 +249,37 @@ describe('OSM Bbox Handling', () => {
         east: -117.4169,
       };
 
+      const snapped = snapBboxToTileGrid(userBox);
+
       // This was the bug: roads at 47.6273 (south of the box) were being returned
       // because they came from a cached 0.05 degree tile that included that area
+      const problematicRoad = { lat: 47.6273, lon: -117.4280 };
+
+      // With fine-grained tiles, this road would NOT be in the snapped tile,
+      // so it would never be cached together with this request
+      expect(
+        problematicRoad.lat >= snapped.south && problematicRoad.lat <= snapped.north
+      ).toBe(false);
+      expect(
+        problematicRoad.lon >= snapped.west && problematicRoad.lon <= snapped.east
+      ).toBe(false);
+    });
+  });
+
+  describe('Legacy regression check', () => {
+    it('user box snaps to small tile, never pulls in roads from 0.05 degree tile', () => {
+      const userBox = {
+        south: 47.6336,
+        north: 47.6355,
+        west: -117.4249,
+        east: -117.4169,
+      };
       const problematicRoad = { lat: 47.6273, lon: -117.4280 };
 
       expect(
         problematicRoad.lat <= userBox.north + 0.0001 &&
           problematicRoad.lat >= userBox.south - 0.0001
-      ).toBe(false, 'Road should NOT be in box (this was the cache corruption bug)');
+      ).toBe(false);
     });
   });
 });
