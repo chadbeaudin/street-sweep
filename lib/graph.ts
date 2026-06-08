@@ -1465,12 +1465,12 @@ export class StreetGraph {
             }
         }
 
-        const currentMatches = bestMatching || [];
+        const finalMatching = bestMatching || [];
         console.log(`${ts()} Matching found with weight ${bestTotalWeight.toFixed(1)} after ${numStartAttempts} attempts.`);
 
         // Forced bridging for any isolated odd nodes (safety fallback)
         const unmatched = new Set(oddArray);
-        for (const match of currentMatches) {
+        for (const match of finalMatching) {
             unmatched.delete(match.u);
             unmatched.delete(match.v);
         }
@@ -1486,7 +1486,7 @@ export class StreetGraph {
         }
 
         // Apply final matched paths to the graph
-        for (const match of currentMatches) {
+        for (const match of finalMatching) {
             match.path.forEach((p: any) => {
                 const link = this.graph.getLink(p.id, p.idNext);
                 if (link) edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
