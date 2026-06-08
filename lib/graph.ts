@@ -1364,8 +1364,8 @@ export class StreetGraph {
         let bestMatching: { u: string, v: string, weight: number, path: any[] }[] | null = null;
         let bestTotalWeight = Infinity;
 
-        // Try greedy + multiple random starts
-        const numStartAttempts = Math.min(3, Math.ceil(oddArray.length / 2));
+        // Try greedy + multiple random starts to escape local minima
+        const numStartAttempts = Math.min(5, Math.ceil(oddArray.length / 2));
 
         for (let attempt = 0; attempt < numStartAttempts; attempt++) {
             let currentMatches: { u: string, v: string, weight: number, path: any[] }[] = [];
@@ -1407,7 +1407,7 @@ export class StreetGraph {
             // 3. Apply 2-opt refinement to this matching
             let improved = true;
             let iterations = 0;
-            while (improved && iterations < 100) {
+            while (improved && iterations < 200) {
                 improved = false;
                 iterations++;
                 for (let i = 0; i < currentMatches.length; i++) {
