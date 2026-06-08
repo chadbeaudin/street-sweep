@@ -208,15 +208,19 @@ async function getDbCached(key: string, minElements = 0, requestedBbox?: Boundin
         const minLon = Math.min(...lons);
         const maxLon = Math.max(...lons);
 
-        // Check if actual data bounds cover the requested area (with 1% margin)
-        const margin = 0.001;
+        // Check if actual data bounds cover the requested area
+        // Use a generous margin to account for tile-snapping: requests rounded to 0.001 degree
+        // tiles might have small overlaps that don't perfectly align. 0.01 degree (~1km) is safe.
+        const margin = 0.01;
         const covers = minLat <= requestedBbox.south + margin &&
                        maxLat >= requestedBbox.north - margin &&
                        minLon <= requestedBbox.west + margin &&
                        maxLon >= requestedBbox.east - margin;
 
+        console.log(`${ts()} DB cache bbox check for ${key}: data=[${minLat.toFixed(4)},${minLon.toFixed(4)} to ${maxLat.toFixed(4)},${maxLon.toFixed(4)}], requested=[${requestedBbox.south.toFixed(4)},${requestedBbox.west.toFixed(4)} to ${requestedBbox.north.toFixed(4)},${requestedBbox.east.toFixed(4)}], margin=${margin}, covers=${covers}`);
+
         if (!covers) {
-          console.warn(`${ts()} DB cache for ${key} doesn't cover requested bbox (data: [${minLat.toFixed(4)},${minLon.toFixed(4)} to ${maxLat.toFixed(4)},${maxLon.toFixed(4)}], requested: [${requestedBbox.south.toFixed(4)},${requestedBbox.west.toFixed(4)} to ${requestedBbox.north.toFixed(4)},${requestedBbox.east.toFixed(4)}]) — invalidating`);
+          console.warn(`${ts()} DB cache doesn't cover — invalidating`);
           await prisma.osmCache.delete({ where: { key } }).catch(() => {});
           return null;
         }

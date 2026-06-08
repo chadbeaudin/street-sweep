@@ -1259,9 +1259,17 @@ export class StreetGraph {
         // Add all roads that fall within any of the selection boxes to required edges
         if (selectionBoxes && selectionBoxes.length > 0) {
             console.log(`${ts()} Identifying roads in ${selectionBoxes.length} selection boxes...`);
+            for (let i = 0; i < selectionBoxes.length; i++) {
+                const box = selectionBoxes[i];
+                console.log(`${ts()}   Box ${i}: lat [${box.south.toFixed(4)}, ${box.north.toFixed(4)}], lon [${box.west.toFixed(4)}, ${box.east.toFixed(4)}]`);
+            }
             const boxStartTime = Date.now();
             let roadsChecked = 0;
             let roadsIncluded = 0;
+
+            // Sample some roads to understand the data distribution
+            const samples: { lat: number; lon: number; inBox: boolean }[] = [];
+            let sampleCount = 0;
 
             this.graph.forEachLink((link: any) => {
                 roadsChecked++;
@@ -1282,6 +1290,12 @@ export class StreetGraph {
                         return uIn || vIn;
                     });
 
+                    // Log first few road coordinates for debugging
+                    if (sampleCount < 3) {
+                        samples.push({ lat: u.data.lat, lon: u.data.lon, inBox: isRequired });
+                        sampleCount++;
+                    }
+
                     if (isRequired) {
                         roadsIncluded++;
                         allowedLinks.add(link.id);
@@ -1295,6 +1309,9 @@ export class StreetGraph {
                     }
                 }
             });
+            if (samples.length > 0) {
+                console.log(`${ts()}   Sample road coords: ${samples.map(s => `[${s.lat.toFixed(4)},${s.lon.toFixed(4)}] ${s.inBox ? '✓' : '✗'}`).join(', ')}`);
+            }
             console.log(`${ts()} Box filtering: ${roadsIncluded}/${roadsChecked} roads selected (${Date.now() - boxStartTime}ms)`);
         }
 
