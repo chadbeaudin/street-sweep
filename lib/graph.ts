@@ -1364,8 +1364,8 @@ export class StreetGraph {
         let bestMatching: { u: string, v: string, weight: number, path: any[] }[] | null = null;
         let bestTotalWeight = Infinity;
 
-        // Try greedy + multiple random starts
-        const numStartAttempts = Math.min(3, Math.ceil(oddArray.length / 2));
+        // Try greedy + multiple random starts to escape local minima
+        const numStartAttempts = Math.min(5, Math.ceil(oddArray.length / 2));
 
         for (let attempt = 0; attempt < numStartAttempts; attempt++) {
             let currentMatches: { u: string, v: string, weight: number, path: any[] }[] = [];
@@ -1407,11 +1407,25 @@ export class StreetGraph {
             // 3. Apply 2-opt refinement to this matching
             let improved = true;
             let iterations = 0;
-            while (improved && iterations < 100) {
+            const maxIterations = 300;
+            while (improved && iterations < maxIterations) {
                 improved = false;
                 iterations++;
+
+                // Randomize pair order to help escape local minima
+                const pairs: [number, number][] = [];
                 for (let i = 0; i < currentMatches.length; i++) {
                     for (let j = i + 1; j < currentMatches.length; j++) {
+                        pairs.push([i, j]);
+                    }
+                }
+                // Shuffle pairs for randomization
+                for (let k = pairs.length - 1; k > 0; k--) {
+                    const r = Math.floor(Math.random() * (k + 1));
+                    [pairs[k], pairs[r]] = [pairs[r], pairs[k]];
+                }
+
+                for (const [i, j] of pairs) {
                         const m1 = currentMatches[i];
                         const m2 = currentMatches[j];
 
