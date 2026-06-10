@@ -41,6 +41,7 @@ interface MapProps {
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
     preAreaPointCount?: number | null;
     isImportedRoute?: boolean;
+    onRouteHover?: (point: { lat: number; lon: number } | null) => void;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -303,6 +304,65 @@ function findNearestJunctions(route: [number, number, number?, number?][], start
     return [leftJunction, rightJunction];
 }
 
+function RouteHoverTracker({ route, onRouteHover }: { route: [number, number, number?, number?][], onRouteHover: (point: { lat: number; lon: number } | null) => void }) {
+    const map = useMap();
+    const lastRef = React.useRef<{ lat: number; lon: number } | null>(null);
+
+    React.useEffect(() => {
+        const clearHover = () => {
+            if (lastRef.current !== null) {
+                lastRef.current = null;
+                onRouteHover(null);
+            }
+        };
+
+        const handleMove = (e: L.LeafletMouseEvent) => {
+            // Project the cursor onto each route segment (not just vertices —
+            // segments between route points can span a whole block).
+            const cosLat = Math.cos(e.latlng.lat * Math.PI / 180);
+            const cx = e.latlng.lng * cosLat;
+            const cy = e.latlng.lat;
+            let best: { lat: number; lon: number } | null = null;
+            let bestD = Infinity;
+            for (let i = 0; i < route.length - 1; i++) {
+                const ax = route[i][0] * cosLat, ay = route[i][1];
+                const bx = route[i + 1][0] * cosLat, by = route[i + 1][1];
+                const dx = bx - ax, dy = by - ay;
+                const lenSq = dx * dx + dy * dy;
+                let t = lenSq === 0 ? 0 : ((cx - ax) * dx + (cy - ay) * dy) / lenSq;
+                t = Math.max(0, Math.min(1, t));
+                const px = ax + t * dx, py = ay + t * dy;
+                const ddx = cx - px, ddy = cy - py;
+                const d = ddx * ddx + ddy * ddy;
+                if (d < bestD) { bestD = d; best = { lat: py, lon: px / cosLat }; }
+            }
+            if (!best) return;
+
+            const routePx = map.latLngToContainerPoint(L.latLng(best.lat, best.lon));
+            const cursorPx = map.latLngToContainerPoint(e.latlng);
+            if (routePx.distanceTo(cursorPx) > 20) {
+                clearHover();
+                return;
+            }
+            const last = lastRef.current;
+            if (!last || Math.abs(last.lat - best.lat) > 1e-6 || Math.abs(last.lon - best.lon) > 1e-6) {
+                lastRef.current = best;
+                onRouteHover(best);
+            }
+        };
+
+        map.on('mousemove', handleMove);
+        map.on('mouseout', clearHover);
+        return () => {
+            map.off('mousemove', handleMove);
+            map.off('mouseout', clearHover);
+            clearHover();
+        };
+    }, [map, route, onRouteHover]);
+
+    return null;
+}
+
 function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?, number?][], onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void }) {
     const map = useMap();
 
@@ -359,7 +419,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -933,6 +993,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 )}
 
                 <HoverMarker point={hoveredPoint} />
+                {route && route.length > 0 && onRouteHover && (
+                    <RouteHoverTracker route={route} onRouteHover={onRouteHover} />
+                )}
             </MapContainer>
 
             {isSelectionMode && (

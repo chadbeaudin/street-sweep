@@ -9,7 +9,8 @@ import {
     CartesianGrid,
     Tooltip,
     ResponsiveContainer,
-    ReferenceLine
+    ReferenceLine,
+    ReferenceDot
 } from 'recharts';
 
 interface ElevationData {
@@ -24,9 +25,10 @@ interface ElevationProfileProps {
     onHover: (point: { lat: number; lon: number } | null) => void;
     totalDistance?: string | null;
     totalElevationGain?: number;
+    highlightPoint?: { lat: number; lon: number } | null;
 }
 
-const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover, totalDistance, totalElevationGain }) => {
+const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover, totalDistance, totalElevationGain, highlightPoint }) => {
     const yDomain = useMemo(() => {
         if (!data || data.length === 0) return [0, 100];
         const elevations = data.map(d => d.elevation);
@@ -37,6 +39,21 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover,
             Math.ceil(maxElev / 100) * 100 + 100
         ];
     }, [data]);
+
+    // Map a hovered map-route coordinate to the nearest elevation sample
+    const highlight = useMemo(() => {
+        if (!highlightPoint || !data || data.length === 0) return null;
+        const cosLat = Math.cos(highlightPoint.lat * Math.PI / 180);
+        let best = data[0];
+        let bestD = Infinity;
+        for (const d of data) {
+            const dLat = d.lat - highlightPoint.lat;
+            const dLon = (d.lon - highlightPoint.lon) * cosLat;
+            const dist = dLat * dLat + dLon * dLon;
+            if (dist < bestD) { bestD = dist; best = d; }
+        }
+        return best;
+    }, [data, highlightPoint]);
 
     if (!data || data.length === 0) return null;
 
@@ -82,6 +99,8 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover,
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
                         <XAxis
                             dataKey="distance"
+                            type="number"
+                            domain={['dataMin', 'dataMax']}
                             tickFormatter={(val) => `${val} mi`}
                             fontSize={10}
                             tick={{ fill: '#9CA3AF' }}
@@ -111,6 +130,16 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover,
                             strokeWidth={2}
                             activeDot={{ r: 4, strokeWidth: 0, fill: '#6366F1' }}
                         />
+                        {highlight && (
+                            <ReferenceDot
+                                x={highlight.distance}
+                                y={highlight.elevation}
+                                r={6}
+                                fill="#F59E0B"
+                                stroke="white"
+                                strokeWidth={2}
+                            />
+                        )}
                     </AreaChart>
                 </ResponsiveContainer>
             </div>

@@ -25,6 +25,7 @@ export default function Home() {
     const [elevationData, setElevationData] = useState<any[] | null>(null);
     const [totalDistance, setTotalDistance] = useState<string | null>(null);
     const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
+    const [routeHoverPoint, setRouteHoverPoint] = useState<{ lat: number; lon: number } | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [serviceWarning, setServiceWarning] = useState(false);
@@ -1326,6 +1327,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     isEraserMode={isEraserMode}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
+                    onRouteHover={setRouteHoverPoint}
                 />
 
                 {elevationData && (
@@ -1334,6 +1336,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         onHover={setHoveredPoint}
                         totalDistance={totalDistance}
                         totalElevationGain={totalElevationGain}
+                        highlightPoint={routeHoverPoint}
                     />
                 )}
 
