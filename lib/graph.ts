@@ -383,7 +383,7 @@ export class StreetGraph {
 
     private buildGeographicEulerianTrail(edges: { u: string, v: string, data: any }[], startNodeId: string | null): string[] {
         const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
-        const adj = new Map<string, { id: number, target: string }[]>();
+        const adj = new Map<string, { id: number, target: string, isConnector: boolean }[]>();
         let edgeCounter = 0;
 
         // Track which geometric edges (u-v pairs) have duplicates so we can prefer
@@ -395,8 +395,9 @@ export class StreetGraph {
             const id = edgeCounter++;
             if (!adj.has(e.u)) adj.set(e.u, []);
             if (!adj.has(e.v)) adj.set(e.v, []);
-            adj.get(e.u)!.push({ id, target: e.v });
-            adj.get(e.v)!.push({ id, target: e.u });
+            const isConnector = !!(e.data.isVirtual || e.data.isRidden);
+            adj.get(e.u)!.push({ id, target: e.v, isConnector });
+            adj.get(e.v)!.push({ id, target: e.u, isConnector });
 
             const key = edgePairKey(e.u, e.v);
             edgePairCount.set(key, (edgePairCount.get(key) || 0) + 1);
@@ -446,23 +447,28 @@ export class StreetGraph {
                         const candidate = unused[i];
                         const nextNodeId = candidate.target;
 
-                        if (nextNodeId === prevNodeId) {
-                            // Heavily penalize immediate U-turns
-                            const score = -1e9;
-                            if (score > bestScore) { bestScore = score; bestIdx = i; }
-                            continue;
-                        }
-
-                        // Score: prefer "fresh" edges (no copy used yet) over second-traversals
-                        // of doubled edges. This defers in-out backtracks until the moment we
-                        // naturally have to be at that intersection again.
                         const pairKey = edgePairKey(curr, nextNodeId);
                         const pairTotal = edgePairCount.get(pairKey) || 1;
                         const pairUsed = edgePairUsed.get(pairKey) || 0;
                         // If this is a duplicate edge AND its first copy was already used,
-                        // we're about to do a "second traversal" – defer it.
+                        // we're about to do a "second traversal" of a doubled road.
                         const isSecondTraversal = pairTotal > 1 && pairUsed > 0;
-                        let score = isSecondTraversal ? -10000 : 0;
+
+                        if (nextNodeId === prevNodeId) {
+                            // An immediate U-turn is allowed only to finish the second copy
+                            // of the edge we just rode (out-and-back on a doubled spur).
+                            // On a bike that's a natural maneuver, and for turn-by-turn
+                            // navigation it beats jaunting onto connector roads first.
+                            const score = isSecondTraversal ? -5000 : -1e9;
+                            if (score > bestScore) { bestScore = score; bestIdx = i; }
+                            continue;
+                        }
+
+                        // Tiers: fresh required edges (0) > spur-finishing U-turn (-5000,
+                        // above) > connectors over ridden/virtual roads that cover nothing
+                        // new (-8000) > deferred second traversals (-10000).
+                        const isConnector = pairTotal === 1 && candidate.isConnector;
+                        let score = isSecondTraversal ? -10000 : (isConnector ? -8000 : 0);
 
                         // Tiebreaker: bearing (prefer continuing straight)
                         if (inBearing !== null && currNode) {
@@ -1476,9 +1482,14 @@ export class StreetGraph {
         const oddArray = Array.from(remainingOdd);
         const distMatrix = new Map<string, Map<string, { weight: number, path: any[] }>>();
         
-        // 1. Compute APSP for odd nodes
+        // 1. Compute APSP for odd nodes using RAW lengths (penalty=1).
+        // The ridden penalty must not apply here: it made doubling long unridden
+        // required roads look cheaper than short connectors over ridden roads,
+        // producing redundant back-and-forth passes (e.g. W 21st Ave doubled twice).
+        // A second traversal of a required road covers nothing new, so matching
+        // should simply minimize real distance.
         for (const u of oddArray) {
-            const res = this.findAllTargets(u, remainingOdd, undefined, riddenPenalty);
+            const res = this.findAllTargets(u, remainingOdd, undefined, 1);
             distMatrix.set(u, res);
         }
 
@@ -1588,8 +1599,17 @@ export class StreetGraph {
 
         const finalMatching = bestMatching || [];
         console.log(`${ts()} Matching found with weight ${bestTotalWeight.toFixed(1)} after ${numStartAttempts} attempts.`);
-        if (finalMatching.length > 0 && finalMatching.length <= 5) {
-            console.log(`${ts()}   Matches: ${finalMatching.map(m => `(${m.u.substring(0,8)}↔${m.v.substring(0,8)}, wt=${m.weight.toFixed(0)})`).join(', ')}`);
+
+        // Detailed match logging — coords help identify where doubled edges are visually
+        if (finalMatching.length > 0) {
+            for (let i = 0; i < finalMatching.length; i++) {
+                const m = finalMatching[i];
+                const uNode = this.graph.getNode(m.u);
+                const vNode = this.graph.getNode(m.v);
+                const uCoord = uNode ? `[${uNode.data.lat.toFixed(4)},${uNode.data.lon.toFixed(4)}]` : '?';
+                const vCoord = vNode ? `[${vNode.data.lat.toFixed(4)},${vNode.data.lon.toFixed(4)}]` : '?';
+                console.log(`${ts()}   Match ${i}: ${uCoord} ↔ ${vCoord} (wt=${m.weight.toFixed(0)}m, ${m.path.length} edges)`);
+            }
         }
 
         // Forced bridging for any isolated odd nodes (safety fallback)

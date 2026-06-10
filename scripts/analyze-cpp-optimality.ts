@@ -6,8 +6,8 @@
 import { fetchOSMData } from '../lib/overpass';
 import { StreetGraph } from '../lib/graph';
 
-// Box from the most recent screenshot — roughly 21st to 23rd Ave, Lincoln to Bernard
-const BOX = { south: 47.6336, north: 47.6355, west: -117.4249, east: -117.4169 };
+// Box from the user's latest log (reconstructed from buffered bbox minus 500m buffer)
+const BOX = { south: 47.62938, north: 47.64131, west: -117.43138, east: -117.38469 };
 const BUFFER = 0.005;
 const buffered = {
   south: BOX.south - BUFFER,
