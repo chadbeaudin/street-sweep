@@ -11,7 +11,7 @@ export async function POST(request: Request) {
 
         // Backward compatibility: Convert single selectionBox to array if present
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
-        const selectionPolygons = selectionPolygonsRaw || [];
+        const selectionPolygons: [number, number][][] = selectionPolygonsRaw || [];
 
         console.log(`${ts()} API received: boxes=${selectionBoxes?.length || 0}, polygons=${selectionPolygons.length}`);
 
