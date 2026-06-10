@@ -20,6 +20,24 @@ const OSM_CACHE = new Map<string, { data: OverpassResponse; timestamp: number }>
 const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
 const IN_FLIGHT_REQUESTS = new Map<string, Promise<OverpassResponse>>();
 
+// Overpass mirrors allow only ~2 query slots per IP; firing more concurrent
+// requests queues them server-side until our client timeout aborts them.
+const MAX_CONCURRENT_FETCHES = 2;
+let activeFetches = 0;
+const fetchWaiters: (() => void)[] = [];
+async function acquireFetchSlot(): Promise<void> {
+    if (activeFetches < MAX_CONCURRENT_FETCHES) {
+        activeFetches++;
+        return;
+    }
+    await new Promise<void>(resolve => fetchWaiters.push(resolve));
+    activeFetches++;
+}
+function releaseFetchSlot(): void {
+    activeFetches--;
+    fetchWaiters.shift()?.();
+}
+
 // Circuit breaker: skip mirrors that failed recently
 const MIRROR_FAILURES = new Map<string, { time: number; transient: boolean }>();
 const CIRCUIT_OPEN_TTL = 5 * 60 * 1000;         // 5 min for hard errors
@@ -302,13 +320,12 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   const now = Date.now();
 
   // For medium/large areas, reject cached responses that are clearly incomplete.
-  // 500 is conservative: even sparse residential grids return thousands of elements.
-  // Entries fetched within the last hour are trusted (they may be legitimately sparse).
   const bboxArea = latSpan * lonSpan;
-  // Density-based floor: ~1M elements per sq deg catches severely sparse/corrupt fetches
-  // while allowing legitimate small-area caches. Small selections (< 0.003 sq deg) are
-  // trusted entirely; larger areas need at least 2000 elements to be considered complete.
-  const minElements = bboxArea > 0.003 ? Math.min(2000, Math.round(bboxArea * 1_000_000)) : 0;
+  // Density floor calibrated to the ways-only Overpass query (`out geom`), which
+  // returns ~500k ways/sq deg in urban grids — NOT the node-heavy OSM API fallback
+  // format (~40M elems/sq deg). 100k/sq deg catches truncated/corrupt fetches with
+  // ~5x margin. Small selections (< 0.003 sq deg) are trusted entirely.
+  const minElements = bboxArea > 0.003 ? Math.min(500, Math.round(bboxArea * 100_000)) : 0;
 
   // 1. Check in-memory cache
   const cached = OSM_CACHE.get(cacheKey);
@@ -356,6 +373,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
     let lastError: Error | null = null;
     const maxRetries = 1; // One pass through all mirrors
 
+    await acquireFetchSlot();
     try {
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -366,7 +384,9 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
           try {
             console.log(`${ts()} Fetching OSM data from ${endpoint}...`);
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+            // 25s: large-area queries legitimately take >10s; aborting too early
+            // cascades through every mirror and lands on the slow OSM API fallback.
+            const timeoutId = setTimeout(() => controller.abort(), 25000);
 
             const response = await fetch(endpoint, {
               method: 'POST',
@@ -384,8 +404,10 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               const data = (await response.json()) as OverpassResponse;
 
               // Reject responses that are clearly incomplete for the requested area.
-              // A healthy urban tile returns ~50M elements/sq deg; our floor is ~1M.
-              const sparseFloor = Math.min(2000, Math.round(bboxArea * 1_000_000));
+              // Calibrated to the ways-only query above (~500k ways/sq deg urban);
+              // see minElements above. Rejecting valid responses here cascades into
+              // circuit-breaker failures on healthy mirrors and slow API fallbacks.
+              const sparseFloor = Math.min(500, Math.round(bboxArea * 100_000));
               if (data.elements.length === 0 || (bboxArea > 0.003 && data.elements.length < sparseFloor)) {
                 console.warn(`${ts()} Mirror ${endpoint} returned ${data.elements.length} elements (floor ${sparseFloor}). Trying next mirror...`);
                 recordFailure(endpoint);
@@ -434,6 +456,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
         elements: []
       };
     } finally {
+      releaseFetchSlot();
       IN_FLIGHT_REQUESTS.delete(cacheKey);
     }
   })();
