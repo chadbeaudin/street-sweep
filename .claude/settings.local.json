@@ -52,7 +52,8 @@
       "Bash(grep -n '`' /Users/chadbeaudin/dev/projects/StreetSweep/lib/graph.ts)",
       "Bash(pkill -f \"node.*start.sh\")",
       "Bash(killall node *)",
-      "Bash(npx tsx *)"
+      "Bash(npx tsx *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['id'], e['tags']\\) for e in d['elements']]\")"
     ]
   }
 }
