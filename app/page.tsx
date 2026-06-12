@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3 } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { StatsDialog } from '@/components/StatsDialog';
@@ -955,9 +955,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
                             title="View coverage stats"
                         >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" />
-                            </svg>
+                            <BarChart3 className="w-4 h-4" />
                             Stats
                         </button>
                     )}

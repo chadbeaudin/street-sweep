@@ -30,10 +30,11 @@ interface StatsPayload {
     cities: CityStats[];
 }
 
-interface StatsResponse extends StatsPayload {
-    refreshedAt: string;
+interface StatsResponse extends Partial<StatsPayload> {
+    refreshedAt: string | null;
     stale: boolean;
     refreshing: boolean;
+    computing: boolean;
 }
 
 interface StravaCredentials {
@@ -92,21 +93,40 @@ function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): 
 }
 
 async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPayload> {
+    console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} activities`);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
 
+    // Dedupe centroids to ~5km buckets BEFORE hitting Nominatim. With 800+
+    // activities concentrated in one metro area this collapses to <20 lookups
+    // instead of one per activity (which would take ~15 min at 1 req/sec).
     const centroidByActivity = riddenRoads.map(polylineCentroid);
-    const cityByActivity: ({ city: string; state: string | null; country: string | null } | null)[] = [];
+    const uniqueBuckets = new Map<string, [number, number]>();
     for (const c of centroidByActivity) {
-        if (!c) { cityByActivity.push(null); continue; }
+        if (!c) continue;
+        // Same 5km quantization that lib/nominatim uses for its cache key.
+        const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
+        if (!uniqueBuckets.has(bucketKey)) uniqueBuckets.set(bucketKey, c);
+    }
+    console.log(`${ts()} Stats: ${uniqueBuckets.size} unique ~5km buckets to reverse-geocode`);
+
+    const bucketResult = new Map<string, { city: string; state: string | null; country: string | null } | null>();
+    for (const [bucketKey, c] of uniqueBuckets) {
         try {
             const r = await reverseGeocode(c[0], c[1]);
-            cityByActivity.push(r.city ? { city: r.city, state: r.state, country: r.country } : null);
+            bucketResult.set(bucketKey, r.city ? { city: r.city, state: r.state, country: r.country } : null);
         } catch (e) {
             console.warn(`${ts()} reverse-geocode failed:`, e);
-            cityByActivity.push(null);
+            bucketResult.set(bucketKey, null);
         }
     }
+    console.log(`${ts()} Stats: reverse-geocoding complete`);
+
+    const cityByActivity: ({ city: string; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
+        if (!c) return null;
+        const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
+        return bucketResult.get(bucketKey) ?? null;
+    });
 
     const byCity = new Map<string, { city: string; state: string | null; country: string | null; activityIdx: number[] }>();
     for (let i = 0; i < cityByActivity.length; i++) {
@@ -207,24 +227,22 @@ export async function POST(request: Request) {
                 ...payload,
                 refreshedAt: cached.refreshedAt.toISOString(),
                 stale,
-                refreshing: stale
+                refreshing: REFRESHING.has(athleteId),
+                computing: false
             };
             return NextResponse.json(response);
         }
 
-        // No cache — compute synchronously so the user sees something first time.
-        console.log(`${ts()} Stats: cold compute for athlete ${athleteId} (${riddenRoads.length} activities)`);
-        const fresh = await computeStats(riddenRoads);
-        const saved = await prisma.statsCache.upsert({
-            where: { athleteId },
-            create: { athleteId, stats: fresh as any, refreshedAt: new Date() },
-            update: { stats: fresh as any, refreshedAt: new Date() }
-        });
+        // No cache — kick off the computation in the background and return
+        // immediately. The client polls /api/stats until cached data appears
+        // so the dialog never blocks on a multi-minute cold compute.
+        console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId} (${riddenRoads.length} activities)`);
+        refreshInBackground(athleteId, riddenRoads);
         const response: StatsResponse = {
-            ...fresh,
-            refreshedAt: saved.refreshedAt.toISOString(),
+            refreshedAt: null,
             stale: false,
-            refreshing: false
+            refreshing: true,
+            computing: true
         };
         return NextResponse.json(response);
     } catch (error: any) {

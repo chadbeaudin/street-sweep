@@ -13,12 +13,13 @@ interface CityStats {
 }
 
 interface StatsResponse {
-    totalActivities: number;
-    totalUniqueMiles: number;
-    cities: CityStats[];
-    refreshedAt?: string;
+    totalActivities?: number;
+    totalUniqueMiles?: number;
+    cities?: CityStats[];
+    refreshedAt?: string | null;
     stale?: boolean;
     refreshing?: boolean;
+    computing?: boolean;
 }
 
 interface StatsDialogProps {
@@ -51,20 +52,44 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
             setStats({ totalActivities: 0, totalUniqueMiles: 0, cities: [] });
             return;
         }
-        setLoading(true);
+
+        let cancelled = false;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const fetchOnce = async (isInitial: boolean) => {
+            if (isInitial) setLoading(true);
+            try {
+                const res = await fetch('/api/stats', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ riddenRoads, stravaCredentials })
+                });
+                const data = await res.json();
+                if (cancelled) return;
+                if (data.error) {
+                    setError(data.error);
+                } else {
+                    setStats(data);
+                    // Poll while a background compute is in progress so the UI
+                    // shows fresh numbers as soon as they land.
+                    if ((data.computing || data.refreshing) && !cancelled) {
+                        pollTimer = setTimeout(() => fetchOnce(false), 5000);
+                    }
+                }
+            } catch (err: any) {
+                if (!cancelled) setError(err.message);
+            } finally {
+                if (isInitial && !cancelled) setLoading(false);
+            }
+        };
+
         setError(null);
-        fetch('/api/stats', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ riddenRoads, stravaCredentials })
-        })
-            .then(res => res.json())
-            .then(data => {
-                if (data.error) setError(data.error);
-                else setStats(data);
-            })
-            .catch(err => setError(err.message))
-            .finally(() => setLoading(false));
+        fetchOnce(true);
+
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
     }, [isOpen, riddenRoads, stravaCredentials]);
 
     if (!isOpen) return null;
@@ -95,7 +120,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
                     {loading && (
                         <div className="flex flex-col items-center gap-3 py-12 text-gray-500">
                             <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-                            <p className="text-sm">Crunching your rides… (cities take a few seconds each)</p>
+                            <p className="text-sm">Crunching your rides…</p>
                         </div>
                     )}
 
@@ -105,7 +130,18 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
                         </div>
                     )}
 
-                    {!loading && !error && stats && (
+                    {!loading && !error && stats && stats.computing && (
+                        <div className="flex flex-col items-center gap-3 py-12 text-gray-500">
+                            <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                            <p className="text-sm font-medium">Computing your first stats…</p>
+                            <p className="text-xs text-gray-400 text-center max-w-xs">
+                                Big histories can take a few minutes. You can close this dialog — the
+                                results will be cached and ready instantly next time you open it.
+                            </p>
+                        </div>
+                    )}
+
+                    {!loading && !error && stats && !stats.computing && stats.totalActivities !== undefined && (
                         <>
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="bg-gray-50 rounded-lg p-4">
@@ -114,14 +150,14 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
                                 </div>
                                 <div className="bg-indigo-50 rounded-lg p-4">
                                     <div className="text-xs font-medium text-indigo-700 uppercase tracking-wider">Unique Miles</div>
-                                    <div className="text-3xl font-bold text-indigo-900 mt-1">{stats.totalUniqueMiles.toFixed(1)}</div>
+                                    <div className="text-3xl font-bold text-indigo-900 mt-1">{(stats.totalUniqueMiles ?? 0).toFixed(1)}</div>
                                     <div className="text-xs text-indigo-600 mt-1">deduplicated across all rides</div>
                                 </div>
                             </div>
 
                             <div>
                                 <h3 className="text-sm font-semibold text-gray-700 mb-3">By City</h3>
-                                {stats.cities.length === 0 ? (
+                                {!stats.cities || stats.cities.length === 0 ? (
                                     <p className="text-sm text-gray-500">No cities detected yet.</p>
                                 ) : (
                                     <div className="space-y-2">
