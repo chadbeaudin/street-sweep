@@ -1,13 +1,31 @@
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 const USER_AGENT = 'StreetSweep/1.0 (https://github.com/chadbeaudin/street-sweep)';
 const MIN_GAP_MS = 1100; // Nominatim TOS: max 1 req/sec
+const FETCH_TIMEOUT_MS = 8000;
 const CACHE_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days
 
-let lastRequestAt = 0;
+// Mutex chain: each rate-limited fetch awaits the previous slot's release
+// before its own fires. A naive `await sleep(gap)` based on a shared
+// lastRequestAt is racy — many parallel callers compute the same `gap`,
+// all sleep the same amount, all fire together, and Nominatim blanket-429s.
+let rateLimitChain: Promise<void> = Promise.resolve();
 async function rateLimit(): Promise<void> {
-    const gap = Date.now() - lastRequestAt;
-    if (gap < MIN_GAP_MS) await new Promise(r => setTimeout(r, MIN_GAP_MS - gap));
-    lastRequestAt = Date.now();
+    const myTurn = rateLimitChain;
+    rateLimitChain = (async () => {
+        await myTurn;
+        await new Promise<void>(r => setTimeout(r, MIN_GAP_MS));
+    })();
+    await myTurn;
+}
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
 }
 
 interface ReverseResult {
@@ -39,21 +57,32 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ReverseR
 
     await rateLimit();
     const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1`;
-    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-    if (!res.ok) {
-        const empty: ReverseResult = { city: null, state: null, country: null };
-        REVERSE_CACHE.set(key, empty);
-        return empty;
+    try {
+        const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+        if (!res.ok) {
+            // Don't cache 429 — we want to retry on the next request after backoff.
+            // Other 4xx/5xx are typically permanent (bad coord, etc) — cache empty.
+            if (res.status !== 429) {
+                const empty: ReverseResult = { city: null, state: null, country: null };
+                REVERSE_CACHE.set(key, empty);
+                return empty;
+            }
+            throw new Error(`Nominatim 429 (rate-limited)`);
+        }
+        const data = await res.json();
+        const addr = data.address || {};
+        const result: ReverseResult = {
+            city: addr.city || addr.town || addr.village || addr.hamlet || addr.municipality || null,
+            state: addr.state || addr.region || null,
+            country: addr.country || null
+        };
+        REVERSE_CACHE.set(key, result);
+        return result;
+    } catch (e: any) {
+        // Don't cache transient errors (timeouts, 429s) — but propagate so the
+        // caller can stop hammering rather than logging once per failed bucket.
+        throw e;
     }
-    const data = await res.json();
-    const addr = data.address || {};
-    const result: ReverseResult = {
-        city: addr.city || addr.town || addr.village || addr.hamlet || addr.municipality || null,
-        state: addr.state || addr.region || null,
-        country: addr.country || null
-    };
-    REVERSE_CACHE.set(key, result);
-    return result;
 }
 
 export async function searchCityPolygon(name: string, state: string | null, country: string | null): Promise<CityPolygon | null> {
@@ -64,8 +93,12 @@ export async function searchCityPolygon(name: string, state: string | null, coun
     await rateLimit();
     const q = encodeURIComponent(qParts.join(', '));
     const url = `${NOMINATIM_BASE}/search?q=${q}&format=json&polygon_geojson=1&limit=1&featuretype=city`;
-    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-    if (!res.ok) { POLYGON_CACHE.set(cacheKey, null); return null; }
+    const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+    if (!res.ok) {
+        if (res.status === 429) throw new Error('Nominatim 429 (rate-limited)');
+        POLYGON_CACHE.set(cacheKey, null);
+        return null;
+    }
     const arr = await res.json();
     if (!arr || arr.length === 0) { POLYGON_CACHE.set(cacheKey, null); return null; }
     const top = arr[0];

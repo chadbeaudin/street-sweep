@@ -115,16 +115,34 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     console.log(`${ts()} Stats: ${uniqueBuckets.size} unique ~5km buckets to reverse-geocode`);
 
     const bucketResult = new Map<string, { city: string; state: string | null; country: string | null } | null>();
-    for (const [bucketKey, c] of uniqueBuckets) {
+    const bucketEntries = Array.from(uniqueBuckets.entries());
+    let rateLimitHits = 0;
+    for (let i = 0; i < bucketEntries.length; i++) {
+        const [bucketKey, c] = bucketEntries[i];
         try {
             const r = await reverseGeocode(c[0], c[1]);
             bucketResult.set(bucketKey, r.city ? { city: r.city, state: r.state, country: r.country } : null);
-        } catch (e) {
-            console.warn(`${ts()} reverse-geocode failed:`, e);
+            rateLimitHits = 0;
+            if ((i + 1) % 25 === 0) {
+                console.log(`${ts()} Stats: reverse-geocode progress ${i + 1}/${bucketEntries.length}`);
+            }
+        } catch (e: any) {
+            const msg = e?.message || String(e);
+            console.warn(`${ts()} reverse-geocode bucket ${bucketKey} failed: ${msg}`);
             bucketResult.set(bucketKey, null);
+            // If Nominatim is sustainedly 429'ing or timing out, abandon further
+            // city detection — we'll still return unique miles + elevation, and
+            // the next refresh after the rate-limit window will fill cities in.
+            if (msg.includes('429') || msg.includes('abort')) {
+                rateLimitHits++;
+                if (rateLimitHits >= 5) {
+                    console.warn(`${ts()} Stats: bailing out of reverse-geocode after ${rateLimitHits} consecutive rate-limit/timeout errors`);
+                    break;
+                }
+            }
         }
     }
-    console.log(`${ts()} Stats: reverse-geocoding complete`);
+    console.log(`${ts()} Stats: reverse-geocoding complete (${bucketResult.size}/${bucketEntries.length} buckets resolved)`);
 
     const cityByActivity: ({ city: string; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
         if (!c) return null;
