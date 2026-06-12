@@ -1,5 +1,6 @@
 import { BoundingBox, OverpassResponse, OSMElement } from './types';
 import { prisma } from './prisma';
+import { readDiskCache, writeDiskCache } from './osmDiskCache';
 
 const OVERPASS_ENDPOINTS = [
   'https://lz4.overpass-api.de/api/interpreter',
@@ -17,7 +18,7 @@ async function delay(ms: number) {
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 const OSM_CACHE = new Map<string, { data: OverpassResponse; timestamp: number }>();
-const CACHE_TTL = 1000 * 60 * 60 * 24; // 24 hours
+const CACHE_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days — OSM streets are effectively static at this timescale
 const IN_FLIGHT_REQUESTS = new Map<string, Promise<OverpassResponse>>();
 
 // Overpass mirrors allow only ~2 query slots per IP; firing more concurrent
@@ -345,11 +346,24 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
     }
   }
 
-  // 2. Check persistent DB cache (survives server restarts)
+  // 2. Check on-disk cache (survives process restart, no Neon egress).
+  // OSM data is effectively static at 30-day timescales, so the disk layer is
+  // the workhorse: after first read, Neon never sees this tile again.
+  const diskCached = await readDiskCache(cacheKey);
+  if (diskCached && diskCached.elements.length > 0) {
+    console.log(`${ts()} Returning disk-cached OSM data (${diskCached.elements.length} elems) for ${cacheKey}`);
+    OSM_CACHE.set(cacheKey, { data: diskCached, timestamp: now });
+    return diskCached;
+  }
+
+  // 3. Check persistent DB cache (Neon — shared across instances).
   const dbCached = await getDbCached(cacheKey, minElements, bbox);
   if (dbCached && dbCached.elements.length > 0) {
     console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
-    OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now }); // warm memory cache
+    OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now });
+    // Seed the local disk so subsequent reads skip Neon entirely.
+    // writeDiskCache catches internally, so a fire-and-forget call is safe.
+    void writeDiskCache(cacheKey, dbCached);
     return dbCached;
   }
 
@@ -417,6 +431,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               recordSuccess(endpoint);
               OSM_CACHE.set(cacheKey, { data, timestamp: Date.now() });
               setDbCached(cacheKey, data); // fire-and-forget
+              void writeDiskCache(cacheKey, data);
               return data;
             }
 
@@ -446,6 +461,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
       if (osmFallback && osmFallback.elements.length > 0) {
         OSM_CACHE.set(cacheKey, { data: osmFallback, timestamp: Date.now() });
         setDbCached(cacheKey, osmFallback);
+        void writeDiskCache(cacheKey, osmFallback);
         return osmFallback;
       }
 

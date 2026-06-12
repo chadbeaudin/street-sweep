@@ -11,10 +11,20 @@ jest.mock('./prisma', () => ({
     }
 }));
 
+// Disk cache layer must also be mocked — without it, dev/test runs may hit
+// real cached tiles on the filesystem and the network-fetch path never executes.
+jest.mock('./osmDiskCache', () => ({
+    readDiskCache: jest.fn().mockResolvedValue(null),
+    writeDiskCache: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { fetchOSMData, resetCircuitBreakers, clearOSMCache } from './overpass';
+import { readDiskCache, writeDiskCache } from './osmDiskCache';
 
 const mockFindUnique = prisma.osmCache.findUnique as jest.Mock;
 const mockUpsert = prisma.osmCache.upsert as jest.Mock;
+const mockReadDisk = readDiskCache as jest.Mock;
+const mockWriteDisk = writeDiskCache as jest.Mock;
 
 // Small bbox that snaps to a single 0.05×0.05 tile (0.0025 sq deg) — below the
 // sparse-check threshold so 2-element mock data isn't rejected as incomplete.
@@ -40,6 +50,8 @@ describe('OSM DB cache', () => {
         clearOSMCache();
         jest.clearAllMocks();
         mockUpsert.mockResolvedValue({});
+        mockReadDisk.mockResolvedValue(null);
+        mockWriteDisk.mockResolvedValue(undefined);
     });
 
     afterEach(() => {

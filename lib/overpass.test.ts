@@ -8,6 +8,11 @@ jest.mock('./prisma', () => ({
     }
 }));
 
+jest.mock('./osmDiskCache', () => ({
+    readDiskCache: jest.fn().mockResolvedValue(null),
+    writeDiskCache: jest.fn().mockResolvedValue(undefined),
+}));
+
 import { fetchOSMData, resetCircuitBreakers } from './overpass';
 
 describe('fetchOSMData robustness', () => {

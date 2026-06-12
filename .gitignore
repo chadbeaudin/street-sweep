@@ -34,3 +34,6 @@ ts-debug.log*
 
 /lib/generated/prisma
 /data/
+
+# Disk-backed OSM cache (regenerable from Neon or Overpass)
+/.cache/
