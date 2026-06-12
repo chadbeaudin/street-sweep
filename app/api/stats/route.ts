@@ -182,17 +182,34 @@ async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPay
 // same user doesn't trigger overlapping refreshes from rapid dialog opens.
 const REFRESHING: Set<string> = new Set();
 
+async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
+    // Neon's HTTP driver occasionally rejects with `TypeError: fetch failed`
+    // on transient network blips. The compute is expensive — retry rather
+    // than throwing away minutes of work.
+    const delays = [500, 2000, 5000];
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+        try {
+            await prisma.statsCache.upsert({
+                where: { athleteId },
+                create: { athleteId, stats: stats as any, refreshedAt: new Date() },
+                update: { stats: stats as any, refreshedAt: new Date() }
+            });
+            return;
+        } catch (e: any) {
+            if (attempt === delays.length) throw e;
+            console.warn(`${ts()} Stats: persist attempt ${attempt + 1} failed (${e?.message || e}); retrying`);
+            await new Promise(r => setTimeout(r, delays[attempt]));
+        }
+    }
+}
+
 async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][]) {
     if (REFRESHING.has(athleteId)) return;
     REFRESHING.add(athleteId);
     try {
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
         const fresh = await computeStats(riddenRoads);
-        await prisma.statsCache.upsert({
-            where: { athleteId },
-            create: { athleteId, stats: fresh as any, refreshedAt: new Date() },
-            update: { stats: fresh as any, refreshedAt: new Date() }
-        });
+        await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {
         console.warn(`${ts()} Stats: background refresh failed for ${athleteId}:`, e?.message || e);
