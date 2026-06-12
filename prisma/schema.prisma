@@ -57,3 +57,11 @@ model StravaActivity {
 
   @@map("strava_activities")
 }
+
+model StatsCache {
+  athleteId   String   @id
+  stats       Json
+  refreshedAt DateTime @default(now())
+
+  @@map("stats_cache")
+}

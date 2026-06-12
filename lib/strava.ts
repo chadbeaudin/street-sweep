@@ -74,6 +74,16 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
     return data.access_token;
 }
 
+export async function getStravaAthleteId(accessToken: string): Promise<string> {
+    const res = await fetch('https://www.strava.com/api/v3/athlete', {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!res.ok) throw new Error(`Strava /athlete failed: ${res.status}`);
+    const data = await res.json();
+    if (!data?.id) throw new Error('Strava /athlete response missing id');
+    return String(data.id);
+}
+
 export async function fetchAllStravaActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<StravaActivity[]> {
     const accessToken = await getStravaAccessToken(creds);
     let page = 1;

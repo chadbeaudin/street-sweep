@@ -1375,6 +1375,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     isOpen={showStats}
                     onClose={() => setShowStats(false)}
                     riddenRoads={stravaRoads}
+                    stravaCredentials={stravaCredentials}
                 />
 
                 {error && (

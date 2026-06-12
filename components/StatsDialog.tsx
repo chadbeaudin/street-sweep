@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Loader2, MapPin } from 'lucide-react';
+import { X, Loader2, MapPin, RefreshCw } from 'lucide-react';
 
 interface CityStats {
     name: string;
@@ -16,15 +16,31 @@ interface StatsResponse {
     totalActivities: number;
     totalUniqueMiles: number;
     cities: CityStats[];
+    refreshedAt?: string;
+    stale?: boolean;
+    refreshing?: boolean;
 }
 
 interface StatsDialogProps {
     isOpen: boolean;
     onClose: () => void;
     riddenRoads: [number, number][][] | null;
+    stravaCredentials: any;
 }
 
-export function StatsDialog({ isOpen, onClose, riddenRoads }: StatsDialogProps) {
+function formatAge(refreshedAt?: string): string | null {
+    if (!refreshedAt) return null;
+    const ms = Date.now() - new Date(refreshedAt).getTime();
+    const mins = Math.floor(ms / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} min ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+}
+
+export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }: StatsDialogProps) {
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -40,7 +56,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads }: StatsDialogProps) 
         fetch('/api/stats', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ riddenRoads })
+            body: JSON.stringify({ riddenRoads, stravaCredentials })
         })
             .then(res => res.json())
             .then(data => {
@@ -49,7 +65,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads }: StatsDialogProps) 
             })
             .catch(err => setError(err.message))
             .finally(() => setLoading(false));
-    }, [isOpen, riddenRoads]);
+    }, [isOpen, riddenRoads, stravaCredentials]);
 
     if (!isOpen) return null;
 
@@ -57,7 +73,19 @@ export function StatsDialog({ isOpen, onClose, riddenRoads }: StatsDialogProps) 
         <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-                    <h2 className="text-lg font-semibold text-gray-900">Your Coverage</h2>
+                    <div>
+                        <h2 className="text-lg font-semibold text-gray-900">Your Coverage</h2>
+                        {stats?.refreshedAt && (
+                            <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                                <span>Updated {formatAge(stats.refreshedAt)}</span>
+                                {stats.refreshing && (
+                                    <span className="inline-flex items-center gap-1 text-indigo-600">
+                                        <RefreshCw className="w-3 h-3 animate-spin" /> refreshing
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                    </div>
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
                         <X className="w-5 h-5" />
                     </button>
