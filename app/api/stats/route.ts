@@ -240,10 +240,14 @@ export async function POST(request: Request) {
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();
             const stale = ageMs > FRESH_TTL_MS;
-            // Old cache entries don't have totalElevationFeet; trigger a refresh
-            // so the persisted payload picks it up on the next read.
-            const missingElevation = (cached.stats as any)?.totalElevationFeet === undefined;
-            if (stale || missingElevation) {
+            // Old cache entries either don't have totalElevationFeet at all,
+            // or were poisoned by a stale IndexedDB cache that sent an empty
+            // activityElevations array. Either way: if the client now has
+            // real elevations and the cache shows zero, force a refresh.
+            const cachedElev = (cached.stats as any)?.totalElevationFeet;
+            const clientHasElev = elevations.some(e => e > 0);
+            const elevMissing = cachedElev === undefined || (cachedElev === 0 && clientHasElev);
+            if (stale || elevMissing) {
                 refreshInBackground(athleteId, riddenRoads, elevations);
             }
             const payload = cached.stats as unknown as StatsPayload;

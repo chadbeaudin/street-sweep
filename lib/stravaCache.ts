@@ -40,7 +40,11 @@ export async function getCachedRoads(credentialsKey: string): Promise<CachedActi
         });
         if (!entry || entry.credentialsKey !== credentialsKey) return null;
         if (Date.now() - entry.cachedAt > TTL_MS) return null;
-        return { roads: entry.data, elevations: entry.elevations ?? [] };
+        // Entries written before the elevation field was added are unusable —
+        // returning them poisons /api/stats with totalElevationFeet=0. Treat
+        // as a cache miss so the next load re-fetches with elevations.
+        if (!entry.elevations) return null;
+        return { roads: entry.data, elevations: entry.elevations };
     } catch {
         return null;
     }
