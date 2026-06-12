@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
+import { StatsDialog } from '@/components/StatsDialog';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from '@/lib/pointMove';
@@ -53,6 +54,7 @@ export default function Home() {
     const [stravaError, setStravaError] = useState<string | null>(null);
     const [stravaRefreshKey, setStravaRefreshKey] = useState(0);
     const [showAbout, setShowAbout] = useState(false);
+    const [showStats, setShowStats] = useState(false);
     const [showGarminSettings, setShowGarminSettings] = useState(false);
     const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
     const [isGarminUploading, setIsGarminUploading] = useState(false);
@@ -947,6 +949,19 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         }}
                     />
 
+                    {stravaRoads && stravaRoads.length > 0 && (
+                        <button
+                            onClick={() => setShowStats(true)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
+                            title="View coverage stats"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z" />
+                            </svg>
+                            Stats
+                        </button>
+                    )}
+
                     <input
                         ref={importFileRef}
                         type="file"
@@ -1354,6 +1369,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     onClose={() => setShowGarminSettings(false)}
                     onSend={handleGarminSend}
                     isSending={isGarminUploading}
+                />
+
+                <StatsDialog
+                    isOpen={showStats}
+                    onClose={() => setShowStats(false)}
+                    riddenRoads={stravaRoads}
                 />
 
                 {error && (
