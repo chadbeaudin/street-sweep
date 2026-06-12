@@ -31,6 +31,7 @@ export default function Home() {
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [serviceWarning, setServiceWarning] = useState(false);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
+    const [stravaElevations, setStravaElevations] = useState<number[]>([]);
     const [isStravaLoading, setIsStravaLoading] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
@@ -146,7 +147,8 @@ export default function Home() {
 
         getCachedRoads(credentialsKey).then(cached => {
             if (cached && !skipCache) {
-                setStravaRoads(cached);
+                setStravaRoads(cached.roads);
+                setStravaElevations(cached.elevations);
                 setIsStravaLoading(false);
                 return;
             }
@@ -160,7 +162,9 @@ export default function Home() {
                 .then(data => {
                     if (data.riddenRoads) {
                         setStravaRoads(data.riddenRoads);
-                        setCachedRoads(data.riddenRoads, credentialsKey);
+                        const elevs: number[] = data.activityElevations ?? [];
+                        setStravaElevations(elevs);
+                        setCachedRoads(data.riddenRoads, elevs, credentialsKey);
                     } else if (data.error) {
                         // Only show the main ErrorDialog if this isn't just a "missing credentials" case
                         // which can happen if someone hasn't configured anything yet.
@@ -1373,6 +1377,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     isOpen={showStats}
                     onClose={() => setShowStats(false)}
                     riddenRoads={stravaRoads}
+                    activityElevations={stravaElevations}
                     stravaCredentials={stravaCredentials}
                 />
 

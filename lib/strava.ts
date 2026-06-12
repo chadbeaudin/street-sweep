@@ -5,6 +5,7 @@ export interface StravaActivity {
         summary_polyline: string;
     };
     start_date: string;
+    total_elevation_gain?: number; // meters; Strava returns 0 if unknown
 }
 
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {

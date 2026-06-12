@@ -27,6 +27,7 @@ interface CityStats {
 interface StatsPayload {
     totalActivities: number;
     totalUniqueMiles: number;
+    totalElevationFeet: number;
     cities: CityStats[];
 }
 
@@ -92,10 +93,13 @@ function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): 
     return out;
 }
 
-async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPayload> {
+const METERS_TO_FEET = 3.28084;
+
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[]): Promise<StatsPayload> {
     console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} activities`);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
+    const totalElevationFeet = activityElevations.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET;
 
     // Dedupe centroids to ~5km buckets BEFORE hitting Nominatim. With 800+
     // activities concentrated in one metro area this collapses to <20 lookups
@@ -175,7 +179,7 @@ async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPay
         }
     }
 
-    return { totalActivities: riddenRoads.length, totalUniqueMiles, cities };
+    return { totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities };
 }
 
 // Background recomputes are fire-and-forget; we serialize per-athlete so the
@@ -203,12 +207,12 @@ async function persistStats(athleteId: string, stats: StatsPayload): Promise<voi
     }
 }
 
-async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][]) {
+async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][], activityElevations: number[]) {
     if (REFRESHING.has(athleteId)) return;
     REFRESHING.add(athleteId);
     try {
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
-        const fresh = await computeStats(riddenRoads);
+        const fresh = await computeStats(riddenRoads, activityElevations);
         await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {
@@ -220,8 +224,9 @@ async function refreshInBackground(athleteId: string, riddenRoads: [number, numb
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json() as { riddenRoads?: [number, number][][]; stravaCredentials?: StravaCredentials };
-        const { riddenRoads, stravaCredentials } = body;
+        const body = await request.json() as { riddenRoads?: [number, number][][]; activityElevations?: number[]; stravaCredentials?: StravaCredentials };
+        const { riddenRoads, activityElevations, stravaCredentials } = body;
+        const elevations = activityElevations ?? [];
         if (!Array.isArray(riddenRoads)) {
             return NextResponse.json({ error: 'riddenRoads must be an array' }, { status: 400 });
         }
@@ -235,9 +240,11 @@ export async function POST(request: Request) {
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();
             const stale = ageMs > FRESH_TTL_MS;
-            if (stale) {
-                // Fire-and-forget; do not await
-                refreshInBackground(athleteId, riddenRoads);
+            // Old cache entries don't have totalElevationFeet; trigger a refresh
+            // so the persisted payload picks it up on the next read.
+            const missingElevation = (cached.stats as any)?.totalElevationFeet === undefined;
+            if (stale || missingElevation) {
+                refreshInBackground(athleteId, riddenRoads, elevations);
             }
             const payload = cached.stats as unknown as StatsPayload;
             const response: StatsResponse = {
@@ -254,7 +261,7 @@ export async function POST(request: Request) {
         // immediately. The client polls /api/stats until cached data appears
         // so the dialog never blocks on a multi-minute cold compute.
         console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId} (${riddenRoads.length} activities)`);
-        refreshInBackground(athleteId, riddenRoads);
+        refreshInBackground(athleteId, riddenRoads, elevations);
         const response: StatsResponse = {
             refreshedAt: null,
             stale: false,

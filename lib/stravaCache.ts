@@ -5,8 +5,14 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 
 interface CacheEntry {
     data: [number, number][][];
+    elevations?: number[];
     cachedAt: number;
     credentialsKey: string;
+}
+
+export interface CachedActivities {
+    roads: [number, number][][];
+    elevations: number[];
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -23,7 +29,7 @@ function openDB(): Promise<IDBDatabase> {
     });
 }
 
-export async function getCachedRoads(credentialsKey: string): Promise<[number, number][][] | null> {
+export async function getCachedRoads(credentialsKey: string): Promise<CachedActivities | null> {
     try {
         const db = await openDB();
         const entry = await new Promise<CacheEntry | undefined>((resolve, reject) => {
@@ -34,19 +40,19 @@ export async function getCachedRoads(credentialsKey: string): Promise<[number, n
         });
         if (!entry || entry.credentialsKey !== credentialsKey) return null;
         if (Date.now() - entry.cachedAt > TTL_MS) return null;
-        return entry.data;
+        return { roads: entry.data, elevations: entry.elevations ?? [] };
     } catch {
         return null;
     }
 }
 
-export async function setCachedRoads(data: [number, number][][], credentialsKey: string): Promise<void> {
+export async function setCachedRoads(data: [number, number][][], elevations: number[], credentialsKey: string): Promise<void> {
     try {
         const db = await openDB();
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
             const req = tx.objectStore(STORE_NAME).put(
-                { data, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
+                { data, elevations, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
                 CACHE_KEY
             );
             req.onsuccess = () => resolve();

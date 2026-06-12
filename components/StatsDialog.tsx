@@ -15,6 +15,7 @@ interface CityStats {
 interface StatsResponse {
     totalActivities?: number;
     totalUniqueMiles?: number;
+    totalElevationFeet?: number;
     cities?: CityStats[];
     refreshedAt?: string | null;
     stale?: boolean;
@@ -26,6 +27,7 @@ interface StatsDialogProps {
     isOpen: boolean;
     onClose: () => void;
     riddenRoads: [number, number][][] | null;
+    activityElevations: number[];
     stravaCredentials: any;
 }
 
@@ -41,7 +43,7 @@ function formatAge(refreshedAt?: string): string | null {
     return `${days}d ago`;
 }
 
-export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }: StatsDialogProps) {
+export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, stravaCredentials }: StatsDialogProps) {
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
     useEffect(() => {
         if (!isOpen) return;
         if (!riddenRoads || riddenRoads.length === 0) {
-            setStats({ totalActivities: 0, totalUniqueMiles: 0, cities: [] });
+            setStats({ totalActivities: 0, totalUniqueMiles: 0, totalElevationFeet: 0, cities: [] });
             return;
         }
 
@@ -62,7 +64,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
                 const res = await fetch('/api/stats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ riddenRoads, stravaCredentials })
+                    body: JSON.stringify({ riddenRoads, activityElevations, stravaCredentials })
                 });
                 const data = await res.json();
                 if (cancelled) return;
@@ -90,7 +92,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, riddenRoads, stravaCredentials]);
+    }, [isOpen, riddenRoads, activityElevations, stravaCredentials]);
 
     if (!isOpen) return null;
 
@@ -143,7 +145,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
 
                     {!loading && !error && stats && !stats.computing && stats.totalActivities !== undefined && (
                         <>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-3 gap-3">
                                 <div className="bg-gray-50 rounded-lg p-4">
                                     <div className="text-xs font-medium text-gray-500 uppercase tracking-wider">Activities</div>
                                     <div className="text-3xl font-bold text-gray-900 mt-1">{stats.totalActivities}</div>
@@ -151,7 +153,12 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, stravaCredentials }:
                                 <div className="bg-indigo-50 rounded-lg p-4">
                                     <div className="text-xs font-medium text-indigo-700 uppercase tracking-wider">Unique Miles</div>
                                     <div className="text-3xl font-bold text-indigo-900 mt-1">{(stats.totalUniqueMiles ?? 0).toFixed(1)}</div>
-                                    <div className="text-xs text-indigo-600 mt-1">deduplicated across all rides</div>
+                                    <div className="text-xs text-indigo-600 mt-1">deduplicated</div>
+                                </div>
+                                <div className="bg-amber-50 rounded-lg p-4">
+                                    <div className="text-xs font-medium text-amber-700 uppercase tracking-wider">Climbed</div>
+                                    <div className="text-3xl font-bold text-amber-900 mt-1">{Math.round(stats.totalElevationFeet ?? 0).toLocaleString()}</div>
+                                    <div className="text-xs text-amber-600 mt-1">ft total</div>
                                 </div>
                             </div>
 
