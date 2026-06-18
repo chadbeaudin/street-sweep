@@ -30,6 +30,7 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
 
 interface ReverseResult {
     city: string | null;
+    county: string | null;
     state: string | null;
     country: string | null;
 }
@@ -59,11 +60,12 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ReverseR
     const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1`;
     try {
         const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+
         if (!res.ok) {
             // Don't cache 429 — we want to retry on the next request after backoff.
             // Other 4xx/5xx are typically permanent (bad coord, etc) — cache empty.
             if (res.status !== 429) {
-                const empty: ReverseResult = { city: null, state: null, country: null };
+                const empty: ReverseResult = { city: null, county: null, state: null, country: null };
                 REVERSE_CACHE.set(key, empty);
                 return empty;
             }
@@ -73,6 +75,7 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ReverseR
         const addr = data.address || {};
         const result: ReverseResult = {
             city: addr.city || addr.town || addr.village || addr.hamlet || addr.municipality || null,
+            county: addr.county || addr.district || null,
             state: addr.state || addr.region || null,
             country: addr.country || null
         };

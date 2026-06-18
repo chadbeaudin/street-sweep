@@ -6,6 +6,7 @@ const TTL_MS = 24 * 60 * 60 * 1000;
 interface CacheEntry {
     data: [number, number][][];
     elevations?: number[];
+    types?: string[];
     cachedAt: number;
     credentialsKey: string;
 }
@@ -13,6 +14,7 @@ interface CacheEntry {
 export interface CachedActivities {
     roads: [number, number][][];
     elevations: number[];
+    types: string[];
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -28,7 +30,6 @@ function openDB(): Promise<IDBDatabase> {
         request.onerror = () => reject(request.error);
     });
 }
-
 export async function getCachedRoads(credentialsKey: string): Promise<CachedActivities | null> {
     try {
         const db = await openDB();
@@ -40,23 +41,21 @@ export async function getCachedRoads(credentialsKey: string): Promise<CachedActi
         });
         if (!entry || entry.credentialsKey !== credentialsKey) return null;
         if (Date.now() - entry.cachedAt > TTL_MS) return null;
-        // Entries written before the elevation field was added are unusable —
-        // returning them poisons /api/stats with totalElevationFeet=0. Treat
-        // as a cache miss so the next load re-fetches with elevations.
-        if (!entry.elevations) return null;
-        return { roads: entry.data, elevations: entry.elevations };
+        // Entries written before the elevation field or type field was added are unusable.
+        if (!entry.elevations || !entry.types) return null;
+        return { roads: entry.data, elevations: entry.elevations, types: entry.types };
     } catch {
         return null;
     }
 }
 
-export async function setCachedRoads(data: [number, number][][], elevations: number[], credentialsKey: string): Promise<void> {
+export async function setCachedRoads(data: [number, number][][], elevations: number[], types: string[], credentialsKey: string): Promise<void> {
     try {
         const db = await openDB();
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
             const req = tx.objectStore(STORE_NAME).put(
-                { data, elevations, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
+                { data, elevations, types, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
                 CACHE_KEY
             );
             req.onsuccess = () => resolve();
@@ -66,7 +65,6 @@ export async function setCachedRoads(data: [number, number][][], elevations: num
         // Caching is best-effort — silently ignore failures
     }
 }
-
 export async function clearCachedRoads(): Promise<void> {
     try {
         const db = await openDB();

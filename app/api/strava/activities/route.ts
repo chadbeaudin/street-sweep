@@ -33,7 +33,10 @@ export async function POST(req: Request) {
         // Per-activity total elevation gain in meters (parallel to riddenRoads).
         const activityElevations = activities.map(a => a.total_elevation_gain ?? 0);
 
-        return NextResponse.json({ riddenRoads, activityElevations });
+        // Per-activity sport type or activity type (parallel to riddenRoads).
+        const activityTypes = activities.map(a => a.sport_type || a.type || '');
+
+        return NextResponse.json({ riddenRoads, activityElevations, activityTypes });
     } catch (error: any) {
         console.error('Strava Fetch Error:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });

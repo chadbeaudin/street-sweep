@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -51,5 +51,32 @@ describe('stats.pointInPolygon', () => {
     it('rejects exterior points', () => {
         expect(pointInPolygon(2, 2, square)).toBe(false);
         expect(pointInPolygon(-1, 0.5, square)).toBe(false);
+    });
+});
+
+describe('stats.isBikingActivity', () => {
+    it('accepts known bike sport types (case-insensitive)', () => {
+        expect(isBikingActivity('Ride')).toBe(true);
+        expect(isBikingActivity('ride')).toBe(true);
+        expect(isBikingActivity('EBikeRide')).toBe(true);
+        expect(isBikingActivity('ebikeride')).toBe(true);
+        expect(isBikingActivity('GravelRide')).toBe(true);
+        expect(isBikingActivity('MountainBikeRide')).toBe(true);
+        expect(isBikingActivity('VirtualRide')).toBe(true);
+        expect(isBikingActivity('Handcycle')).toBe(true);
+    });
+
+    it('rejects non-biking activity types', () => {
+        expect(isBikingActivity('Run')).toBe(false);
+        expect(isBikingActivity('Walk')).toBe(false);
+        expect(isBikingActivity('Swim')).toBe(false);
+        expect(isBikingActivity('Hike')).toBe(false);
+        expect(isBikingActivity('AlpineSki')).toBe(false);
+        expect(isBikingActivity('Workout')).toBe(false);
+    });
+
+    it('rejects undefined / empty (must be explicitly biking)', () => {
+        expect(isBikingActivity(undefined)).toBe(false);
+        expect(isBikingActivity('')).toBe(false);
     });
 });

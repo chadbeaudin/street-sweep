@@ -6,6 +6,8 @@ export interface StravaActivity {
     };
     start_date: string;
     total_elevation_gain?: number; // meters; Strava returns 0 if unknown
+    type: string;
+    sport_type?: string;
 }
 
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {

@@ -17,6 +17,12 @@ interface StatsResponse {
     totalUniqueMiles?: number;
     totalElevationFeet?: number;
     cities?: CityStats[];
+    bikingStats?: {
+        countries: number;
+        states: number;
+        counties: number;
+        cities: number;
+    };
     refreshedAt?: string | null;
     stale?: boolean;
     refreshing?: boolean;
@@ -28,6 +34,7 @@ interface StatsDialogProps {
     onClose: () => void;
     riddenRoads: [number, number][][] | null;
     activityElevations: number[];
+    activityTypes: string[];
     stravaCredentials: any;
 }
 
@@ -43,7 +50,7 @@ function formatAge(refreshedAt?: string): string | null {
     return `${days}d ago`;
 }
 
-export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, stravaCredentials }: StatsDialogProps) {
+export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials }: StatsDialogProps) {
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -64,7 +71,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                 const res = await fetch('/api/stats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ riddenRoads, activityElevations, stravaCredentials })
+                    body: JSON.stringify({ riddenRoads, activityElevations, activityTypes, stravaCredentials })
                 });
                 const data = await res.json();
                 if (cancelled) return;
@@ -92,7 +99,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, riddenRoads, activityElevations, stravaCredentials]);
+    }, [isOpen, riddenRoads, activityElevations, activityTypes, stravaCredentials]);
 
     if (!isOpen) return null;
 
@@ -159,6 +166,28 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <div className="text-xs font-medium text-amber-700 uppercase tracking-wider">Climbed</div>
                                     <div className="text-3xl font-bold text-amber-900 mt-1">{Math.round(stats.totalElevationFeet ?? 0).toLocaleString()}</div>
                                     <div className="text-xs text-amber-600 mt-1">ft total</div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Biking Locations Ridden</h3>
+                                <div className="grid grid-cols-4 gap-2 mb-4">
+                                    <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3 text-center">
+                                        <div className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Countries</div>
+                                        <div className="text-2xl font-black text-emerald-900 mt-0.5">{stats.bikingStats?.countries ?? 0}</div>
+                                    </div>
+                                    <div className="bg-teal-50 border border-teal-100 rounded-lg p-3 text-center">
+                                        <div className="text-[10px] font-bold text-teal-800 uppercase tracking-wider">States</div>
+                                        <div className="text-2xl font-black text-teal-900 mt-0.5">{stats.bikingStats?.states ?? 0}</div>
+                                    </div>
+                                    <div className="bg-cyan-50 border border-cyan-100 rounded-lg p-3 text-center">
+                                        <div className="text-[10px] font-bold text-cyan-800 uppercase tracking-wider">Counties</div>
+                                        <div className="text-2xl font-black text-cyan-900 mt-0.5">{stats.bikingStats?.counties ?? 0}</div>
+                                    </div>
+                                    <div className="bg-sky-50 border border-sky-100 rounded-lg p-3 text-center">
+                                        <div className="text-[10px] font-bold text-sky-800 uppercase tracking-wider">Cities</div>
+                                        <div className="text-2xl font-black text-sky-900 mt-0.5">{stats.bikingStats?.cities ?? 0}</div>
+                                    </div>
                                 </div>
                             </div>
 

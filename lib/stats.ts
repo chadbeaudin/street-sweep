@@ -74,3 +74,18 @@ export function polylineCentroid(polyline: [number, number][]): [number, number]
     for (const [lat, lon] of polyline) { sumLat += lat; sumLon += lon; }
     return [sumLat / polyline.length, sumLon / polyline.length];
 }
+
+const BIKING_TYPES = new Set([
+    'ride',
+    'ebikeride',
+    'virtualride',
+    'gravelride',
+    'mountainbikeride',
+    'velomobile',
+    'handcycle'
+]);
+
+export function isBikingActivity(type?: string): boolean {
+    if (!type) return false; // Must have an explicit biking type
+    return BIKING_TYPES.has(type.toLowerCase());
+}

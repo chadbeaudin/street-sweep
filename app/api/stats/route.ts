@@ -29,6 +29,12 @@ interface StatsPayload {
     totalUniqueMiles: number;
     totalElevationFeet: number;
     cities: CityStats[];
+    bikingStats?: {
+        countries: number;
+        states: number;
+        counties: number;
+        cities: number;
+    };
 }
 
 interface StatsResponse extends Partial<StatsPayload> {
@@ -93,9 +99,22 @@ function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): 
     return out;
 }
 
-const METERS_TO_FEET = 3.28084;
+const METERS_TO_FEET = 3.28084;const BIKING_TYPES = new Set([
+    'ride',
+    'ebikeride',
+    'virtualride',
+    'gravelride',
+    'mountainbikeride',
+    'velomobile',
+    'handcycle'
+]);
 
-async function computeStats(riddenRoads: [number, number][][], activityElevations: number[]): Promise<StatsPayload> {
+function isBiking(type?: string): boolean {
+    if (!type) return true; // Default to true if types are missing/not fetched yet
+    return BIKING_TYPES.has(type.toLowerCase());
+}
+
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityTypes?: string[]): Promise<StatsPayload> {
     console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} activities`);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
@@ -114,14 +133,14 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     }
     console.log(`${ts()} Stats: ${uniqueBuckets.size} unique ~5km buckets to reverse-geocode`);
 
-    const bucketResult = new Map<string, { city: string; state: string | null; country: string | null } | null>();
+    const bucketResult = new Map<string, { city: string | null; county: string | null; state: string | null; country: string | null } | null>();
     const bucketEntries = Array.from(uniqueBuckets.entries());
     let rateLimitHits = 0;
     for (let i = 0; i < bucketEntries.length; i++) {
         const [bucketKey, c] = bucketEntries[i];
         try {
             const r = await reverseGeocode(c[0], c[1]);
-            bucketResult.set(bucketKey, r.city ? { city: r.city, state: r.state, country: r.country } : null);
+            bucketResult.set(bucketKey, { city: r.city, county: r.county, state: r.state, country: r.country });
             rateLimitHits = 0;
             if ((i + 1) % 25 === 0) {
                 console.log(`${ts()} Stats: reverse-geocode progress ${i + 1}/${bucketEntries.length}`);
@@ -144,7 +163,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     }
     console.log(`${ts()} Stats: reverse-geocoding complete (${bucketResult.size}/${bucketEntries.length} buckets resolved)`);
 
-    const cityByActivity: ({ city: string; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
+    const cityByActivity: ({ city: string | null; county: string | null; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
         if (!c) return null;
         const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
         return bucketResult.get(bucketKey) ?? null;
@@ -153,7 +172,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     const byCity = new Map<string, { city: string; state: string | null; country: string | null; activityIdx: number[] }>();
     for (let i = 0; i < cityByActivity.length; i++) {
         const info = cityByActivity[i];
-        if (!info) continue;
+        if (!info || !info.city) continue;
         const key = `${info.city}|${info.state ?? ''}|${info.country ?? ''}`;
         let entry = byCity.get(key);
         if (!entry) { entry = { city: info.city, state: info.state, country: info.country, activityIdx: [] }; byCity.set(key, entry); }
@@ -197,9 +216,41 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         }
     }
 
-    return { totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities };
-}
+    const uniqueBikingCountries = new Set<string>();
+    const uniqueBikingStates = new Set<string>();
+    const uniqueBikingCounties = new Set<string>();
+    const uniqueBikingCities = new Set<string>();
 
+    for (let i = 0; i < cityByActivity.length; i++) {
+        const info = cityByActivity[i];
+        if (!info) continue;
+        
+        const type = activityTypes ? activityTypes[i] : undefined;
+        if (!isBiking(type)) continue;
+
+        if (info.country) {
+            uniqueBikingCountries.add(info.country);
+        }
+        if (info.state) {
+            uniqueBikingStates.add(`${info.state}|${info.country ?? ''}`);
+        }
+        if (info.county) {
+            uniqueBikingCounties.add(`${info.county}|${info.state ?? ''}|${info.country ?? ''}`);
+        }
+        if (info.city) {
+            uniqueBikingCities.add(`${info.city}|${info.state ?? ''}|${info.country ?? ''}`);
+        }
+    }
+
+    const bikingStats = {
+        countries: uniqueBikingCountries.size,
+        states: uniqueBikingStates.size,
+        counties: uniqueBikingCounties.size,
+        cities: uniqueBikingCities.size
+    };
+
+    return { totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };
+}
 // Background recomputes are fire-and-forget; we serialize per-athlete so the
 // same user doesn't trigger overlapping refreshes from rapid dialog opens.
 const REFRESHING: Set<string> = new Set();
@@ -225,12 +276,12 @@ async function persistStats(athleteId: string, stats: StatsPayload): Promise<voi
     }
 }
 
-async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][], activityElevations: number[]) {
+async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][], activityElevations: number[], activityTypes?: string[]) {
     if (REFRESHING.has(athleteId)) return;
     REFRESHING.add(athleteId);
     try {
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
-        const fresh = await computeStats(riddenRoads, activityElevations);
+        const fresh = await computeStats(riddenRoads, activityElevations, activityTypes);
         await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {
@@ -242,9 +293,10 @@ async function refreshInBackground(athleteId: string, riddenRoads: [number, numb
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json() as { riddenRoads?: [number, number][][]; activityElevations?: number[]; stravaCredentials?: StravaCredentials };
-        const { riddenRoads, activityElevations, stravaCredentials } = body;
+        const body = await request.json() as { riddenRoads?: [number, number][][]; activityElevations?: number[]; activityTypes?: string[]; stravaCredentials?: StravaCredentials };
+        const { riddenRoads, activityElevations, activityTypes, stravaCredentials } = body;
         const elevations = activityElevations ?? [];
+        const types = activityTypes ?? [];
         if (!Array.isArray(riddenRoads)) {
             return NextResponse.json({ error: 'riddenRoads must be an array' }, { status: 400 });
         }
@@ -258,15 +310,15 @@ export async function POST(request: Request) {
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();
             const stale = ageMs > FRESH_TTL_MS;
-            // Old cache entries either don't have totalElevationFeet at all,
-            // or were poisoned by a stale IndexedDB cache that sent an empty
-            // activityElevations array. Either way: if the client now has
-            // real elevations and the cache shows zero, force a refresh.
             const cachedElev = (cached.stats as any)?.totalElevationFeet;
             const clientHasElev = elevations.some(e => e > 0);
             const elevMissing = cachedElev === undefined || (cachedElev === 0 && clientHasElev);
-            if (stale || elevMissing) {
-                refreshInBackground(athleteId, riddenRoads, elevations);
+            
+            const cachedBikingStats = (cached.stats as any)?.bikingStats;
+            const bikingStatsMissing = cachedBikingStats === undefined;
+
+            if (stale || elevMissing || bikingStatsMissing) {
+                refreshInBackground(athleteId, riddenRoads, elevations, types);
             }
             const payload = cached.stats as unknown as StatsPayload;
             const response: StatsResponse = {
@@ -283,7 +335,7 @@ export async function POST(request: Request) {
         // immediately. The client polls /api/stats until cached data appears
         // so the dialog never blocks on a multi-minute cold compute.
         console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId} (${riddenRoads.length} activities)`);
-        refreshInBackground(athleteId, riddenRoads, elevations);
+        refreshInBackground(athleteId, riddenRoads, elevations, types);
         const response: StatsResponse = {
             refreshedAt: null,
             stale: false,
