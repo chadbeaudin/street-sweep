@@ -15,6 +15,14 @@ model OsmCache {
   @@map("osm_cache")
 }
 
+model GeocodeCache {
+  key       String   @id
+  result    Json
+  fetchedAt DateTime @default(now())
+
+  @@map("geocode_cache")
+}
+
 model Route {
   id          String            @id @default(cuid())
   name        String?

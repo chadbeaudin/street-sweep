@@ -1,3 +1,5 @@
+import { prisma } from './prisma';
+
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 const USER_AGENT = 'StreetSweep/1.0 (https://github.com/chadbeaudin/street-sweep)';
 const MIN_GAP_MS = 1100; // Nominatim TOS: max 1 req/sec
@@ -51,13 +53,50 @@ function reverseKey(lat: number, lon: number): string {
     return `${Math.round(lat * 20) / 20}:${Math.round(lon * 20) / 20}`;
 }
 
+// Reverse-geocode results are stable, so persist them in Postgres keyed by the
+// 5km bucket. This survives server restarts and serverless cold starts — without
+// it, every cold start re-geocodes every bucket and trips Nominatim's rate limit.
+async function readGeocodeCache(key: string): Promise<ReverseResult | null> {
+    try {
+        const row = await prisma.geocodeCache.findUnique({ where: { key } });
+        if (!row) return null;
+        if (Date.now() - row.fetchedAt.getTime() > CACHE_TTL) {
+            await prisma.geocodeCache.delete({ where: { key } }).catch(() => {});
+            return null;
+        }
+        return row.result as unknown as ReverseResult;
+    } catch {
+        return null; // best-effort — fall through to the network on any DB issue
+    }
+}
+
+async function writeGeocodeCache(key: string, result: ReverseResult): Promise<void> {
+    try {
+        await prisma.geocodeCache.upsert({
+            where: { key },
+            create: { key, result: result as any, fetchedAt: new Date() },
+            update: { result: result as any, fetchedAt: new Date() },
+        });
+    } catch {
+        // best-effort — a failed cache write just means we re-fetch next time
+    }
+}
+
 export async function reverseGeocode(lat: number, lon: number): Promise<ReverseResult> {
     const key = reverseKey(lat, lon);
     const cached = REVERSE_CACHE.get(key);
     if (cached) return cached;
 
+    const dbHit = await readGeocodeCache(key);
+    if (dbHit) {
+        REVERSE_CACHE.set(key, dbHit);
+        return dbHit;
+    }
+
     await rateLimit();
-    const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1`;
+    // accept-language=en so place names come back in English (e.g. "Germany",
+    // not "Deutschland") for the stats drill-down lists.
+    const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10&addressdetails=1&accept-language=en`;
     try {
         const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
 
@@ -80,6 +119,7 @@ export async function reverseGeocode(lat: number, lon: number): Promise<ReverseR
             country: addr.country || null
         };
         REVERSE_CACHE.set(key, result);
+        await writeGeocodeCache(key, result);
         return result;
     } catch (e: any) {
         // Don't cache transient errors (timeouts, 429s) — but propagate so the
@@ -95,7 +135,7 @@ export async function searchCityPolygon(name: string, state: string | null, coun
 
     await rateLimit();
     const q = encodeURIComponent(qParts.join(', '));
-    const url = `${NOMINATIM_BASE}/search?q=${q}&format=json&polygon_geojson=1&limit=1&featuretype=city`;
+    const url = `${NOMINATIM_BASE}/search?q=${q}&format=json&polygon_geojson=1&limit=1&featuretype=city&accept-language=en`;
     const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
     if (!res.ok) {
         if (res.status === 429) throw new Error('Nominatim 429 (rate-limited)');

@@ -18,7 +18,9 @@ const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 // Bump when the stats computation changes shape/semantics so cached rows
 // computed by an older version are recomputed in the background on next open.
 // v2: dashboard is biking-only (walks/hikes/runs excluded from every metric).
-const STATS_VERSION = 2;
+// v3: bikingStats holds name lists (drill-down) instead of bare counts.
+// v4: place names reverse-geocoded in English (accept-language=en).
+const STATS_VERSION = 4;
 
 interface CityStats {
     name: string;
@@ -35,12 +37,14 @@ interface StatsPayload {
     totalUniqueMiles: number;
     totalElevationFeet: number;
     cities: CityStats[];
-    bikingStats?: {
-        countries: number;
-        states: number;
-        counties: number;
-        cities: number;
-    };
+    bikingStats?: BikingGeographies;
+}
+
+interface BikingGeographies {
+    countries: string[];
+    states: string[];
+    counties: string[];
+    cities: string[];
 }
 
 interface StatsResponse extends Partial<StatsPayload> {
@@ -131,6 +135,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     const bucketResult = new Map<string, { city: string | null; county: string | null; state: string | null; country: string | null } | null>();
     const bucketEntries = Array.from(uniqueBuckets.entries());
     let rateLimitHits = 0;
+    let bailed = false;
     for (let i = 0; i < bucketEntries.length; i++) {
         const [bucketKey, c] = bucketEntries[i];
         try {
@@ -144,19 +149,25 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
             const msg = e?.message || String(e);
             console.warn(`${ts()} reverse-geocode bucket ${bucketKey} failed: ${msg}`);
             bucketResult.set(bucketKey, null);
-            // If Nominatim is sustainedly 429'ing or timing out, abandon further
-            // city detection — we'll still return unique miles + elevation, and
-            // the next refresh after the rate-limit window will fill cities in.
             if (msg.includes('429') || msg.includes('abort')) {
                 rateLimitHits++;
                 if (rateLimitHits >= 5) {
                     console.warn(`${ts()} Stats: bailing out of reverse-geocode after ${rateLimitHits} consecutive rate-limit/timeout errors`);
+                    bailed = true;
                     break;
                 }
             }
         }
     }
     console.log(`${ts()} Stats: reverse-geocoding complete (${bucketResult.size}/${bucketEntries.length} buckets resolved)`);
+
+    // A rate-limit bail leaves geographies/cities incomplete. Throw instead of
+    // returning a degraded result, so refreshInBackground skips persisting and
+    // the previous good cache is preserved (a later refresh retries once the
+    // Nominatim rate-limit window clears).
+    if (bailed) {
+        throw new Error('reverse-geocoding bailed on sustained rate-limits; skipping persist to protect cached stats');
+    }
 
     const cityByActivity: ({ city: string | null; county: string | null; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
         if (!c) return null;
@@ -236,11 +247,19 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         }
     }
 
-    const bikingStats = {
-        countries: uniqueBikingCountries.size,
-        states: uniqueBikingStates.size,
-        counties: uniqueBikingCounties.size,
-        cities: uniqueBikingCities.size
+    // Turn the composite dedup keys into human-readable, sorted display names.
+    const uniqSort = (a: string[]) => Array.from(new Set(a)).sort((x, y) => x.localeCompare(y));
+    const bikingStats: BikingGeographies = {
+        countries: uniqSort(Array.from(uniqueBikingCountries)),
+        states: uniqSort(Array.from(uniqueBikingStates).map(k => k.split('|')[0])),
+        counties: uniqSort(Array.from(uniqueBikingCounties).map(k => {
+            const [county, state] = k.split('|');
+            return state ? `${county}, ${state}` : county;
+        })),
+        cities: uniqSort(Array.from(uniqueBikingCities).map(k => {
+            const [city, state] = k.split('|');
+            return state ? `${city}, ${state}` : city;
+        })),
     };
 
     return { version: STATS_VERSION, totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };
