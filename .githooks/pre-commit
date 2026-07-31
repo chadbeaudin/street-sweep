@@ -1,0 +1,14 @@
+#!/bin/sh
+# Auto-bump the patch version on every commit so the local working tree is
+# always ahead of prod (Vercel deploys main). Runs locally only — no CI, no
+# remote mutation. Skips during merge/rebase to avoid double-bumps and
+# version-line conflicts.
+if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] || \
+   [ -d "$(git rev-parse --git-dir)/rebase-merge" ] || \
+   [ -d "$(git rev-parse --git-dir)/rebase-apply" ]; then
+  exit 0
+fi
+
+npm version patch --no-git-tag-version >/dev/null 2>&1 || exit 0
+git add package.json package-lock.json
+echo "pre-commit: version bumped to $(node -p "require('./package.json').version")"
