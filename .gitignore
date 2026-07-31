@@ -10,6 +10,9 @@
 /.next/
 /out/
 
+# typescript incremental build cache
+*.tsbuildinfo
+
 # production
 /build
 
