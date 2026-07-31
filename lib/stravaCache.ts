@@ -2,11 +2,23 @@ const DB_NAME = 'streetsweep';
 const STORE_NAME = 'strava_cache';
 const CACHE_KEY = 'ridden_roads';
 const TTL_MS = 24 * 60 * 60 * 1000;
+// Bump when the shape/semantics of cached rides change so stale entries are
+// discarded. v2: rides are cycling-only (walks/hikes/runs excluded upstream).
+const CACHE_VERSION = 2;
 
 interface CacheEntry {
     data: [number, number][][];
+    elevations?: number[];
+    types?: string[];
+    version?: number;
     cachedAt: number;
     credentialsKey: string;
+}
+
+export interface CachedActivities {
+    roads: [number, number][][];
+    elevations: number[];
+    types: string[];
 }
 
 function openDB(): Promise<IDBDatabase> {
@@ -22,8 +34,7 @@ function openDB(): Promise<IDBDatabase> {
         request.onerror = () => reject(request.error);
     });
 }
-
-export async function getCachedRoads(credentialsKey: string): Promise<[number, number][][] | null> {
+export async function getCachedRoads(credentialsKey: string): Promise<CachedActivities | null> {
     try {
         const db = await openDB();
         const entry = await new Promise<CacheEntry | undefined>((resolve, reject) => {
@@ -34,19 +45,23 @@ export async function getCachedRoads(credentialsKey: string): Promise<[number, n
         });
         if (!entry || entry.credentialsKey !== credentialsKey) return null;
         if (Date.now() - entry.cachedAt > TTL_MS) return null;
-        return entry.data;
+        // Entries written before the elevation field or type field was added are unusable.
+        if (!entry.elevations || !entry.types) return null;
+        // Entries from an older cache schema (e.g. pre-cycling-only) are discarded.
+        if (entry.version !== CACHE_VERSION) return null;
+        return { roads: entry.data, elevations: entry.elevations, types: entry.types };
     } catch {
         return null;
     }
 }
 
-export async function setCachedRoads(data: [number, number][][], credentialsKey: string): Promise<void> {
+export async function setCachedRoads(data: [number, number][][], elevations: number[], types: string[], credentialsKey: string): Promise<void> {
     try {
         const db = await openDB();
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
             const req = tx.objectStore(STORE_NAME).put(
-                { data, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
+                { data, elevations, types, version: CACHE_VERSION, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
                 CACHE_KEY
             );
             req.onsuccess = () => resolve();
@@ -56,7 +71,6 @@ export async function setCachedRoads(data: [number, number][][], credentialsKey:
         // Caching is best-effort — silently ignore failures
     }
 }
-
 export async function clearCachedRoads(): Promise<void> {
     try {
         const db = await openDB();

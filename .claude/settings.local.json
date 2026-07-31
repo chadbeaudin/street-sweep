@@ -53,7 +53,8 @@
       "Bash(pkill -f \"node.*start.sh\")",
       "Bash(killall node *)",
       "Bash(npx tsx *)",
-      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['id'], e['tags']\\) for e in d['elements']]\")"
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(e['id'], e['tags']\\) for e in d['elements']]\")",
+      "Bash(nohup bash start.sh)"
     ]
   }
 }

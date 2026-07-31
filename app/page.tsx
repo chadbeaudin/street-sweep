@@ -31,6 +31,8 @@ export default function Home() {
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [serviceWarning, setServiceWarning] = useState(false);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
+    const [stravaElevations, setStravaElevations] = useState<number[]>([]);
+    const [stravaTypes, setStravaTypes] = useState<string[]>([]);
     const [isStravaLoading, setIsStravaLoading] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
@@ -146,7 +148,9 @@ export default function Home() {
 
         getCachedRoads(credentialsKey).then(cached => {
             if (cached && !skipCache) {
-                setStravaRoads(cached);
+                setStravaRoads(cached.roads);
+                setStravaElevations(cached.elevations);
+                setStravaTypes(cached.types);
                 setIsStravaLoading(false);
                 return;
             }
@@ -160,7 +164,11 @@ export default function Home() {
                 .then(data => {
                     if (data.riddenRoads) {
                         setStravaRoads(data.riddenRoads);
-                        setCachedRoads(data.riddenRoads, credentialsKey);
+                        const elevs: number[] = data.activityElevations ?? [];
+                        setStravaElevations(elevs);
+                        const types: string[] = data.activityTypes ?? [];
+                        setStravaTypes(types);
+                        setCachedRoads(data.riddenRoads, elevs, types, credentialsKey);
                     } else if (data.error) {
                         // Only show the main ErrorDialog if this isn't just a "missing credentials" case
                         // which can happen if someone hasn't configured anything yet.
@@ -180,7 +188,6 @@ export default function Home() {
                 });
         });
     }, [stravaCredentials, stravaRefreshKey]);
-
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
         setBbox(prev => {
             if (prev &&
@@ -1373,6 +1380,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     isOpen={showStats}
                     onClose={() => setShowStats(false)}
                     riddenRoads={stravaRoads}
+                    activityElevations={stravaElevations}
+                    activityTypes={stravaTypes}
                     stravaCredentials={stravaCredentials}
                 />
 

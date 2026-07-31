@@ -7,13 +7,18 @@ import {
     pointInPolygon,
     polylineCentroid
 } from '@/lib/stats';
-import { getStravaAccessToken, getStravaAthleteId } from '@/lib/strava';
+import { getStravaAccessToken, getStravaAthleteId, fetchCyclingRiddenRoads } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 const MAX_CITIES = 5;
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Bump when the stats computation changes shape/semantics so cached rows
+// computed by an older version are recomputed in the background on next open.
+// v2: dashboard is biking-only (walks/hikes/runs excluded from every metric).
+const STATS_VERSION = 2;
 
 interface CityStats {
     name: string;
@@ -25,9 +30,17 @@ interface CityStats {
 }
 
 interface StatsPayload {
+    version?: number;
     totalActivities: number;
     totalUniqueMiles: number;
+    totalElevationFeet: number;
     cities: CityStats[];
+    bikingStats?: {
+        countries: number;
+        states: number;
+        counties: number;
+        cities: number;
+    };
 }
 
 interface StatsResponse extends Partial<StatsPayload> {
@@ -92,10 +105,15 @@ function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): 
     return out;
 }
 
-async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPayload> {
-    console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} activities`);
+const METERS_TO_FEET = 3.28084;
+
+// Input is already cycling-only (fetchCyclingRiddenRoads is the single filter
+// point), so every activity here counts toward the dashboard.
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[]): Promise<StatsPayload> {
+    console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
+    const totalElevationFeet = activityElevations.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET;
 
     // Dedupe centroids to ~5km buckets BEFORE hitting Nominatim. With 800+
     // activities concentrated in one metro area this collapses to <20 lookups
@@ -110,19 +128,37 @@ async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPay
     }
     console.log(`${ts()} Stats: ${uniqueBuckets.size} unique ~5km buckets to reverse-geocode`);
 
-    const bucketResult = new Map<string, { city: string; state: string | null; country: string | null } | null>();
-    for (const [bucketKey, c] of uniqueBuckets) {
+    const bucketResult = new Map<string, { city: string | null; county: string | null; state: string | null; country: string | null } | null>();
+    const bucketEntries = Array.from(uniqueBuckets.entries());
+    let rateLimitHits = 0;
+    for (let i = 0; i < bucketEntries.length; i++) {
+        const [bucketKey, c] = bucketEntries[i];
         try {
             const r = await reverseGeocode(c[0], c[1]);
-            bucketResult.set(bucketKey, r.city ? { city: r.city, state: r.state, country: r.country } : null);
-        } catch (e) {
-            console.warn(`${ts()} reverse-geocode failed:`, e);
+            bucketResult.set(bucketKey, { city: r.city, county: r.county, state: r.state, country: r.country });
+            rateLimitHits = 0;
+            if ((i + 1) % 25 === 0) {
+                console.log(`${ts()} Stats: reverse-geocode progress ${i + 1}/${bucketEntries.length}`);
+            }
+        } catch (e: any) {
+            const msg = e?.message || String(e);
+            console.warn(`${ts()} reverse-geocode bucket ${bucketKey} failed: ${msg}`);
             bucketResult.set(bucketKey, null);
+            // If Nominatim is sustainedly 429'ing or timing out, abandon further
+            // city detection — we'll still return unique miles + elevation, and
+            // the next refresh after the rate-limit window will fill cities in.
+            if (msg.includes('429') || msg.includes('abort')) {
+                rateLimitHits++;
+                if (rateLimitHits >= 5) {
+                    console.warn(`${ts()} Stats: bailing out of reverse-geocode after ${rateLimitHits} consecutive rate-limit/timeout errors`);
+                    break;
+                }
+            }
         }
     }
-    console.log(`${ts()} Stats: reverse-geocoding complete`);
+    console.log(`${ts()} Stats: reverse-geocoding complete (${bucketResult.size}/${bucketEntries.length} buckets resolved)`);
 
-    const cityByActivity: ({ city: string; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
+    const cityByActivity: ({ city: string | null; county: string | null; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
         if (!c) return null;
         const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
         return bucketResult.get(bucketKey) ?? null;
@@ -131,7 +167,7 @@ async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPay
     const byCity = new Map<string, { city: string; state: string | null; country: string | null; activityIdx: number[] }>();
     for (let i = 0; i < cityByActivity.length; i++) {
         const info = cityByActivity[i];
-        if (!info) continue;
+        if (!info || !info.city) continue;
         const key = `${info.city}|${info.state ?? ''}|${info.country ?? ''}`;
         let entry = byCity.get(key);
         if (!entry) { entry = { city: info.city, state: info.state, country: info.country, activityIdx: [] }; byCity.set(key, entry); }
@@ -175,40 +211,78 @@ async function computeStats(riddenRoads: [number, number][][]): Promise<StatsPay
         }
     }
 
-    return { totalActivities: riddenRoads.length, totalUniqueMiles, cities };
-}
+    // cityByActivity is already biking-only (non-biking activities were filtered
+    // out at the top), so every resolved geography here counts toward the totals.
+    const uniqueBikingCountries = new Set<string>();
+    const uniqueBikingStates = new Set<string>();
+    const uniqueBikingCounties = new Set<string>();
+    const uniqueBikingCities = new Set<string>();
 
+    for (let i = 0; i < cityByActivity.length; i++) {
+        const info = cityByActivity[i];
+        if (!info) continue;
+
+        if (info.country) {
+            uniqueBikingCountries.add(info.country);
+        }
+        if (info.state) {
+            uniqueBikingStates.add(`${info.state}|${info.country ?? ''}`);
+        }
+        if (info.county) {
+            uniqueBikingCounties.add(`${info.county}|${info.state ?? ''}|${info.country ?? ''}`);
+        }
+        if (info.city) {
+            uniqueBikingCities.add(`${info.city}|${info.state ?? ''}|${info.country ?? ''}`);
+        }
+    }
+
+    const bikingStats = {
+        countries: uniqueBikingCountries.size,
+        states: uniqueBikingStates.size,
+        counties: uniqueBikingCounties.size,
+        cities: uniqueBikingCities.size
+    };
+
+    return { version: STATS_VERSION, totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };
+}
 // Background recomputes are fire-and-forget; we serialize per-athlete so the
 // same user doesn't trigger overlapping refreshes from rapid dialog opens.
 const REFRESHING: Set<string> = new Set();
 
-async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
-    // Neon's HTTP driver occasionally rejects with `TypeError: fetch failed`
-    // on transient network blips. The compute is expensive — retry rather
-    // than throwing away minutes of work.
+// Neon's HTTP driver intermittently rejects with `TypeError: fetch failed` on
+// transient network blips. Retry idempotent DB ops rather than surfacing the
+// blip to the user (reads) or throwing away minutes of compute (writes).
+async function withNeonRetry<T>(op: () => Promise<T>, label: string): Promise<T> {
     const delays = [500, 2000, 5000];
     for (let attempt = 0; attempt <= delays.length; attempt++) {
         try {
-            await prisma.statsCache.upsert({
-                where: { athleteId },
-                create: { athleteId, stats: stats as any, refreshedAt: new Date() },
-                update: { stats: stats as any, refreshedAt: new Date() }
-            });
-            return;
+            return await op();
         } catch (e: any) {
             if (attempt === delays.length) throw e;
-            console.warn(`${ts()} Stats: persist attempt ${attempt + 1} failed (${e?.message || e}); retrying`);
+            console.warn(`${ts()} Stats: ${label} attempt ${attempt + 1} failed (${e?.message || e}); retrying`);
             await new Promise(r => setTimeout(r, delays[attempt]));
         }
     }
+    throw new Error('unreachable');
 }
 
-async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][]) {
+async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
+    await withNeonRetry(() => prisma.statsCache.upsert({
+        where: { athleteId },
+        create: { athleteId, stats: stats as any, refreshedAt: new Date() },
+        update: { stats: stats as any, refreshedAt: new Date() }
+    }), 'persist');
+}
+
+async function refreshInBackground(athleteId: string, creds: StravaCredentials) {
     if (REFRESHING.has(athleteId)) return;
     REFRESHING.add(athleteId);
     try {
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
-        const fresh = await computeStats(riddenRoads);
+        // Fetch the ride set server-side so the client never has to ship it in
+        // the request body (which a reverse proxy would reject as too large).
+        const { riddenRoads, activityElevations } = await fetchCyclingRiddenRoads(creds);
+        const fresh = await computeStats(riddenRoads, activityElevations);
         await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {
@@ -220,24 +294,23 @@ async function refreshInBackground(athleteId: string, riddenRoads: [number, numb
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json() as { riddenRoads?: [number, number][][]; stravaCredentials?: StravaCredentials };
-        const { riddenRoads, stravaCredentials } = body;
-        if (!Array.isArray(riddenRoads)) {
-            return NextResponse.json({ error: 'riddenRoads must be an array' }, { status: 400 });
-        }
+        const body = await request.json() as { stravaCredentials?: StravaCredentials };
+        const { stravaCredentials } = body;
         if (!stravaCredentials?.refreshToken) {
             return NextResponse.json({ error: 'stravaCredentials.refreshToken required to identify athlete' }, { status: 400 });
         }
 
         const athleteId = await resolveAthleteId(stravaCredentials);
-        const cached = await prisma.statsCache.findUnique({ where: { athleteId } });
+        const cached = await withNeonRetry(() => prisma.statsCache.findUnique({ where: { athleteId } }), 'read cache');
 
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();
             const stale = ageMs > FRESH_TTL_MS;
-            if (stale) {
-                // Fire-and-forget; do not await
-                refreshInBackground(athleteId, riddenRoads);
+            const cachedVersion = (cached.stats as any)?.version ?? 1;
+            const outdatedSchema = cachedVersion < STATS_VERSION;
+
+            if (stale || outdatedSchema) {
+                refreshInBackground(athleteId, stravaCredentials);
             }
             const payload = cached.stats as unknown as StatsPayload;
             const response: StatsResponse = {
@@ -253,8 +326,8 @@ export async function POST(request: Request) {
         // No cache — kick off the computation in the background and return
         // immediately. The client polls /api/stats until cached data appears
         // so the dialog never blocks on a multi-minute cold compute.
-        console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId} (${riddenRoads.length} activities)`);
-        refreshInBackground(athleteId, riddenRoads);
+        console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId}`);
+        refreshInBackground(athleteId, stravaCredentials);
         const response: StatsResponse = {
             refreshedAt: null,
             stale: false,

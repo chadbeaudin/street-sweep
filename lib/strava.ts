@@ -1,3 +1,6 @@
+import polyline from '@mapbox/polyline';
+import { isBikingActivity } from './stats';
+
 export interface StravaActivity {
     id: number;
     name: string;
@@ -5,6 +8,28 @@ export interface StravaActivity {
         summary_polyline: string;
     };
     start_date: string;
+    total_elevation_gain?: number; // meters; Strava returns 0 if unknown
+    type: string;
+    sport_type?: string;
+}
+
+export interface RiddenActivities {
+    riddenRoads: [number, number][][];
+    activityElevations: number[];
+    activityTypes: string[];
+}
+
+// Single source of truth for what the app treats as "ridden": cycling activities
+// only. Non-cycling activities (walks/hikes/runs) are dropped here so they never
+// reach the map overlay, coverage stats, or the routing ridden-penalty.
+export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<RiddenActivities> {
+    const all = await fetchAllStravaActivities(creds);
+    const cycling = all.filter(a => isBikingActivity(a.sport_type || a.type));
+    return {
+        riddenRoads: cycling.map(a => polyline.decode(a.map.summary_polyline) as [number, number][]),
+        activityElevations: cycling.map(a => a.total_elevation_gain ?? 0),
+        activityTypes: cycling.map(a => a.sport_type || a.type || ''),
+    };
 }
 
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {
