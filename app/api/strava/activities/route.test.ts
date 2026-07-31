@@ -6,13 +6,12 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 }));
 
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
-jest.mock('@/lib/strava', () => ({ fetchAllStravaActivities: jest.fn() }));
-jest.mock('@mapbox/polyline', () => ({ decode: jest.fn(() => []) }));
+jest.mock('@/lib/strava', () => ({ fetchCyclingRiddenRoads: jest.fn() }));
 
 import { POST } from './route';
-import { fetchAllStravaActivities } from '@/lib/strava';
+import { fetchCyclingRiddenRoads } from '@/lib/strava';
 
-const mockedFetch = fetchAllStravaActivities as jest.MockedFunction<typeof fetchAllStravaActivities>;
+const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchCyclingRiddenRoads>;
 
 function makeRequest(body: any): Request {
     return new Request('http://localhost/api/strava/activities', {
@@ -24,9 +23,11 @@ function makeRequest(body: any): Request {
 
 describe('POST /api/strava/activities', () => {
     it('returns riddenRoads on success', async () => {
-        mockedFetch.mockResolvedValueOnce([
-            { map: { summary_polyline: 'encodedPolyline' } } as any,
-        ]);
+        mockedFetch.mockResolvedValueOnce({
+            riddenRoads: [[[0, 0], [1, 1]]],
+            activityElevations: [0],
+            activityTypes: ['Ride'],
+        });
         await POST(makeRequest({}));
         const response = mockJson.mock.calls[0];
         expect(response[0]).toHaveProperty('riddenRoads');

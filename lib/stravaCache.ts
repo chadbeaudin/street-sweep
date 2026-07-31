@@ -2,11 +2,15 @@ const DB_NAME = 'streetsweep';
 const STORE_NAME = 'strava_cache';
 const CACHE_KEY = 'ridden_roads';
 const TTL_MS = 24 * 60 * 60 * 1000;
+// Bump when the shape/semantics of cached rides change so stale entries are
+// discarded. v2: rides are cycling-only (walks/hikes/runs excluded upstream).
+const CACHE_VERSION = 2;
 
 interface CacheEntry {
     data: [number, number][][];
     elevations?: number[];
     types?: string[];
+    version?: number;
     cachedAt: number;
     credentialsKey: string;
 }
@@ -43,6 +47,8 @@ export async function getCachedRoads(credentialsKey: string): Promise<CachedActi
         if (Date.now() - entry.cachedAt > TTL_MS) return null;
         // Entries written before the elevation field or type field was added are unusable.
         if (!entry.elevations || !entry.types) return null;
+        // Entries from an older cache schema (e.g. pre-cycling-only) are discarded.
+        if (entry.version !== CACHE_VERSION) return null;
         return { roads: entry.data, elevations: entry.elevations, types: entry.types };
     } catch {
         return null;
@@ -55,7 +61,7 @@ export async function setCachedRoads(data: [number, number][][], elevations: num
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
             const req = tx.objectStore(STORE_NAME).put(
-                { data, elevations, types, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
+                { data, elevations, types, version: CACHE_VERSION, cachedAt: Date.now(), credentialsKey } satisfies CacheEntry,
                 CACHE_KEY
             );
             req.onsuccess = () => resolve();

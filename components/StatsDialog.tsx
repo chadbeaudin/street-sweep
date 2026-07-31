@@ -68,10 +68,13 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
         const fetchOnce = async (isInitial: boolean) => {
             if (isInitial) setLoading(true);
             try {
+                // Only credentials are sent — the server fetches the ride set
+                // itself, so we never ship the full decoded polylines (which a
+                // proxy would reject as too large).
                 const res = await fetch('/api/stats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ riddenRoads, activityElevations, activityTypes, stravaCredentials })
+                    body: JSON.stringify({ stravaCredentials })
                 });
                 const data = await res.json();
                 if (cancelled) return;
@@ -99,7 +102,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, riddenRoads, activityElevations, activityTypes, stravaCredentials]);
+    }, [isOpen, riddenRoads, stravaCredentials]);
 
     if (!isOpen) return null;
 

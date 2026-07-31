@@ -7,13 +7,18 @@ import {
     pointInPolygon,
     polylineCentroid
 } from '@/lib/stats';
-import { getStravaAccessToken, getStravaAthleteId } from '@/lib/strava';
+import { getStravaAccessToken, getStravaAthleteId, fetchCyclingRiddenRoads } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 const MAX_CITIES = 5;
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Bump when the stats computation changes shape/semantics so cached rows
+// computed by an older version are recomputed in the background on next open.
+// v2: dashboard is biking-only (walks/hikes/runs excluded from every metric).
+const STATS_VERSION = 2;
 
 interface CityStats {
     name: string;
@@ -25,6 +30,7 @@ interface CityStats {
 }
 
 interface StatsPayload {
+    version?: number;
     totalActivities: number;
     totalUniqueMiles: number;
     totalElevationFeet: number;
@@ -99,23 +105,12 @@ function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): 
     return out;
 }
 
-const METERS_TO_FEET = 3.28084;const BIKING_TYPES = new Set([
-    'ride',
-    'ebikeride',
-    'virtualride',
-    'gravelride',
-    'mountainbikeride',
-    'velomobile',
-    'handcycle'
-]);
+const METERS_TO_FEET = 3.28084;
 
-function isBiking(type?: string): boolean {
-    if (!type) return true; // Default to true if types are missing/not fetched yet
-    return BIKING_TYPES.has(type.toLowerCase());
-}
-
-async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityTypes?: string[]): Promise<StatsPayload> {
-    console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} activities`);
+// Input is already cycling-only (fetchCyclingRiddenRoads is the single filter
+// point), so every activity here counts toward the dashboard.
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[]): Promise<StatsPayload> {
+    console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
     const totalElevationFeet = activityElevations.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET;
@@ -216,6 +211,8 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         }
     }
 
+    // cityByActivity is already biking-only (non-biking activities were filtered
+    // out at the top), so every resolved geography here counts toward the totals.
     const uniqueBikingCountries = new Set<string>();
     const uniqueBikingStates = new Set<string>();
     const uniqueBikingCounties = new Set<string>();
@@ -224,9 +221,6 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     for (let i = 0; i < cityByActivity.length; i++) {
         const info = cityByActivity[i];
         if (!info) continue;
-        
-        const type = activityTypes ? activityTypes[i] : undefined;
-        if (!isBiking(type)) continue;
 
         if (info.country) {
             uniqueBikingCountries.add(info.country);
@@ -249,39 +243,46 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         cities: uniqueBikingCities.size
     };
 
-    return { totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };
+    return { version: STATS_VERSION, totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };
 }
 // Background recomputes are fire-and-forget; we serialize per-athlete so the
 // same user doesn't trigger overlapping refreshes from rapid dialog opens.
 const REFRESHING: Set<string> = new Set();
 
-async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
-    // Neon's HTTP driver occasionally rejects with `TypeError: fetch failed`
-    // on transient network blips. The compute is expensive — retry rather
-    // than throwing away minutes of work.
+// Neon's HTTP driver intermittently rejects with `TypeError: fetch failed` on
+// transient network blips. Retry idempotent DB ops rather than surfacing the
+// blip to the user (reads) or throwing away minutes of compute (writes).
+async function withNeonRetry<T>(op: () => Promise<T>, label: string): Promise<T> {
     const delays = [500, 2000, 5000];
     for (let attempt = 0; attempt <= delays.length; attempt++) {
         try {
-            await prisma.statsCache.upsert({
-                where: { athleteId },
-                create: { athleteId, stats: stats as any, refreshedAt: new Date() },
-                update: { stats: stats as any, refreshedAt: new Date() }
-            });
-            return;
+            return await op();
         } catch (e: any) {
             if (attempt === delays.length) throw e;
-            console.warn(`${ts()} Stats: persist attempt ${attempt + 1} failed (${e?.message || e}); retrying`);
+            console.warn(`${ts()} Stats: ${label} attempt ${attempt + 1} failed (${e?.message || e}); retrying`);
             await new Promise(r => setTimeout(r, delays[attempt]));
         }
     }
+    throw new Error('unreachable');
 }
 
-async function refreshInBackground(athleteId: string, riddenRoads: [number, number][][], activityElevations: number[], activityTypes?: string[]) {
+async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
+    await withNeonRetry(() => prisma.statsCache.upsert({
+        where: { athleteId },
+        create: { athleteId, stats: stats as any, refreshedAt: new Date() },
+        update: { stats: stats as any, refreshedAt: new Date() }
+    }), 'persist');
+}
+
+async function refreshInBackground(athleteId: string, creds: StravaCredentials) {
     if (REFRESHING.has(athleteId)) return;
     REFRESHING.add(athleteId);
     try {
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
-        const fresh = await computeStats(riddenRoads, activityElevations, activityTypes);
+        // Fetch the ride set server-side so the client never has to ship it in
+        // the request body (which a reverse proxy would reject as too large).
+        const { riddenRoads, activityElevations } = await fetchCyclingRiddenRoads(creds);
+        const fresh = await computeStats(riddenRoads, activityElevations);
         await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {
@@ -293,32 +294,23 @@ async function refreshInBackground(athleteId: string, riddenRoads: [number, numb
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json() as { riddenRoads?: [number, number][][]; activityElevations?: number[]; activityTypes?: string[]; stravaCredentials?: StravaCredentials };
-        const { riddenRoads, activityElevations, activityTypes, stravaCredentials } = body;
-        const elevations = activityElevations ?? [];
-        const types = activityTypes ?? [];
-        if (!Array.isArray(riddenRoads)) {
-            return NextResponse.json({ error: 'riddenRoads must be an array' }, { status: 400 });
-        }
+        const body = await request.json() as { stravaCredentials?: StravaCredentials };
+        const { stravaCredentials } = body;
         if (!stravaCredentials?.refreshToken) {
             return NextResponse.json({ error: 'stravaCredentials.refreshToken required to identify athlete' }, { status: 400 });
         }
 
         const athleteId = await resolveAthleteId(stravaCredentials);
-        const cached = await prisma.statsCache.findUnique({ where: { athleteId } });
+        const cached = await withNeonRetry(() => prisma.statsCache.findUnique({ where: { athleteId } }), 'read cache');
 
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();
             const stale = ageMs > FRESH_TTL_MS;
-            const cachedElev = (cached.stats as any)?.totalElevationFeet;
-            const clientHasElev = elevations.some(e => e > 0);
-            const elevMissing = cachedElev === undefined || (cachedElev === 0 && clientHasElev);
-            
-            const cachedBikingStats = (cached.stats as any)?.bikingStats;
-            const bikingStatsMissing = cachedBikingStats === undefined;
+            const cachedVersion = (cached.stats as any)?.version ?? 1;
+            const outdatedSchema = cachedVersion < STATS_VERSION;
 
-            if (stale || elevMissing || bikingStatsMissing) {
-                refreshInBackground(athleteId, riddenRoads, elevations, types);
+            if (stale || outdatedSchema) {
+                refreshInBackground(athleteId, stravaCredentials);
             }
             const payload = cached.stats as unknown as StatsPayload;
             const response: StatsResponse = {
@@ -334,8 +326,8 @@ export async function POST(request: Request) {
         // No cache — kick off the computation in the background and return
         // immediately. The client polls /api/stats until cached data appears
         // so the dialog never blocks on a multi-minute cold compute.
-        console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId} (${riddenRoads.length} activities)`);
-        refreshInBackground(athleteId, riddenRoads, elevations, types);
+        console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId}`);
+        refreshInBackground(athleteId, stravaCredentials);
         const response: StatsResponse = {
             refreshedAt: null,
             stale: false,
