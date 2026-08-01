@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
-import { OSMWay } from '@/lib/types';
+import { OSMWay, OSMNode } from '@/lib/types';
 
 export async function POST(req: NextRequest) {
     try {
@@ -25,22 +25,41 @@ export async function POST(req: NextRequest) {
 
         const osmData = await fetchOSMData(bufferedBbox);
 
+        // The OSM API fallback returns ways as node-id references without inline
+        // geometry (unlike Overpass `out geom`). Build a node lookup so we can
+        // reconstruct way geometry either way — otherwise the map gets 0 roads
+        // whenever Overpass is unavailable.
+        const nodeMap = new Map<number, [number, number]>();
+        for (const elem of osmData.elements) {
+            if (elem.type === 'node') {
+                const n = elem as OSMNode;
+                nodeMap.set(n.id, [n.lat, n.lon]);
+            }
+        }
+
         const roads: [number, number][][] = [];
         for (const elem of osmData.elements) {
-            if (elem.type === 'way') {
-                const way = elem as OSMWay;
-                if (!way.geometry) continue;
+            if (elem.type !== 'way') continue;
+            const way = elem as OSMWay;
 
-                // SAFETY: Filter out interstates/highways to prevent snapping to them
-                const highway = way.tags?.highway;
-                if (highway === 'motorway' || highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link') {
-                    continue;
-                }
+            // SAFETY: Filter out interstates/highways to prevent snapping to them
+            const highway = way.tags?.highway;
+            if (highway === 'motorway' || highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link') {
+                continue;
+            }
 
-                const path: [number, number][] = way.geometry.map(p => [p.lat, p.lon]);
-                if (path.length > 1) {
-                    roads.push(path);
+            let path: [number, number][];
+            if (way.geometry) {
+                path = way.geometry.map(p => [p.lat, p.lon]);
+            } else {
+                path = [];
+                for (const nid of way.nodes ?? []) {
+                    const c = nodeMap.get(nid);
+                    if (c) path.push(c);
                 }
+            }
+            if (path.length > 1) {
+                roads.push(path);
             }
         }
 

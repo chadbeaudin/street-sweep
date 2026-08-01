@@ -443,72 +443,100 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { lat: route[route.length - 1][1], lon: route[route.length - 1][0] };
     }, [route, selectedPoints]);
 
-    // Snap activity GPS traces to OSM roads, then deduplicate identical snapped paths.
+    // Map-match activity GPS traces to OSM road segments and render each ridden
+    // segment once, following OSM geometry. This collapses N overlapping rides on
+    // the same road into a single clean line (#43).
     const snappedStravaRoads = React.useMemo(() => {
         if (!stravaRoads || stravaRoads.length === 0) return [];
 
         // If no OSM roads available (e.g., zoomed too far in), show raw GPS traces
         if (!allRoads || allRoads.length === 0) return stravaRoads;
 
-        const SNAP_TOLERANCE = 0.003; // ~300m at equator
-        const GRID_SIZE = 0.01;
-        const roadGrid = new globalThis.Map<string, number[]>();
+        const TOLERANCE_M = 20;   // how close a GPS point must be to count the segment as ridden
+        const GRID = 0.005;       // ~500m spatial cells
+        const cellKey = (lat: number, lon: number) => `${Math.floor(lat / GRID)},${Math.floor(lon / GRID)}`;
 
-        // Build spatial index
-        for (let i = 0; i < allRoads.length; i++) {
-            const road = allRoads[i];
-            for (const [lat, lon] of road) {
-                const cellKey = `${Math.floor(lat / GRID_SIZE)},${Math.floor(lon / GRID_SIZE)}`;
-                const cell = roadGrid.get(cellKey) || [];
-                if (!roadGrid.has(cellKey)) roadGrid.set(cellKey, cell);
-                if (!cell.includes(i)) cell.push(i);
+        // Index every OSM segment by the cells its endpoints/midpoint fall in.
+        const segGrid = new globalThis.Map<string, [number, number][]>(); // cell -> [roadIdx, segIdx][]
+        for (let r = 0; r < allRoads.length; r++) {
+            const road = allRoads[r];
+            for (let s = 0; s < road.length - 1; s++) {
+                const a = road[s], b = road[s + 1];
+                const pts: [number, number][] = [a, b, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]];
+                for (const [la, lo] of pts) {
+                    const k = cellKey(la, lo);
+                    let arr = segGrid.get(k);
+                    if (!arr) { arr = []; segGrid.set(k, arr); }
+                    arr.push([r, s]);
+                }
             }
         }
 
-        // Find nearest OSM road point to a GPS point
-        const findNearestRoadPoint = (gpsLat: number, gpsLon: number): [number, number] | null => {
-            const cellKey = `${Math.floor(gpsLat / GRID_SIZE)},${Math.floor(gpsLon / GRID_SIZE)}`;
-            const roadIndices = roadGrid.get(cellKey) || [];
-            let nearest: [number, number] | null = null;
-            let minDist = SNAP_TOLERANCE;
+        // Local-plane point→segment distance in meters.
+        const M_PER_DEG_LAT = 111320;
+        const ptSegDistM = (pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number, mLon: number) => {
+            const px = (pLon - aLon) * mLon, py = (pLat - aLat) * M_PER_DEG_LAT;
+            const bx = (bLon - aLon) * mLon, by = (bLat - aLat) * M_PER_DEG_LAT;
+            const len2 = bx * bx + by * by;
+            let t = len2 > 0 ? (px * bx + py * by) / len2 : 0;
+            t = Math.max(0, Math.min(1, t));
+            const dx = px - t * bx, dy = py - t * by;
+            return Math.sqrt(dx * dx + dy * dy);
+        };
 
-            for (const roadIdx of roadIndices) {
-                for (const [roadLat, roadLon] of allRoads[roadIdx]) {
-                    const dist = Math.abs(gpsLat - roadLat) + Math.abs(gpsLon - roadLon);
-                    if (dist < minDist) {
-                        minDist = dist;
-                        nearest = [roadLat, roadLon];
+        // Mark every OSM segment within tolerance of a point on the ride path.
+        const ridden = new Set<string>();
+        const markPoint = (gLat: number, gLon: number) => {
+            const cand = segGrid.get(cellKey(gLat, gLon));
+            if (!cand) return;
+            const mLon = M_PER_DEG_LAT * Math.cos(gLat * Math.PI / 180);
+            for (const [r, s] of cand) {
+                const key = `${r}:${s}`;
+                if (ridden.has(key)) continue;
+                const road = allRoads[r];
+                if (ptSegDistM(gLat, gLon, road[s][0], road[s][1], road[s + 1][0], road[s + 1][1], mLon) <= TOLERANCE_M) {
+                    ridden.add(key);
+                }
+            }
+        };
+
+        // Densify: GPS points can be tens of metres apart, so step along each
+        // ride segment (~12m) — otherwise OSM segments between two points get missed.
+        const STEP_M = 12;
+        for (const activity of stravaRoads) {
+            for (let i = 0; i < activity.length; i++) {
+                const [la1, lo1] = activity[i];
+                markPoint(la1, lo1);
+                if (i + 1 < activity.length) {
+                    const [la2, lo2] = activity[i + 1];
+                    const mLon = M_PER_DEG_LAT * Math.cos(la1 * Math.PI / 180);
+                    const dM = Math.hypot((la2 - la1) * M_PER_DEG_LAT, (lo2 - lo1) * mLon);
+                    const steps = Math.floor(dM / STEP_M);
+                    for (let k = 1; k < steps; k++) {
+                        const t = k / steps;
+                        markPoint(la1 + (la2 - la1) * t, lo1 + (lo2 - lo1) * t);
                     }
                 }
             }
-            return nearest;
-        };
-
-        // Snap all activities to road geometry
-        const snapped = stravaRoads.map(activity => {
-            const snappedActivity: [number, number][] = [];
-            for (const gpsPoint of activity) {
-                const roadPoint = findNearestRoadPoint(gpsPoint[0], gpsPoint[1]);
-                snappedActivity.push(roadPoint || gpsPoint);
-            }
-            return snappedActivity;
-        });
-
-        // Deduplicate: if two snapped activities are nearly identical, keep only one
-        const seen = new Set<string>();
-        const deduplicated: [number, number][][] = [];
-
-        for (const activity of snapped) {
-            // Create a compact hash of the snapped path
-            const pathHash = activity.map(p => `${Math.round(p[0]*10000)},${Math.round(p[1]*10000)}`).join('|');
-
-            if (!seen.has(pathHash)) {
-                seen.add(pathHash);
-                deduplicated.push(activity);
-            }
         }
 
-        return deduplicated;
+        // Emit maximal runs of consecutive ridden segments per road as polylines.
+        const out: [number, number][][] = [];
+        for (let r = 0; r < allRoads.length; r++) {
+            const road = allRoads[r];
+            let run: [number, number][] | null = null;
+            for (let s = 0; s < road.length - 1; s++) {
+                if (ridden.has(`${r}:${s}`)) {
+                    if (!run) run = [road[s]];
+                    run.push(road[s + 1]);
+                } else if (run) {
+                    out.push(run);
+                    run = null;
+                }
+            }
+            if (run) out.push(run);
+        }
+        return out;
     }, [stravaRoads, allRoads]);
 
     // Fit map whenever the route first appears (e.g. after import)

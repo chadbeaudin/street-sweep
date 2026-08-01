@@ -219,7 +219,10 @@ export default function Home() {
                 .then(data => {
                     if (data.roads) {
                         console.log(`[StreetSweep] Received ${data.roads.length} roadmap segments.`);
-                        setAllRoads(data.roads);
+                        // Keep the previous road set if this fetch came back empty
+                        // (transient Overpass hiccup) so ridden-road snapping doesn't
+                        // fall back to raw GPS traces.
+                        if (data.roads.length > 0) setAllRoads(data.roads);
                         setServiceWarning(!!data.degraded);
                     }
                 })
