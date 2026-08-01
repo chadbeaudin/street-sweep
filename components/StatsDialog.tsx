@@ -38,13 +38,6 @@ interface StatsDialogProps {
     stravaCredentials: any;
 }
 
-// Compact form for large stats so they never overflow the narrow stat tiles
-// (e.g. 1,129,824 -> "1.1M"). Small values keep full precision.
-function compact(n: number, digits = 1): string {
-    if (n >= 100000) return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: digits }).format(n);
-    return Math.round(n).toLocaleString();
-}
-
 type GeoKey = 'countries' | 'states' | 'counties' | 'cities';
 
 const GEO_TILES: { key: GeoKey; label: string; Icon: typeof Globe; accent: string; ring: string; text: string; iconColor: string }[] = [
@@ -189,7 +182,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                 <div className="bg-gradient-to-br from-amber-50 to-amber-100/60 rounded-xl p-4 border border-amber-100">
                                     <Mountain className="w-4 h-4 text-amber-400 mb-1.5" />
                                     <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">Climbed</div>
-                                    <div className="text-2xl font-bold text-amber-900 mt-0.5 tabular-nums whitespace-nowrap">{compact(stats.totalElevationFeet ?? 0)}</div>
+                                    <div className="text-2xl font-bold text-amber-900 mt-0.5 tabular-nums whitespace-nowrap">{Math.round(stats.totalElevationFeet ?? 0).toLocaleString()}</div>
                                     <div className="text-[11px] text-amber-500 mt-0.5">ft total</div>
                                 </div>
                             </div>
