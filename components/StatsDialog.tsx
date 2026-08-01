@@ -38,6 +38,13 @@ interface StatsDialogProps {
     stravaCredentials: any;
 }
 
+// Compact form for large stats so they never overflow the narrow stat tiles
+// (e.g. 1,129,824 -> "1.1M"). Small values keep full precision.
+function compact(n: number, digits = 1): string {
+    if (n >= 100000) return new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: digits }).format(n);
+    return Math.round(n).toLocaleString();
+}
+
 type GeoKey = 'countries' | 'states' | 'counties' | 'cities';
 
 const GEO_TILES: { key: GeoKey; label: string; Icon: typeof Globe; accent: string; ring: string; text: string; iconColor: string }[] = [
@@ -120,8 +127,8 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
 
     return (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-            <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto">
-                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+            <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-y-auto">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10">
                     <div>
                         <h2 className="text-lg font-semibold text-gray-900">Your Coverage</h2>
                         {stats?.refreshedAt && (
@@ -168,21 +175,21 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                     {!loading && !error && stats && !stats.computing && stats.totalActivities !== undefined && (
                         <>
                             <div className="grid grid-cols-3 gap-3">
-                                <div className="relative overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-100">
+                                <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-100">
                                     <Activity className="w-4 h-4 text-gray-400 mb-1.5" />
                                     <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Activities</div>
-                                    <div className="text-3xl font-bold text-gray-900 mt-0.5 tabular-nums">{stats.totalActivities}</div>
+                                    <div className="text-2xl font-bold text-gray-900 mt-0.5 tabular-nums whitespace-nowrap">{stats.totalActivities?.toLocaleString()}</div>
                                 </div>
-                                <div className="relative overflow-hidden bg-gradient-to-br from-indigo-50 to-indigo-100/60 rounded-xl p-4 border border-indigo-100">
+                                <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/60 rounded-xl p-4 border border-indigo-100">
                                     <Route className="w-4 h-4 text-indigo-400 mb-1.5" />
                                     <div className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">Unique Miles</div>
-                                    <div className="text-3xl font-bold text-indigo-900 mt-0.5 tabular-nums">{(stats.totalUniqueMiles ?? 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
+                                    <div className="text-2xl font-bold text-indigo-900 mt-0.5 tabular-nums whitespace-nowrap">{(stats.totalUniqueMiles ?? 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
                                     <div className="text-[11px] text-indigo-500 mt-0.5">deduplicated</div>
                                 </div>
-                                <div className="relative overflow-hidden bg-gradient-to-br from-amber-50 to-amber-100/60 rounded-xl p-4 border border-amber-100">
+                                <div className="bg-gradient-to-br from-amber-50 to-amber-100/60 rounded-xl p-4 border border-amber-100">
                                     <Mountain className="w-4 h-4 text-amber-400 mb-1.5" />
                                     <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">Climbed</div>
-                                    <div className="text-3xl font-bold text-amber-900 mt-0.5 tabular-nums">{Math.round(stats.totalElevationFeet ?? 0).toLocaleString()}</div>
+                                    <div className="text-2xl font-bold text-amber-900 mt-0.5 tabular-nums whitespace-nowrap">{compact(stats.totalElevationFeet ?? 0)}</div>
                                     <div className="text-[11px] text-amber-500 mt-0.5">ft total</div>
                                 </div>
                             </div>
