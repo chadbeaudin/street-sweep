@@ -449,8 +449,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     const snappedStravaRoads = React.useMemo(() => {
         if (!stravaRoads || stravaRoads.length === 0) return [];
 
-        // If no OSM roads available (e.g., zoomed too far in), show raw GPS traces
-        if (!allRoads || allRoads.length === 0) return stravaRoads;
+        // Until the OSM road set has loaded we can't dedupe — show nothing rather
+        // than raw overlapping GPS traces (the user never wants to see dupes).
+        if (!allRoads || allRoads.length === 0) return [];
 
         const TOLERANCE_M = 20;   // how close a GPS point must be to count the segment as ridden
         const GRID = 0.005;       // ~500m spatial cells
