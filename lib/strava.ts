@@ -1,5 +1,22 @@
 import polyline from '@mapbox/polyline';
 import { isBikingActivity } from './stats';
+import { haversineM } from './geometry';
+
+// Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
+// so their track barely moves. Drop any ride whose bounding-box diagonal is
+// under this — real rides (even a 0.9km Kuwait spin, ~360m span) clear it.
+const MIN_TRACK_SPAN_METERS = 250;
+
+function trackSpanMeters(poly: [number, number][]): number {
+    let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+    for (const [lat, lon] of poly) {
+        if (lat < minLat) minLat = lat;
+        if (lat > maxLat) maxLat = lat;
+        if (lon < minLon) minLon = lon;
+        if (lon > maxLon) maxLon = lon;
+    }
+    return haversineM(minLat, minLon, maxLat, maxLon);
+}
 
 export interface StravaActivity {
     id: number;
@@ -19,16 +36,20 @@ export interface RiddenActivities {
     activityTypes: string[];
 }
 
-// Single source of truth for what the app treats as "ridden": cycling activities
-// only. Non-cycling activities (walks/hikes/runs) are dropped here so they never
-// reach the map overlay, coverage stats, or the routing ridden-penalty.
+// Single source of truth for what the app treats as "ridden": real-world cycling
+// only. Non-cycling activities (walks/hikes/runs) and rides whose track barely
+// moves (stationary/indoor trainers) are dropped here so they never reach the
+// map overlay, coverage stats, or the routing ridden-penalty.
 export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<RiddenActivities> {
     const all = await fetchAllStravaActivities(creds);
-    const cycling = all.filter(a => isBikingActivity(a.sport_type || a.type));
+    const real = all
+        .filter(a => isBikingActivity(a.sport_type || a.type))
+        .map(a => ({ a, poly: polyline.decode(a.map.summary_polyline) as [number, number][] }))
+        .filter(({ poly }) => poly.length >= 2 && trackSpanMeters(poly) >= MIN_TRACK_SPAN_METERS);
     return {
-        riddenRoads: cycling.map(a => polyline.decode(a.map.summary_polyline) as [number, number][]),
-        activityElevations: cycling.map(a => a.total_elevation_gain ?? 0),
-        activityTypes: cycling.map(a => a.sport_type || a.type || ''),
+        riddenRoads: real.map(r => r.poly),
+        activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),
+        activityTypes: real.map(r => r.a.sport_type || r.a.type || ''),
     };
 }
 

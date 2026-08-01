@@ -62,7 +62,6 @@ describe('stats.isBikingActivity', () => {
         expect(isBikingActivity('ebikeride')).toBe(true);
         expect(isBikingActivity('GravelRide')).toBe(true);
         expect(isBikingActivity('MountainBikeRide')).toBe(true);
-        expect(isBikingActivity('VirtualRide')).toBe(true);
         expect(isBikingActivity('Handcycle')).toBe(true);
     });
 
@@ -73,6 +72,11 @@ describe('stats.isBikingActivity', () => {
         expect(isBikingActivity('Hike')).toBe(false);
         expect(isBikingActivity('AlpineSki')).toBe(false);
         expect(isBikingActivity('Workout')).toBe(false);
+    });
+
+    it('rejects virtual/indoor rides (fictional GPS coordinates)', () => {
+        expect(isBikingActivity('VirtualRide')).toBe(false);
+        expect(isBikingActivity('virtualride')).toBe(false);
     });
 
     it('rejects undefined / empty (must be explicitly biking)', () => {

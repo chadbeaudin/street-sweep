@@ -20,7 +20,8 @@ const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 // v2: dashboard is biking-only (walks/hikes/runs excluded from every metric).
 // v3: bikingStats holds name lists (drill-down) instead of bare counts.
 // v4: place names reverse-geocoded in English (accept-language=en).
-const STATS_VERSION = 4;
+// v5: virtual/indoor and stationary rides excluded from the ridden set.
+const STATS_VERSION = 5;
 
 interface CityStats {
     name: string;

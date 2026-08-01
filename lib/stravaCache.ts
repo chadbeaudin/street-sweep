@@ -4,7 +4,8 @@ const CACHE_KEY = 'ridden_roads';
 const TTL_MS = 24 * 60 * 60 * 1000;
 // Bump when the shape/semantics of cached rides change so stale entries are
 // discarded. v2: rides are cycling-only (walks/hikes/runs excluded upstream).
-const CACHE_VERSION = 2;
+// v3: virtual/indoor and stationary trainer rides also excluded.
+const CACHE_VERSION = 3;
 
 interface CacheEntry {
     data: [number, number][][];

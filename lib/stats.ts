@@ -75,10 +75,13 @@ export function polylineCentroid(polyline: [number, number][]): [number, number]
     return [sumLat / polyline.length, sumLon / polyline.length];
 }
 
+// Outdoor cycling types only. 'virtualride' (Zwift and other indoor trainers)
+// is deliberately excluded: its GPS coordinates are fictional and land in
+// random real countries, polluting coverage stats, geography, and the map.
+// StreetSweep only cares about real roads ridden.
 const BIKING_TYPES = new Set([
     'ride',
     'ebikeride',
-    'virtualride',
     'gravelride',
     'mountainbikeride',
     'velomobile',
