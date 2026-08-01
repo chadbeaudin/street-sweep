@@ -21,7 +21,8 @@ const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 // v3: bikingStats holds name lists (drill-down) instead of bare counts.
 // v4: place names reverse-geocoded in English (accept-language=en).
 // v5: virtual/indoor and stationary rides excluded from the ridden set.
-const STATS_VERSION = 5;
+// v6: bikingStats levels carry parent chain for hierarchical drill-down.
+const STATS_VERSION = 6;
 
 interface CityStats {
     name: string;
@@ -43,9 +44,9 @@ interface StatsPayload {
 
 interface BikingGeographies {
     countries: string[];
-    states: string[];
-    counties: string[];
-    cities: string[];
+    states: { name: string; country: string }[];
+    counties: { name: string; state: string; country: string }[];
+    cities: { name: string; county: string | null; state: string; country: string }[];
 }
 
 interface StatsResponse extends Partial<StatsPayload> {
@@ -224,43 +225,29 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     }
 
     // cityByActivity is already biking-only (non-biking activities were filtered
-    // out at the top), so every resolved geography here counts toward the totals.
-    const uniqueBikingCountries = new Set<string>();
-    const uniqueBikingStates = new Set<string>();
-    const uniqueBikingCounties = new Set<string>();
-    const uniqueBikingCities = new Set<string>();
+    // out at the top). Dedup each level while keeping its parent chain so the UI
+    // can drill Country -> State -> County -> City.
+    const countrySet = new Set<string>();
+    const stateMap = new Map<string, { name: string; country: string }>();
+    const countyMap = new Map<string, { name: string; state: string; country: string }>();
+    const cityMap = new Map<string, { name: string; county: string | null; state: string; country: string }>();
 
-    for (let i = 0; i < cityByActivity.length; i++) {
-        const info = cityByActivity[i];
+    for (const info of cityByActivity) {
         if (!info) continue;
-
-        if (info.country) {
-            uniqueBikingCountries.add(info.country);
-        }
-        if (info.state) {
-            uniqueBikingStates.add(`${info.state}|${info.country ?? ''}`);
-        }
-        if (info.county) {
-            uniqueBikingCounties.add(`${info.county}|${info.state ?? ''}|${info.country ?? ''}`);
-        }
-        if (info.city) {
-            uniqueBikingCities.add(`${info.city}|${info.state ?? ''}|${info.country ?? ''}`);
-        }
+        const country = info.country ?? '';
+        const state = info.state ?? '';
+        if (info.country) countrySet.add(info.country);
+        if (info.state) stateMap.set(`${state}|${country}`, { name: info.state, country });
+        if (info.county) countyMap.set(`${info.county}|${state}|${country}`, { name: info.county, state, country });
+        if (info.city) cityMap.set(`${info.city}|${state}|${country}`, { name: info.city, county: info.county ?? null, state, country });
     }
 
-    // Turn the composite dedup keys into human-readable, sorted display names.
-    const uniqSort = (a: string[]) => Array.from(new Set(a)).sort((x, y) => x.localeCompare(y));
+    const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
     const bikingStats: BikingGeographies = {
-        countries: uniqSort(Array.from(uniqueBikingCountries)),
-        states: uniqSort(Array.from(uniqueBikingStates).map(k => k.split('|')[0])),
-        counties: uniqSort(Array.from(uniqueBikingCounties).map(k => {
-            const [county, state] = k.split('|');
-            return state ? `${county}, ${state}` : county;
-        })),
-        cities: uniqSort(Array.from(uniqueBikingCities).map(k => {
-            const [city, state] = k.split('|');
-            return state ? `${city}, ${state}` : city;
-        })),
+        countries: Array.from(countrySet).sort((a, b) => a.localeCompare(b)),
+        states: Array.from(stateMap.values()).sort(byName),
+        counties: Array.from(countyMap.values()).sort(byName),
+        cities: Array.from(cityMap.values()).sort(byName),
     };
 
     return { version: STATS_VERSION, totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };

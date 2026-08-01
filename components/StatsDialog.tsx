@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Loader2, MapPin, RefreshCw, ChevronDown, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route } from 'lucide-react';
+import { X, Loader2, MapPin, RefreshCw, ChevronDown, ChevronRight, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route } from 'lucide-react';
 
 interface CityStats {
     name: string;
@@ -17,12 +17,7 @@ interface StatsResponse {
     totalUniqueMiles?: number;
     totalElevationFeet?: number;
     cities?: CityStats[];
-    bikingStats?: {
-        countries: string[];
-        states: string[];
-        counties: string[];
-        cities: string[];
-    };
+    bikingStats?: BikingGeographies;
     refreshedAt?: string | null;
     stale?: boolean;
     refreshing?: boolean;
@@ -38,7 +33,23 @@ interface StatsDialogProps {
     stravaCredentials: any;
 }
 
+interface StateItem { name: string; country: string }
+interface CountyItem { name: string; state: string; country: string }
+interface CityItem { name: string; county: string | null; state: string; country: string }
+interface BikingGeographies {
+    countries: string[];
+    states: StateItem[];
+    counties: CountyItem[];
+    cities: CityItem[];
+}
+
 type GeoKey = 'countries' | 'states' | 'counties' | 'cities';
+
+// Which level a click drills into next.
+const CHILD_LEVEL: Record<GeoKey, GeoKey | null> = { countries: 'states', states: 'counties', counties: 'cities', cities: null };
+
+// A drill step: the level being shown plus the parent selections that filter it.
+interface DrillStep { level: GeoKey; label: string; country?: string; state?: string; county?: string }
 
 const GEO_TILES: { key: GeoKey; label: string; Icon: typeof Globe; accent: string; ring: string; text: string; iconColor: string }[] = [
     { key: 'countries', label: 'Countries', Icon: Globe, accent: 'bg-emerald-50 border-emerald-100 hover:bg-emerald-100/70', ring: 'ring-emerald-400 bg-emerald-100/70', text: 'text-emerald-900', iconColor: 'text-emerald-500' },
@@ -46,6 +57,21 @@ const GEO_TILES: { key: GeoKey; label: string; Icon: typeof Globe; accent: strin
     { key: 'counties', label: 'Counties', Icon: Landmark, accent: 'bg-cyan-50 border-cyan-100 hover:bg-cyan-100/70', ring: 'ring-cyan-400 bg-cyan-100/70', text: 'text-cyan-900', iconColor: 'text-cyan-500' },
     { key: 'cities', label: 'Cities', Icon: Building2, accent: 'bg-sky-50 border-sky-100 hover:bg-sky-100/70', ring: 'ring-sky-400 bg-sky-100/70', text: 'text-sky-900', iconColor: 'text-sky-500' },
 ];
+
+// Items to show at a drill step, filtered by the parent selections. Each item
+// carries the filters needed to drill one level deeper.
+function itemsForStep(bs: BikingGeographies, step: DrillStep): { name: string; country?: string; state?: string; county?: string }[] {
+    if (step.level === 'countries') return bs.countries.map(name => ({ name, country: name }));
+    if (step.level === 'states') return bs.states
+        .filter(s => !step.country || s.country === step.country)
+        .map(s => ({ name: s.name, country: s.country, state: s.name }));
+    if (step.level === 'counties') return bs.counties
+        .filter(c => (!step.country || c.country === step.country) && (!step.state || c.state === step.state))
+        .map(c => ({ name: c.name, country: c.country, state: c.state, county: c.name }));
+    return bs.cities
+        .filter(ci => (!step.country || ci.country === step.country) && (!step.state || ci.state === step.state) && (!step.county || ci.county === step.county))
+        .map(ci => ({ name: ci.name, country: ci.country, state: ci.state, county: ci.county ?? undefined }));
+}
 
 function formatAge(refreshedAt?: string): string | null {
     if (!refreshedAt) return null;
@@ -63,9 +89,9 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [expanded, setExpanded] = useState<GeoKey | null>(null);
+    const [drill, setDrill] = useState<DrillStep[]>([]);
 
-    useEffect(() => { if (!isOpen) setExpanded(null); }, [isOpen]);
+    useEffect(() => { if (!isOpen) setDrill([]); }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -188,57 +214,85 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                             </div>
 
                             <div>
-                                <h3 className="text-sm font-semibold text-gray-700 mb-3">Biking Locations Ridden</h3>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-semibold text-gray-700">Biking Locations Ridden</h3>
+                                    <span className="text-xs text-gray-400">tap to drill down</span>
+                                </div>
                                 <div className="grid grid-cols-4 gap-2">
                                     {GEO_TILES.map(({ key, label, Icon, accent, ring, text, iconColor }) => {
                                         const raw = stats.bikingStats?.[key];
-                                        const list = Array.isArray(raw) ? raw : [];
-                                        const isOpen = expanded === key;
+                                        const count = Array.isArray(raw) ? raw.length : 0;
+                                        const active = drill[drill.length - 1]?.level === key;
                                         return (
                                             <button
                                                 key={key}
                                                 type="button"
-                                                onClick={() => setExpanded(isOpen ? null : key)}
-                                                aria-expanded={isOpen}
-                                                className={`relative rounded-lg border p-3 text-center transition-all ${isOpen ? `ring-2 ${ring}` : accent}`}
+                                                onClick={() => setDrill([{ level: key, label }])}
+                                                aria-expanded={active}
+                                                className={`rounded-lg border p-3 text-center transition-all ${active ? `ring-2 ${ring}` : accent}`}
                                             >
                                                 <Icon className={`w-4 h-4 mx-auto mb-1 ${iconColor}`} />
                                                 <div className={`text-[10px] font-bold uppercase tracking-wider ${text} opacity-80`}>{label}</div>
-                                                <div className={`text-2xl font-black ${text} leading-tight`}>{list.length}</div>
-                                                <ChevronDown className={`w-3 h-3 mx-auto mt-0.5 ${text} opacity-60 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                                                <div className={`text-2xl font-black ${text} leading-tight`}>{count}</div>
+                                                <ChevronDown className={`w-3 h-3 mx-auto mt-0.5 ${text} opacity-60 transition-transform ${active ? 'rotate-180' : ''}`} />
                                             </button>
                                         );
                                     })}
                                 </div>
-                                {expanded && (
-                                    <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50/70 overflow-hidden">
-                                        {(() => {
-                                            const raw = stats.bikingStats?.[expanded];
-                                            const list = Array.isArray(raw) ? raw : [];
-                                            const tile = GEO_TILES.find(t => t.key === expanded)!;
-                                            return (
-                                                <>
-                                                    <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-white">
-                                                        <span className="text-xs font-semibold text-gray-700">{list.length} {tile.label}</span>
-                                                        <button onClick={() => setExpanded(null)} className="text-gray-400 hover:text-gray-600"><X className="w-3.5 h-3.5" /></button>
-                                                    </div>
-                                                    {list.length === 0 ? (
-                                                        <p className="px-3 py-4 text-sm text-gray-500 text-center">None detected yet.</p>
-                                                    ) : (
-                                                        <ul className="max-h-52 overflow-y-auto py-1">
-                                                            {list.map(name => (
-                                                                <li key={name} className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-white">
-                                                                    <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${tile.iconColor}`} />
-                                                                    <span className="truncate">{name}</span>
-                                                                </li>
-                                                            ))}
-                                                        </ul>
-                                                    )}
-                                                </>
-                                            );
-                                        })()}
-                                    </div>
-                                )}
+                                {drill.length > 0 && stats.bikingStats && (() => {
+                                    const step = drill[drill.length - 1];
+                                    const tile = GEO_TILES.find(t => t.key === step.level)!;
+                                    // Older cached payloads stored levels as flat strings without the
+                                    // parent chain — they can't be drilled. Detect and show an updating
+                                    // note until the recompute lands the new shape.
+                                    const legacyShape = stats.bikingStats!.states.length > 0 && typeof (stats.bikingStats!.states[0] as any) === 'string';
+                                    const items = legacyShape ? [] : itemsForStep(stats.bikingStats!, step);
+                                    const child = CHILD_LEVEL[step.level];
+                                    return (
+                                        <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50/70 overflow-hidden">
+                                            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-200 bg-white">
+                                                <div className="flex items-center gap-1 text-xs min-w-0 flex-wrap">
+                                                    {drill.map((s, i) => (
+                                                        <span key={i} className="flex items-center gap-1">
+                                                            {i > 0 && <ChevronRight className="w-3 h-3 text-gray-300 flex-shrink-0" />}
+                                                            <button
+                                                                onClick={() => setDrill(drill.slice(0, i + 1))}
+                                                                className={`truncate ${i === drill.length - 1 ? 'font-semibold text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
+                                                            >
+                                                                {s.label}
+                                                            </button>
+                                                        </span>
+                                                    ))}
+                                                    <span className="text-gray-400">· {items.length}</span>
+                                                </div>
+                                                <button onClick={() => setDrill([])} className="text-gray-400 hover:text-gray-600 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                                            </div>
+                                            {items.length === 0 ? (
+                                                <p className="px-3 py-4 text-sm text-gray-500 text-center flex items-center justify-center gap-2">
+                                                    {(legacyShape || stats.refreshing) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                                    {legacyShape || stats.refreshing ? 'Updating your locations…' : 'None detected yet.'}
+                                                </p>
+                                            ) : (
+                                                <ul className="max-h-56 overflow-y-auto py-1">
+                                                    {items.map((it, idx) => (
+                                                        <li key={`${it.name}-${idx}`}>
+                                                            <button
+                                                                type="button"
+                                                                disabled={!child}
+                                                                onClick={child ? () => setDrill([...drill, { level: child, label: it.name, country: it.country, state: it.state, county: it.county }]) : undefined}
+                                                                className={`w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left text-gray-700 ${child ? 'hover:bg-white cursor-pointer' : 'cursor-default'}`}
+                                                            >
+                                                                <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${tile.iconColor}`} />
+                                                                <span className="truncate flex-1">{it.name}</span>
+                                                                {child && <ChevronRight className="w-3.5 h-3.5 text-gray-300 flex-shrink-0" />}
+                                                            </button>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             <div>
