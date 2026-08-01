@@ -473,32 +473,47 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             }
         }
 
-        // Local-plane point→segment distance in meters.
+        // Local-plane projection of a point onto a segment: perpendicular distance,
+        // the clamped parameter t along the segment, and the segment length.
         const M_PER_DEG_LAT = 111320;
-        const ptSegDistM = (pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number, mLon: number) => {
+        const ptSegProj = (pLat: number, pLon: number, aLat: number, aLon: number, bLat: number, bLon: number, mLon: number) => {
             const px = (pLon - aLon) * mLon, py = (pLat - aLat) * M_PER_DEG_LAT;
             const bx = (bLon - aLon) * mLon, by = (bLat - aLat) * M_PER_DEG_LAT;
             const len2 = bx * bx + by * by;
             let t = len2 > 0 ? (px * bx + py * by) / len2 : 0;
             t = Math.max(0, Math.min(1, t));
             const dx = px - t * bx, dy = py - t * by;
-            return Math.sqrt(dx * dx + dy * dy);
+            return { dist: Math.sqrt(dx * dx + dy * dy), t, lenM: Math.sqrt(len2) };
         };
 
-        // Mark every OSM segment within tolerance of a point on the ride path.
-        const ridden = new Set<string>();
+        // For each OSM segment, track the span of the ride that ran alongside it
+        // (min/max t). A segment counts as ridden only if the ride actually
+        // traversed a meaningful length of it — not just grazed one endpoint
+        // (which is what produced spurious cross-street stubs at intersections).
+        const MIN_COVERED_M = 8;
+        const coverage = new globalThis.Map<string, { minT: number; maxT: number; lenM: number }>();
         const markPoint = (gLat: number, gLon: number) => {
             const cand = segGrid.get(cellKey(gLat, gLon));
             if (!cand) return;
             const mLon = M_PER_DEG_LAT * Math.cos(gLat * Math.PI / 180);
             for (const [r, s] of cand) {
                 const key = `${r}:${s}`;
-                if (ridden.has(key)) continue;
+                const existing = coverage.get(key);
+                // Fast path: already confidently ridden, skip further distance math.
+                if (existing && (existing.maxT - existing.minT) * existing.lenM >= MIN_COVERED_M) continue;
                 const road = allRoads[r];
-                if (ptSegDistM(gLat, gLon, road[s][0], road[s][1], road[s + 1][0], road[s + 1][1], mLon) <= TOLERANCE_M) {
-                    ridden.add(key);
-                }
+                const { dist, t, lenM } = ptSegProj(gLat, gLon, road[s][0], road[s][1], road[s + 1][0], road[s + 1][1], mLon);
+                if (dist > TOLERANCE_M) continue;
+                if (!existing) coverage.set(key, { minT: t, maxT: t, lenM });
+                else { if (t < existing.minT) existing.minT = t; if (t > existing.maxT) existing.maxT = t; }
             }
+        };
+
+        const isRidden = (key: string): boolean => {
+            const c = coverage.get(key);
+            if (!c) return false;
+            const span = c.maxT - c.minT;
+            return span * c.lenM >= MIN_COVERED_M || span >= 0.6;
         };
 
         // Densify: GPS points can be tens of metres apart, so step along each
@@ -527,7 +542,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             const road = allRoads[r];
             let run: [number, number][] | null = null;
             for (let s = 0; s < road.length - 1; s++) {
-                if (ridden.has(`${r}:${s}`)) {
+                if (isRidden(`${r}:${s}`)) {
                     if (!run) run = [road[s]];
                     run.push(road[s + 1]);
                 } else if (run) {
