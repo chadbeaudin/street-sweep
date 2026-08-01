@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, computeRideRecords } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -82,5 +82,32 @@ describe('stats.isBikingActivity', () => {
     it('rejects undefined / empty (must be explicitly biking)', () => {
         expect(isBikingActivity(undefined)).toBe(false);
         expect(isBikingActivity('')).toBe(false);
+    });
+});
+
+describe('stats.computeRideRecords', () => {
+    const MI = 1609.344;
+    it('totals distance, finds records, counts active days and years', () => {
+        const r = computeRideRecords(
+            [10 * MI, 25 * MI, 25 * MI],
+            [100, 500, 300],           // meters climbed
+            ['2024-05-01T10:00:00Z', '2024-05-01T15:00:00Z', '2025-06-02T08:00:00Z']
+        );
+        expect(r.totalDistanceMiles).toBeCloseTo(60, 5);
+        expect(r.longestRideMiles).toBeCloseTo(25, 5);
+        expect(r.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
+        expect(r.activeDays).toBe(2); // two rides same day count once
+        expect(r.ridesPerYear).toEqual([
+            { year: 2024, rides: 2, miles: 35 },
+            { year: 2025, rides: 1, miles: 25 },
+        ]);
+    });
+
+    it('handles empty input', () => {
+        const r = computeRideRecords([], [], []);
+        expect(r.totalDistanceMiles).toBe(0);
+        expect(r.longestRideMiles).toBe(0);
+        expect(r.activeDays).toBe(0);
+        expect(r.ridesPerYear).toEqual([]);
     });
 });

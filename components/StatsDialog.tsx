@@ -16,6 +16,12 @@ interface StatsResponse {
     totalActivities?: number;
     totalUniqueMiles?: number;
     totalElevationFeet?: number;
+    totalDistanceMiles?: number;
+    explorationPct?: number;
+    longestRideMiles?: number;
+    biggestClimbFeet?: number;
+    activeDays?: number;
+    ridesPerYear?: { year: number; rides: number; miles: number }[];
     cities?: CityStats[];
     bikingStats?: BikingGeographies;
     refreshedAt?: string | null;
@@ -294,6 +300,44 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     );
                                 })()}
                             </div>
+
+                            {stats.totalDistanceMiles !== undefined && (
+                                <div>
+                                    <h3 className="text-sm font-semibold text-gray-700 mb-3">Records</h3>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        {[
+                                            { label: 'Total Distance', value: `${Math.round(stats.totalDistanceMiles).toLocaleString()}`, unit: 'mi' },
+                                            { label: 'Explored New', value: `${Math.round(stats.explorationPct ?? 0)}`, unit: '% of miles' },
+                                            { label: 'Longest Ride', value: `${Math.round(stats.longestRideMiles ?? 0)}`, unit: 'mi' },
+                                            { label: 'Biggest Climb', value: `${Math.round(stats.biggestClimbFeet ?? 0).toLocaleString()}`, unit: 'ft' },
+                                            { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days' },
+                                        ].map(r => (
+                                            <div key={r.label} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{r.label}</div>
+                                                <div className="text-xl font-bold text-gray-900 mt-0.5 tabular-nums whitespace-nowrap">{r.value}</div>
+                                                <div className="text-[10px] text-gray-400">{r.unit}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {stats.ridesPerYear && stats.ridesPerYear.length > 1 && (() => {
+                                        const maxMiles = Math.max(...stats.ridesPerYear.map(y => y.miles), 1);
+                                        return (
+                                            <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
+                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Miles per Year</div>
+                                                <div className="flex items-end gap-1.5 h-24">
+                                                    {stats.ridesPerYear.map(y => (
+                                                        <div key={y.year} className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0" title={`${y.year}: ${Math.round(y.miles).toLocaleString()} mi · ${y.rides} rides`}>
+                                                            <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(4, (y.miles / maxMiles) * 100)}%` }} />
+                                                            <span className="text-[9px] text-gray-500 tabular-nums">{`'${String(y.year).slice(2)}`}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            )}
 
                             <div>
                                 <div className="flex items-center justify-between mb-3">

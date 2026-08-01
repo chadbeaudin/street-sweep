@@ -27,6 +27,8 @@ describe('POST /api/strava/activities', () => {
             riddenRoads: [[[0, 0], [1, 1]]],
             activityElevations: [0],
             activityTypes: ['Ride'],
+            activityDistances: [1000],
+            activityStartDates: ['2024-01-01T00:00:00Z'],
         });
         await POST(makeRequest({}));
         const response = mockJson.mock.calls[0];

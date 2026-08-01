@@ -1,6 +1,53 @@
 import { haversineM } from './geometry';
 
 const METERS_PER_MILE = 1609.344;
+const METERS_TO_FEET = 3.28084;
+
+export interface RideRecords {
+    totalDistanceMiles: number;
+    longestRideMiles: number;
+    biggestClimbFeet: number;
+    activeDays: number;
+    ridesPerYear: { year: number; rides: number; miles: number }[];
+}
+
+// Records/totals derived from per-activity summary data (no geocoding needed).
+// Arrays are parallel: distances/elevations in meters, startDates ISO strings.
+export function computeRideRecords(distancesM: number[], elevationsM: number[], startDates: string[]): RideRecords {
+    let totalM = 0, longestM = 0, biggestClimbM = 0;
+    const days = new Set<string>();
+    const perYear = new Map<number, { rides: number; miles: number }>();
+
+    for (let i = 0; i < distancesM.length; i++) {
+        const d = distancesM[i] || 0;
+        totalM += d;
+        if (d > longestM) longestM = d;
+        const e = elevationsM[i] || 0;
+        if (e > biggestClimbM) biggestClimbM = e;
+
+        const iso = startDates[i];
+        if (iso) {
+            days.add(iso.slice(0, 10)); // YYYY-MM-DD
+            const year = Number(iso.slice(0, 4));
+            if (year) {
+                const y = perYear.get(year) ?? { rides: 0, miles: 0 };
+                y.rides += 1;
+                y.miles += d / METERS_PER_MILE;
+                perYear.set(year, y);
+            }
+        }
+    }
+
+    return {
+        totalDistanceMiles: totalM / METERS_PER_MILE,
+        longestRideMiles: longestM / METERS_PER_MILE,
+        biggestClimbFeet: biggestClimbM * METERS_TO_FEET,
+        activeDays: days.size,
+        ridesPerYear: Array.from(perYear.entries())
+            .map(([year, v]) => ({ year, rides: v.rides, miles: v.miles }))
+            .sort((a, b) => a.year - b.year),
+    };
+}
 
 // Cell side ≈ 15m. Small enough to capture a single road segment without
 // merging adjacent parallel roads; large enough that GPS noise on the same

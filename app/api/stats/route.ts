@@ -5,7 +5,9 @@ import {
     buildCoverageCells,
     cellsToMiles,
     pointInPolygon,
-    polylineCentroid
+    polylineCentroid,
+    computeRideRecords,
+    RideRecords
 } from '@/lib/stats';
 import { getStravaAccessToken, getStravaAthleteId, fetchCyclingRiddenRoads } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
@@ -22,7 +24,8 @@ const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 // v4: place names reverse-geocoded in English (accept-language=en).
 // v5: virtual/indoor and stationary rides excluded from the ridden set.
 // v6: bikingStats levels carry parent chain for hierarchical drill-down.
-const STATS_VERSION = 6;
+// v7: records added (total distance, exploration %, longest ride, climb, active days, per-year).
+const STATS_VERSION = 7;
 
 interface CityStats {
     name: string;
@@ -38,6 +41,12 @@ interface StatsPayload {
     totalActivities: number;
     totalUniqueMiles: number;
     totalElevationFeet: number;
+    totalDistanceMiles?: number;
+    explorationPct?: number; // unique (deduped) miles / total distance ridden
+    longestRideMiles?: number;
+    biggestClimbFeet?: number;
+    activeDays?: number;
+    ridesPerYear?: RideRecords['ridesPerYear'];
     cities: CityStats[];
     bikingStats?: BikingGeographies;
 }
@@ -115,8 +124,9 @@ const METERS_TO_FEET = 3.28084;
 
 // Input is already cycling-only (fetchCyclingRiddenRoads is the single filter
 // point), so every activity here counts toward the dashboard.
-async function computeStats(riddenRoads: [number, number][][], activityElevations: number[]): Promise<StatsPayload> {
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = []): Promise<StatsPayload> {
     console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
+    const records = computeRideRecords(activityDistances, activityElevations, activityStartDates);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
     const totalElevationFeet = activityElevations.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET;
@@ -250,7 +260,24 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         cities: Array.from(cityMap.values()).sort(byName),
     };
 
-    return { version: STATS_VERSION, totalActivities: riddenRoads.length, totalUniqueMiles, totalElevationFeet, cities, bikingStats };
+    const explorationPct = records.totalDistanceMiles > 0
+        ? (totalUniqueMiles / records.totalDistanceMiles) * 100
+        : 0;
+
+    return {
+        version: STATS_VERSION,
+        totalActivities: riddenRoads.length,
+        totalUniqueMiles,
+        totalElevationFeet,
+        totalDistanceMiles: records.totalDistanceMiles,
+        explorationPct,
+        longestRideMiles: records.longestRideMiles,
+        biggestClimbFeet: records.biggestClimbFeet,
+        activeDays: records.activeDays,
+        ridesPerYear: records.ridesPerYear,
+        cities,
+        bikingStats,
+    };
 }
 // Background recomputes are fire-and-forget; we serialize per-athlete so the
 // same user doesn't trigger overlapping refreshes from rapid dialog opens.
@@ -288,8 +315,8 @@ async function refreshInBackground(athleteId: string, creds: StravaCredentials) 
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
         // Fetch the ride set server-side so the client never has to ship it in
         // the request body (which a reverse proxy would reject as too large).
-        const { riddenRoads, activityElevations } = await fetchCyclingRiddenRoads(creds);
-        const fresh = await computeStats(riddenRoads, activityElevations);
+        const { riddenRoads, activityElevations, activityDistances, activityStartDates } = await fetchCyclingRiddenRoads(creds);
+        const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates);
         await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {

@@ -25,6 +25,7 @@ export interface StravaActivity {
         summary_polyline: string;
     };
     start_date: string;
+    distance?: number; // meters
     total_elevation_gain?: number; // meters; Strava returns 0 if unknown
     type: string;
     sport_type?: string;
@@ -34,6 +35,8 @@ export interface RiddenActivities {
     riddenRoads: [number, number][][];
     activityElevations: number[];
     activityTypes: string[];
+    activityDistances: number[]; // meters
+    activityStartDates: string[]; // ISO
 }
 
 // Single source of truth for what the app treats as "ridden": real-world cycling
@@ -50,6 +53,8 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         riddenRoads: real.map(r => r.poly),
         activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),
         activityTypes: real.map(r => r.a.sport_type || r.a.type || ''),
+        activityDistances: real.map(r => r.a.distance ?? 0),
+        activityStartDates: real.map(r => r.a.start_date ?? ''),
     };
 }
 
