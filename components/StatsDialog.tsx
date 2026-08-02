@@ -325,10 +325,12 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                         return (
                                             <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Miles per Year</div>
-                                                <div className="flex items-end gap-1.5 h-24">
+                                                <div className="flex gap-1.5 h-24">
                                                     {stats.ridesPerYear.map(y => (
-                                                        <div key={y.year} className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0" title={`${y.year}: ${Math.round(y.miles).toLocaleString()} mi · ${y.rides} rides`}>
-                                                            <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(4, (y.miles / maxMiles) * 100)}%` }} />
+                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(y.miles).toLocaleString()} mi · ${y.rides} rides`}>
+                                                            <div className="w-full flex-1 flex items-end">
+                                                                <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }} />
+                                                            </div>
                                                             <span className="text-[9px] text-gray-500 tabular-nums">{`'${String(y.year).slice(2)}`}</span>
                                                         </div>
                                                     ))}
