@@ -10,6 +10,7 @@ import { StatsDialog } from '@/components/StatsDialog';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from '@/lib/pointMove';
+import { RouteSnapshot, undo, redo } from '@/lib/routeHistory';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -863,45 +864,30 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setActiveSteps(0);
     }, []);
 
+    const applySnapshot = useCallback((snapshot: RouteSnapshot, index: number) => {
+        pointsRef.current = [...snapshot.points];
+        manualRouteRef.current = [...snapshot.route];
+        selectionBoxesRef.current = [...snapshot.selectionBoxes];
+        preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
+        historyIndexRef.current = index;
+
+        setSelectedPoints(pointsRef.current);
+        setManualRoute(manualRouteRef.current);
+        setSelectionBoxes(selectionBoxesRef.current);
+        setPreAreaPointCount(preAreaPointCountRef.current);
+        setHistoryIndex(index);
+    }, []);
+
     const handleUndo = useCallback(() => {
-        if (historyIndexRef.current > 0) {
-            const prevIndex = historyIndexRef.current - 1;
-            const snapshot = historyRef.current[prevIndex];
-
-            pointsRef.current = [...snapshot.points];
-            manualRouteRef.current = [...snapshot.route];
-            selectionBoxesRef.current = [...snapshot.selectionBoxes];
-            preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
-            historyIndexRef.current = prevIndex;
-
-            setSelectedPoints(pointsRef.current);
-            setManualRoute(manualRouteRef.current);
-            setSelectionBoxes(selectionBoxesRef.current);
-            setPreAreaPointCount(preAreaPointCountRef.current);
-            setHistoryIndex(prevIndex);
-        } else if (historyIndexRef.current === 0) {
-            clearPoints();
-        }
-    }, [clearPoints]);
+        const { snapshot, index } = undo(historyRef.current, historyIndexRef.current);
+        if (snapshot) applySnapshot(snapshot, index);
+        else if (historyIndexRef.current === 0) clearPoints();
+    }, [clearPoints, applySnapshot]);
 
     const handleRedo = useCallback(() => {
-        if (historyIndexRef.current < historyRef.current.length - 1) {
-            const nextIndex = historyIndexRef.current + 1;
-            const snapshot = historyRef.current[nextIndex];
-
-            pointsRef.current = [...snapshot.points];
-            manualRouteRef.current = [...snapshot.route];
-            selectionBoxesRef.current = [...snapshot.selectionBoxes];
-            preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
-            historyIndexRef.current = nextIndex;
-
-            setSelectedPoints(pointsRef.current);
-            setManualRoute(manualRouteRef.current);
-            setSelectionBoxes(selectionBoxesRef.current);
-            setPreAreaPointCount(preAreaPointCountRef.current);
-            setHistoryIndex(nextIndex);
-        }
-    }, []);
+        const { snapshot, index } = redo(historyRef.current, historyIndexRef.current);
+        if (snapshot) applySnapshot(snapshot, index);
+    }, [applySnapshot]);
 
     const totalElevationGain = useMemo(() => {
         if (!elevationData || elevationData.length < 2) return 0;
