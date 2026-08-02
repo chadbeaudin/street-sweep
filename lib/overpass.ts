@@ -2,7 +2,11 @@ import { BoundingBox, OverpassResponse, OSMElement } from './types';
 import { prisma } from './prisma';
 import { readDiskCache, writeDiskCache } from './osmDiskCache';
 
+// Self-hosted Overpass first (no rate limits), public mirrors as fallback for
+// areas outside the local extract. Set OVERPASS_URL to the /api/interpreter
+// endpoint of a self-hosted instance (e.g. via Cloudflare Tunnel).
 const OVERPASS_ENDPOINTS = [
+  ...(process.env.OVERPASS_URL ? [process.env.OVERPASS_URL] : []),
   'https://lz4.overpass-api.de/api/interpreter',
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -260,6 +264,11 @@ async function getDbCached(key: string, minElements = 0, requestedBbox?: Boundin
   }
 }
 
+// Cap on cached OSM tiles. Each tile is large JSON (~0.5-1MB), so an unbounded
+// cache filled the 512MB Neon project. Keep the most-recently-fetched tiles and
+// evict the oldest beyond the cap.
+const OSM_CACHE_MAX_ROWS = 300;
+
 async function setDbCached(key: string, data: OverpassResponse): Promise<void> {
   try {
     await prisma.osmCache.upsert({
@@ -267,8 +276,24 @@ async function setDbCached(key: string, data: OverpassResponse): Promise<void> {
       update: { data: data as any, fetchedAt: new Date() },
       create: { key, data: data as any }
     });
+    await evictOsmCache();
   } catch (e: any) {
     console.error(`${ts()} DB cache write failed:`, e.message);
+  }
+}
+
+async function evictOsmCache(): Promise<void> {
+  try {
+    const count = await prisma.osmCache.count();
+    if (count <= OSM_CACHE_MAX_ROWS) return;
+    const stale = await prisma.osmCache.findMany({
+      orderBy: { fetchedAt: 'asc' },
+      take: count - OSM_CACHE_MAX_ROWS,
+      select: { key: true }
+    });
+    await prisma.osmCache.deleteMany({ where: { key: { in: stale.map(s => s.key) } } });
+  } catch (e: any) {
+    console.warn(`${ts()} OSM cache eviction failed:`, e.message);
   }
 }
 
