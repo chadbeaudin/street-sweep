@@ -1100,6 +1100,38 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                             Routing Preferences
                                         </div>
                                         <div className="p-1.5 space-y-1">
+                                            <div className="px-2 pt-1 pb-2 mb-1 border-b border-gray-100">
+                                                <div className="text-[11px] font-semibold text-gray-500 mb-1 flex items-center gap-1.5">
+                                                    <HomeIcon className="w-3.5 h-3.5 text-indigo-500" /> Start Address
+                                                </div>
+                                                {startPoint ? (
+                                                    <div className="flex items-center gap-1">
+                                                        <span className="flex-1 min-w-0 text-xs text-gray-700 truncate" title={startPoint.label}>
+                                                            {startPoint.label.split(',').slice(0, 2).join(',')}
+                                                        </span>
+                                                        <button onClick={clearStartPoint} title="Clear" className="p-0.5 text-gray-400 hover:text-gray-600">
+                                                            <X className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex items-center gap-1">
+                                                        <input
+                                                            value={addressInput}
+                                                            onChange={e => setAddressInput(e.target.value)}
+                                                            onKeyDown={e => { if (e.key === 'Enter') handleAddressSubmit(); }}
+                                                            placeholder="Enter address"
+                                                            className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                                        />
+                                                        <button
+                                                            onClick={handleAddressSubmit}
+                                                            disabled={addressLoading || !addressInput.trim()}
+                                                            className="px-2 py-1 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-40 flex items-center"
+                                                        >
+                                                            {addressLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Set'}
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
                                             <button
                                                 onClick={() => setRoutingOptions({ ...routingOptions, avoidGravel: !routingOptions.avoidGravel })}
                                                 className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidGravel ? 'bg-amber-50 text-amber-900' : 'text-gray-700 hover:bg-gray-100'}`}
@@ -1357,29 +1389,6 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </span>
                     </div>
                 )}
-                {/* Persistent start point (#30): set a home address to route from */}
-                <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 bg-white/95 backdrop-blur rounded-full shadow-lg border border-gray-200 pl-3 pr-1.5 py-1">
-                    <HomeIcon className="w-4 h-4 text-indigo-500 flex-shrink-0" />
-                    <input
-                        value={addressInput}
-                        onChange={e => setAddressInput(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter') handleAddressSubmit(); }}
-                        placeholder={startPoint ? startPoint.label.split(',').slice(0, 2).join(',') : 'Start address…'}
-                        className="w-40 sm:w-56 bg-transparent text-sm text-gray-800 placeholder-gray-400 focus:outline-none truncate"
-                    />
-                    <button
-                        onClick={handleAddressSubmit}
-                        disabled={addressLoading || !addressInput.trim()}
-                        className="px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-40 transition-colors flex items-center gap-1"
-                    >
-                        {addressLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Set'}
-                    </button>
-                    {startPoint && (
-                        <button onClick={clearStartPoint} title="Clear start point" className="p-1 text-gray-400 hover:text-gray-600">
-                            <X className="w-3.5 h-3.5" />
-                        </button>
-                    )}
-                </div>
                 <Map
                     bbox={bbox}
                     onBBoxChange={handleBBoxChange}
