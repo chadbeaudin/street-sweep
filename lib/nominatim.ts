@@ -178,3 +178,29 @@ export async function searchCityPolygon(name: string, state: string | null, coun
     POLYGON_CACHE.set(cacheKey, result);
     return result;
 }
+
+interface GeocodeResult {
+    lat: number;
+    lon: number;
+    label: string;
+}
+
+// Forward geocode a free-text address/place to a coordinate. Used for the
+// persistent start point (#30).
+export async function geocodeAddress(query: string): Promise<GeocodeResult | null> {
+    const q = query.trim();
+    if (!q) return null;
+    await rateLimit();
+    const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=en`;
+    const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+    if (!res.ok) {
+        if (res.status === 429) throw new Error('Nominatim 429 (rate-limited)');
+        return null;
+    }
+    const arr = await res.json();
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const top = arr[0];
+    const lat = parseFloat(top.lat), lon = parseFloat(top.lon);
+    if (!isFinite(lat) || !isFinite(lon)) return null;
+    return { lat, lon, label: top.display_name ?? q };
+}

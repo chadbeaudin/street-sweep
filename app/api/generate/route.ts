@@ -7,7 +7,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, selectionPolygons: selectionPolygonsRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = await request.json();
+        const { bbox, riddenRoads, selectedPoints, startPoint: persistentStart, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, selectionPolygons: selectionPolygonsRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = await request.json();
 
         // Backward compatibility: Convert single selectionBox to array if present
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);
@@ -100,7 +100,11 @@ export async function POST(request: Request) {
         const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads, routingOptions);
 
         console.log(`${ts()} Solving Routing Problem...`);
-        const startPoint = selectedPoints && selectedPoints.length > 0 ? selectedPoints[0] : undefined;
+        // Prefer an explicit clicked start; otherwise use the persistent start
+        // point (a saved address, #30) so area/lasso routes begin at home.
+        const startPoint = (selectedPoints && selectedPoints.length > 0)
+            ? selectedPoints[0]
+            : (persistentStart && typeof persistentStart.lat === 'number' ? persistentStart : undefined);
 
         // Use both rectangular boxes and polygons for routing
         const combinedSelections: Array<{ north: number; south: number; east: number; west: number }> = [...(selectionBoxes || [])];

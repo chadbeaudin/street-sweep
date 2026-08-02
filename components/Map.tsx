@@ -24,6 +24,7 @@ interface MapProps {
     hoveredPoint: { lat: number; lon: number } | null;
     stravaRoads: [number, number][][] | null;
     precomputedRidden?: [number, number][][] | null;
+    startPoint?: { lat: number; lon: number; label: string } | null;
     selectedPoints: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[];
     onPointAdd: (point: { lat: number; lon: number }) => void;
     onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
@@ -421,7 +422,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -693,6 +694,18 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
+                {startPoint && (
+                    <Marker
+                        position={[startPoint.lat, startPoint.lon]}
+                        icon={L.divIcon({
+                            className: '',
+                            html: '<div style="font-size:22px;line-height:22px;transform:translate(-50%,-90%);filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))">🏠</div>',
+                            iconSize: [22, 22],
+                            iconAnchor: [11, 20],
+                        })}
+                        title={startPoint.label}
+                    />
+                )}
                 <GeolocateOnMount />
                 <InvalidateSizeOnRoute route={route} />
                 <MapRefCapture mapRef={mapRef} />

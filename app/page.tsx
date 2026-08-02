@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3 } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { StatsDialog } from '@/components/StatsDialog';
@@ -52,6 +52,10 @@ export default function Home() {
     const [isLassoMode, setIsLassoMode] = useState(false);
     const [selectionBoxes, setSelectionBoxes] = useState<{ north: number; south: number; east: number; west: number }[]>([]);
     const [selectionPolygons, setSelectionPolygons] = useState<[number, number][][]>([]);
+    const [startPoint, setStartPoint] = useState<{ lat: number; lon: number; label: string } | null>(null);
+    const startPointRef = useRef<{ lat: number; lon: number } | null>(null);
+    const [addressInput, setAddressInput] = useState('');
+    const [addressLoading, setAddressLoading] = useState(false);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
@@ -100,6 +104,51 @@ export default function Home() {
     useEffect(() => {
         selectionPolygonsRef.current = selectionPolygons;
     }, [selectionPolygons]);
+
+    // Persistent start point (#30): load once, keep a ref in sync.
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem('streetsweep_start');
+            if (saved) {
+                const p = JSON.parse(saved);
+                if (typeof p?.lat === 'number' && typeof p?.lon === 'number') {
+                    setStartPoint(p);
+                    setBbox({ south: p.lat - 0.008, north: p.lat + 0.008, west: p.lon - 0.008, east: p.lon + 0.008 });
+                }
+            }
+        } catch { /* ignore malformed storage */ }
+    }, []);
+    useEffect(() => {
+        startPointRef.current = startPoint ? { lat: startPoint.lat, lon: startPoint.lon } : null;
+    }, [startPoint]);
+
+    const handleAddressSubmit = useCallback(async () => {
+        const q = addressInput.trim();
+        if (!q) return;
+        setAddressLoading(true);
+        try {
+            const res = await fetch('/api/geocode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: q })
+            });
+            const data = await res.json();
+            if (data.error) { setError({ message: data.error }); return; }
+            const p = { lat: data.lat, lon: data.lon, label: data.label };
+            setStartPoint(p);
+            localStorage.setItem('streetsweep_start', JSON.stringify(p));
+            setBbox({ south: p.lat - 0.008, north: p.lat + 0.008, west: p.lon - 0.008, east: p.lon + 0.008 });
+        } catch {
+            setError({ message: 'Could not look up that address.' });
+        } finally {
+            setAddressLoading(false);
+        }
+    }, [addressInput]);
+
+    const clearStartPoint = useCallback(() => {
+        setStartPoint(null);
+        localStorage.removeItem('streetsweep_start');
+    }, []);
 
     useEffect(() => {
         routingOptionsRef.current = routingOptions;
@@ -286,6 +335,7 @@ export default function Home() {
                 bbox: currentBbox,
                 riddenRoads: stravaRoadsRef.current,
                 selectedPoints: currentPoints,
+                startPoint: startPointRef.current,
                 selectionBoxes: selectionBoxesRef.current,
                 selectionPolygons: selectionPolygonsRef.current,
                 routingOptions: routingOptionsRef.current,
@@ -1307,6 +1357,29 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </span>
                     </div>
                 )}
+                {/* Persistent start point (#30): set a home address to route from */}
+                <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 bg-white/95 backdrop-blur rounded-full shadow-lg border border-gray-200 pl-3 pr-1.5 py-1">
+                    <HomeIcon className="w-4 h-4 text-indigo-500 flex-shrink-0" />
+                    <input
+                        value={addressInput}
+                        onChange={e => setAddressInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleAddressSubmit(); }}
+                        placeholder={startPoint ? startPoint.label.split(',').slice(0, 2).join(',') : 'Start address…'}
+                        className="w-40 sm:w-56 bg-transparent text-sm text-gray-800 placeholder-gray-400 focus:outline-none truncate"
+                    />
+                    <button
+                        onClick={handleAddressSubmit}
+                        disabled={addressLoading || !addressInput.trim()}
+                        className="px-3 py-1 rounded-full bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-40 transition-colors flex items-center gap-1"
+                    >
+                        {addressLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Set'}
+                    </button>
+                    {startPoint && (
+                        <button onClick={clearStartPoint} title="Clear start point" className="p-1 text-gray-400 hover:text-gray-600">
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
                 <Map
                     bbox={bbox}
                     onBBoxChange={handleBBoxChange}
@@ -1314,6 +1387,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     hoveredPoint={hoveredPoint}
                     stravaRoads={stravaRoads}
                     precomputedRidden={precomputedRidden}
+                    startPoint={startPoint}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
                     onPointMove={handlePointMove}
