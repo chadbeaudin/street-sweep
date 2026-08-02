@@ -52,4 +52,20 @@ describe('buildGpxCourse', () => {
         expect(gpx).toContain('lat="39.02"');
         expect(gpx).toContain('lon="-104.7"');
     });
+
+    // #28: elevation must be emitted verbatim in meters (GPX <ele> is meters),
+    // not converted to feet.
+    it('emits elevation verbatim in meters, not feet', () => {
+        const gpx = buildGpxCourse(sampleRoute, 'Test');
+        expect(gpx).toContain('<ele>100</ele>');
+        expect(gpx).toContain('<ele>110</ele>');
+        // 100 m in feet would be ~328 — must not appear
+        expect(gpx).not.toContain('328');
+    });
+
+    it('omits <ele> when a point has no elevation', () => {
+        const noEle: [number, number, number?, number?][] = [[-104.7, 39.02], [-104.71, 39.03]];
+        const gpx = buildGpxCourse(noEle, 'Test');
+        expect(gpx).not.toContain('<ele>');
+    });
 });
