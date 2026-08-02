@@ -1120,7 +1120,8 @@ export class StreetGraph {
         // is not pinned to the junction node, which previously caused long diagonal
         // bridge edges radiating from the junction across the entire area.
         // Then rotate the circuit so it begins at the point closest to the junction.
-        if (manualRoute && manualRoute.length > 1 && selectionBoxes && selectionBoxes.length > 0) {
+        const hasAreaSelection = (selectionBoxes && selectionBoxes.length > 0) || (selectionPolygons && selectionPolygons.length > 0);
+        if (manualRoute && manualRoute.length > 1 && hasAreaSelection) {
             // Mixed mode: walk pre-area waypoints (approachRoute) → area sweep → walk post-area
             // waypoints (exitRoute). The full manualRoute is not used as-is because its final
             // approach→post-area segment would otherwise route around the area instead of through it.
@@ -1129,16 +1130,23 @@ export class StreetGraph {
             // Find the corner of the selection area farthest from approachStart.
             // Passing it as endPoint forces the CPP to produce an open Euler path
             // (entry → cover all streets → far corner) instead of a circuit.
-            let farCorner = { lat: 0, lon: 0 };
-            let maxCornerDist = -Infinity;
-            for (const box of selectionBoxes) {
-                for (const c of [
+            // Consider both box corners and polygon (lasso) vertices so lasso areas
+            // get the same open-path treatment as boxes.
+            const areaCorners: { lat: number; lon: number }[] = [];
+            for (const box of (selectionBoxes ?? [])) {
+                areaCorners.push(
                     { lat: box.north, lon: box.west }, { lat: box.north, lon: box.east },
                     { lat: box.south, lon: box.west }, { lat: box.south, lon: box.east },
-                ]) {
-                    const d = this.haversine(approachStart.lat, approachStart.lon, c.lat, c.lon);
-                    if (d > maxCornerDist) { maxCornerDist = d; farCorner = c; }
-                }
+                );
+            }
+            for (const poly of (selectionPolygons ?? [])) {
+                for (const [lat, lon] of poly) areaCorners.push({ lat, lon });
+            }
+            let farCorner = { lat: 0, lon: 0 };
+            let maxCornerDist = -Infinity;
+            for (const c of areaCorners) {
+                const d = this.haversine(approachStart.lat, approachStart.lon, c.lat, c.lon);
+                if (d > maxCornerDist) { maxCornerDist = d; farCorner = c; }
             }
 
             let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons);
