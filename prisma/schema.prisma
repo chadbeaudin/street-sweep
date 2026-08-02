@@ -23,6 +23,15 @@ model GeocodeCache {
   @@map("geocode_cache")
 }
 
+model RiddenRoadsCache {
+  athleteId   String   @id
+  roads       Json
+  version     Int      @default(1)
+  refreshedAt DateTime @default(now())
+
+  @@map("ridden_roads_cache")
+}
+
 model Route {
   id          String            @id @default(cuid())
   name        String?

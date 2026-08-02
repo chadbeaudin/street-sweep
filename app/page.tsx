@@ -31,6 +31,7 @@ export default function Home() {
     const [error, setError] = useState<{ message: string; trace?: string } | null>(null);
     const [serviceWarning, setServiceWarning] = useState(false);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
+    const [precomputedRidden, setPrecomputedRidden] = useState<[number, number][][] | null>(null);
     const [stravaElevations, setStravaElevations] = useState<number[]>([]);
     const [stravaTypes, setStravaTypes] = useState<string[]>([]);
     const [isStravaLoading, setIsStravaLoading] = useState(false);
@@ -188,6 +189,30 @@ export default function Home() {
                 });
         });
     }, [stravaCredentials, stravaRefreshKey]);
+
+    // Fetch the server-precomputed, deduped ridden-road overlay once. It's
+    // viewport-independent, so the map draws it instantly with no per-pan wait.
+    useEffect(() => {
+        if (!stravaCredentials?.refreshToken) { setPrecomputedRidden(null); return; }
+        let cancelled = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const load = async () => {
+            try {
+                const res = await fetch('/api/ridden-roads', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stravaCredentials })
+                });
+                const data = await res.json();
+                if (cancelled || data.error) return;
+                if (Array.isArray(data.roads) && data.roads.length > 0) setPrecomputedRidden(data.roads);
+                if ((data.computing || data.refreshing) && !cancelled) timer = setTimeout(load, 8000);
+            } catch { /* leave client fallback in place */ }
+        };
+        load();
+        return () => { cancelled = true; if (timer) clearTimeout(timer); };
+    }, [stravaCredentials, stravaRefreshKey]);
+
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
         setBbox(prev => {
             if (prev &&
@@ -1302,6 +1327,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     route={route}
                     hoveredPoint={hoveredPoint}
                     stravaRoads={stravaRoads}
+                    precomputedRidden={precomputedRidden}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
                     onPointMove={handlePointMove}
