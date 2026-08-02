@@ -307,7 +307,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <div className="grid grid-cols-3 gap-2">
                                         {[
                                             { label: 'Total Distance', value: `${Math.round(stats.totalDistanceMiles).toLocaleString()}`, unit: 'mi' },
-                                            { label: 'Explored New', value: `${Math.round(stats.explorationPct ?? 0)}`, unit: '% of miles' },
+                                            { label: 'New Ground', value: `${Math.round(stats.explorationPct ?? 0)}%`, unit: 'of miles were new' },
                                             { label: 'Longest Ride', value: `${Math.round(stats.longestRideMiles ?? 0)}`, unit: 'mi' },
                                             { label: 'Biggest Climb', value: `${Math.round(stats.biggestClimbFeet ?? 0).toLocaleString()}`, unit: 'ft' },
                                             { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days' },
@@ -350,7 +350,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <p className="text-sm text-gray-500">No cities detected yet.</p>
                                 ) : (
                                     <div className="space-y-2">
-                                        {stats.cities.map((c, i) => {
+                                        {[...stats.cities].sort((a, b) => b.percent - a.percent).map((c, i) => {
                                             const pct = Math.min(100, c.percent);
                                             const barColor = c.percent >= 25 ? 'bg-emerald-500' : c.percent >= 5 ? 'bg-teal-500' : 'bg-sky-400';
                                             return (
