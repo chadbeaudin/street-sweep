@@ -270,6 +270,10 @@ async function getDbCached(key: string, minElements = 0, requestedBbox?: Boundin
 const OSM_CACHE_MAX_ROWS = 300;
 
 async function setDbCached(key: string, data: OverpassResponse): Promise<void> {
+  // With a self-hosted Overpass (OVERPASS_URL), re-querying is fast and unlimited,
+  // so there's no reason to persist tiles in Neon — skip the write entirely and
+  // let the in-memory cache handle hot repeats. Keeps the DB tiny.
+  if (process.env.OVERPASS_URL) return;
   try {
     await prisma.osmCache.upsert({
       where: { key },

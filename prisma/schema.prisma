@@ -65,16 +65,6 @@ model CollectionRoute {
   @@map("collection_routes")
 }
 
-model StravaActivity {
-  stravaId  String    @id
-  name      String?
-  polyline  String
-  startDate DateTime?
-  fetchedAt DateTime  @default(now())
-
-  @@map("strava_activities")
-}
-
 model StatsCache {
   athleteId   String   @id
   stats       Json
