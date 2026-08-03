@@ -25,6 +25,8 @@ interface MapProps {
     stravaRoads: [number, number][][] | null;
     precomputedRidden?: [number, number][][] | null;
     startPoint?: { lat: number; lon: number; label: string } | null;
+    isPickingStart?: boolean;
+    onStartPick?: (lat: number, lon: number) => void;
     selectedPoints: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[];
     onPointAdd: (point: { lat: number; lon: number }) => void;
     onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
@@ -422,7 +424,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -585,9 +587,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     }, [isLassoMode]);
 
     const handleMapClick = useCallback((latlng: L.LatLng) => {
+        if (isPickingStart) { onStartPick?.(latlng.lat, latlng.lng); return; }
         if (isSelectionMode || isLassoMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
-    }, [onPointAdd, isSelectionMode, isLassoMode, isEraserMode]);
+    }, [onPointAdd, isSelectionMode, isLassoMode, isEraserMode, isPickingStart, onStartPick]);
 
     // Split route into normal and construction segments
     const { normalSegments, constructionSegments, hasConstruction } = React.useMemo(() => {
@@ -843,7 +846,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         bubblingMouseEvents={true}
                         className="road-hitbox"
                         eventHandlers={{
-                            click: isEraserMode ? undefined : (e) => onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng }),
+                            click: isEraserMode ? undefined : (e) => {
+                                if (isPickingStart) { onStartPick?.(e.latlng.lat, e.latlng.lng); return; }
+                                onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng });
+                            },
                         }}
                     />
                 ))}

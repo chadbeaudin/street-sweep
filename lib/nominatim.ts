@@ -185,22 +185,27 @@ interface GeocodeResult {
     label: string;
 }
 
-// Forward geocode a free-text address/place to a coordinate. Used for the
-// persistent start point (#30).
-export async function geocodeAddress(query: string): Promise<GeocodeResult | null> {
+// Forward geocode: return up to `limit` candidate matches for a free-text query.
+// Used for the start-point address autocomplete (#30/#53).
+export async function searchAddresses(query: string, limit = 5): Promise<GeocodeResult[]> {
     const q = query.trim();
-    if (!q) return null;
+    if (!q) return [];
     await rateLimit();
-    const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=en`;
+    const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(q)}&format=json&limit=${Math.min(10, Math.max(1, limit))}&accept-language=en`;
     const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
     if (!res.ok) {
         if (res.status === 429) throw new Error('Nominatim 429 (rate-limited)');
-        return null;
+        return [];
     }
     const arr = await res.json();
-    if (!Array.isArray(arr) || arr.length === 0) return null;
-    const top = arr[0];
-    const lat = parseFloat(top.lat), lon = parseFloat(top.lon);
-    if (!isFinite(lat) || !isFinite(lon)) return null;
-    return { lat, lon, label: top.display_name ?? q };
+    if (!Array.isArray(arr)) return [];
+    return arr
+        .map((r: any) => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon), label: r.display_name ?? q }))
+        .filter((r: GeocodeResult) => isFinite(r.lat) && isFinite(r.lon));
+}
+
+// Single best match (convenience wrapper).
+export async function geocodeAddress(query: string): Promise<GeocodeResult | null> {
+    const [first] = await searchAddresses(query, 1);
+    return first ?? null;
 }

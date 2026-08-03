@@ -56,6 +56,9 @@ export default function Home() {
     const startPointRef = useRef<{ lat: number; lon: number } | null>(null);
     const [addressInput, setAddressInput] = useState('');
     const [addressLoading, setAddressLoading] = useState(false);
+    const [addressResults, setAddressResults] = useState<{ lat: number; lon: number; label: string }[]>([]);
+    const [pickingStart, setPickingStart] = useState(false);
+    const pickingStartRef = useRef(false);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
@@ -122,28 +125,45 @@ export default function Home() {
         startPointRef.current = startPoint ? { lat: startPoint.lat, lon: startPoint.lon } : null;
     }, [startPoint]);
 
-    const handleAddressSubmit = useCallback(async () => {
+    const chooseStart = useCallback((p: { lat: number; lon: number; label: string }) => {
+        setStartPoint(p);
+        localStorage.setItem('streetsweep_start', JSON.stringify(p));
+        setBbox({ south: p.lat - 0.008, north: p.lat + 0.008, west: p.lon - 0.008, east: p.lon + 0.008 });
+        setAddressInput('');
+        setAddressResults([]);
+    }, []);
+
+    // Debounced address autocomplete (#53): fetch candidate matches as the user types.
+    useEffect(() => {
         const q = addressInput.trim();
-        if (!q) return;
+        if (q.length < 3) { setAddressResults([]); return; }
+        let cancelled = false;
         setAddressLoading(true);
-        try {
-            const res = await fetch('/api/geocode', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ address: q })
-            });
-            const data = await res.json();
-            if (data.error) { setError({ message: data.error }); return; }
-            const p = { lat: data.lat, lon: data.lon, label: data.label };
-            setStartPoint(p);
-            localStorage.setItem('streetsweep_start', JSON.stringify(p));
-            setBbox({ south: p.lat - 0.008, north: p.lat + 0.008, west: p.lon - 0.008, east: p.lon + 0.008 });
-        } catch {
-            setError({ message: 'Could not look up that address.' });
-        } finally {
-            setAddressLoading(false);
-        }
+        const t = setTimeout(async () => {
+            try {
+                const res = await fetch('/api/geocode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address: q, limit: 5 })
+                });
+                const data = await res.json();
+                if (!cancelled) setAddressResults(Array.isArray(data.results) ? data.results : []);
+            } catch {
+                if (!cancelled) setAddressResults([]);
+            } finally {
+                if (!cancelled) setAddressLoading(false);
+            }
+        }, 350);
+        return () => { cancelled = true; clearTimeout(t); setAddressLoading(false); };
     }, [addressInput]);
+
+    // "Pick on map": the next map click sets the start point instead of a waypoint.
+    const handleStartPick = useCallback((lat: number, lon: number) => {
+        chooseStart({ lat, lon, label: `${lat.toFixed(5)}, ${lon.toFixed(5)}` });
+        setPickingStart(false);
+    }, [chooseStart]);
+
+    useEffect(() => { pickingStartRef.current = pickingStart; }, [pickingStart]);
 
     const clearStartPoint = useCallback(() => {
         setStartPoint(null);
@@ -1114,20 +1134,36 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                                         </button>
                                                     </div>
                                                 ) : (
-                                                    <div className="flex items-center gap-1">
-                                                        <input
-                                                            value={addressInput}
-                                                            onChange={e => setAddressInput(e.target.value)}
-                                                            onKeyDown={e => { if (e.key === 'Enter') handleAddressSubmit(); }}
-                                                            placeholder="Enter address"
-                                                            className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
-                                                        />
+                                                    <div className="relative">
+                                                        <div className="flex items-center gap-1">
+                                                            <input
+                                                                value={addressInput}
+                                                                onChange={e => setAddressInput(e.target.value)}
+                                                                placeholder="Search address…"
+                                                                className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                                                            />
+                                                            {addressLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+                                                        </div>
+                                                        {addressResults.length > 0 && (
+                                                            <ul className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded bg-white shadow-sm">
+                                                                {addressResults.map((r, i) => (
+                                                                    <li key={i}>
+                                                                        <button
+                                                                            onClick={() => chooseStart(r)}
+                                                                            className="w-full text-left px-2 py-1.5 text-xs text-gray-700 hover:bg-indigo-50 truncate"
+                                                                            title={r.label}
+                                                                        >
+                                                                            {r.label}
+                                                                        </button>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        )}
                                                         <button
-                                                            onClick={handleAddressSubmit}
-                                                            disabled={addressLoading || !addressInput.trim()}
-                                                            className="px-2 py-1 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-40 flex items-center"
+                                                            onClick={() => { setPickingStart(true); setShowOptions(false); }}
+                                                            className="mt-1.5 w-full px-2 py-1 rounded border border-dashed border-gray-300 text-xs text-gray-600 hover:bg-gray-50"
                                                         >
-                                                            {addressLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Set'}
+                                                            Or select a point on the map
                                                         </button>
                                                     </div>
                                                 )}
@@ -1389,6 +1425,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </span>
                     </div>
                 )}
+                {pickingStart && (
+                    <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-indigo-600 text-white rounded-full shadow-lg px-4 py-1.5 text-sm font-medium">
+                        <HomeIcon className="w-4 h-4" /> Click the map to set your start point
+                        <button onClick={() => setPickingStart(false)} className="ml-1 text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
+                    </div>
+                )}
                 <Map
                     bbox={bbox}
                     onBBoxChange={handleBBoxChange}
@@ -1397,6 +1439,8 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     stravaRoads={stravaRoads}
                     precomputedRidden={precomputedRidden}
                     startPoint={startPoint}
+                    isPickingStart={pickingStart}
+                    onStartPick={handleStartPick}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
                     onPointMove={handlePointMove}
