@@ -8,6 +8,7 @@ import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { StatsDialog } from '@/components/StatsDialog';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
+import { HowToDialog } from '@/components/HowToDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo } from '@/lib/routeHistory';
@@ -59,6 +60,16 @@ export default function Home() {
     const [addressResults, setAddressResults] = useState<{ lat: number; lon: number; label: string }[]>([]);
     const [pickingStart, setPickingStart] = useState(false);
     const pickingStartRef = useRef(false);
+    const [showHowTo, setShowHowTo] = useState(false);
+
+    // First-run walkthrough (#20): auto-open once, then remember it was seen.
+    useEffect(() => {
+        try { if (!localStorage.getItem('streetsweep_seen_tutorial')) setShowHowTo(true); } catch { /* ignore */ }
+    }, []);
+    const closeHowTo = useCallback(() => {
+        setShowHowTo(false);
+        try { localStorage.setItem('streetsweep_seen_tutorial', '1'); } catch { /* ignore */ }
+    }, []);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
@@ -1534,6 +1545,15 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         onClose={() => setError(null)}
                     />
                 )}
+
+                <HowToDialog isOpen={showHowTo} onClose={closeHowTo} />
+                <button
+                    onClick={() => setShowHowTo(true)}
+                    title="How to use StreetSweep"
+                    className="fixed bottom-12 left-4 z-[1100] w-9 h-9 rounded-full bg-white border border-gray-200 shadow-lg text-indigo-600 font-bold hover:bg-gray-50 flex items-center justify-center"
+                >
+                    ?
+                </button>
             </div>
         </main>
     );
