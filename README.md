@@ -72,5 +72,3 @@ The system automatically switches providers if the primary is down or rate-limit
 ## License
 
 This project is open source.
-
-<!-- ci cache benchmark -->
