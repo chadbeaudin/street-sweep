@@ -1024,7 +1024,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
     }, [elevationData]);
 
     return (
-        <main className="flex flex-col h-screen bg-gray-50 overflow-hidden">
+        <main className="flex flex-col h-app bg-gray-50 overflow-hidden">
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-[1000]">
                 <a href="/" title={`v${pkg.version}`} className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer group">
                     <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-700 transition-colors">
@@ -1255,7 +1255,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         <>
                             <button
                                 onClick={downloadGPX}
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400"
+                                className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400"
                             >
                                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -1266,7 +1266,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 onClick={downloadFIT}
                                 disabled={isFitDownloading}
                                 title="Download FIT (Garmin native format)"
-                                className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 disabled:opacity-60"
+                                className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 disabled:opacity-60"
                             >
                                 {isFitDownloading ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1281,7 +1281,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 onClick={sendToGarmin}
                                 disabled={isGarminUploading}
                                 title="Send to Garmin"
-                                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
+                                className="flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
                             >
                                 {isGarminUploading ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1294,7 +1294,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 onClick={sendToRwgps}
                                 disabled={isRwgpsUploading}
                                 title="Send to RideWithGPS"
-                                className="flex items-center gap-1.5 px-3 py-2 bg-[#FC4C02] text-white rounded-md text-sm font-semibold hover:bg-[#e34402] transition-all shadow-sm disabled:opacity-60"
+                                className="flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-[#FC4C02] text-white rounded-md text-sm font-semibold hover:bg-[#e34402] transition-all shadow-sm disabled:opacity-60"
                             >
                                 {isRwgpsUploading ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1316,7 +1316,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     <button
                         onClick={() => handleGenerate()}
                         disabled={loading}
-                        className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
+                        className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
                     >
                         {loading ? (
                             <>
@@ -1462,7 +1462,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium bg-white shadow-md">
                         <button
                             onClick={() => { setIsSelectionMode(false); setIsLassoMode(false); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${!isSelectionMode && !isLassoMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] transition-colors ${!isSelectionMode && !isLassoMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Point Mode (P)"
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1472,7 +1472,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </button>
                         <button
                             onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Area Selection (A)"
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1482,7 +1482,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </button>
                         <button
                             onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Lasso Selection (L)"
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
