@@ -7,6 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
 import { dedupeRiddenRoads } from '@/lib/riddenRoads';
+import { bboxFromLatLngs } from '@/lib/selectionBox';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -485,12 +486,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
         const startLatLng = mapRef.current.containerPointToLatLng(selectionStartRef.current);
         const endLatLng = mapRef.current.containerPointToLatLng(end);
-        setDrawingBox({
-            north: Math.max(startLatLng.lat, endLatLng.lat),
-            south: Math.min(startLatLng.lat, endLatLng.lat),
-            east: Math.max(startLatLng.lng, endLatLng.lng),
-            west: Math.min(startLatLng.lng, endLatLng.lng),
-        });
+        setDrawingBox(bboxFromLatLngs(startLatLng, endLatLng));
     }, []);
 
     const handleOverlayMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -499,12 +495,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
         const startLatLng = mapRef.current.containerPointToLatLng(selectionStartRef.current);
         const endLatLng = mapRef.current.containerPointToLatLng(end);
-        const box = {
-            north: Math.max(startLatLng.lat, endLatLng.lat),
-            south: Math.min(startLatLng.lat, endLatLng.lat),
-            east: Math.max(startLatLng.lng, endLatLng.lng),
-            west: Math.min(startLatLng.lng, endLatLng.lng),
-        };
+        const box = bboxFromLatLngs(startLatLng, endLatLng);
         onSelectionChange(box);
         setDrawingBox(null);
         selectionStartRef.current = null;
