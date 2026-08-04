@@ -1037,52 +1037,6 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
 
                 <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
-                        <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium">
-                            <button
-                                onClick={() => { setIsSelectionMode(false); setIsLassoMode(false); }}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${!isSelectionMode && !isLassoMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                                title="Point Mode (P)"
-                            >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
-                                </svg>
-                                Point
-                            </button>
-                            <button
-                                onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); }}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                                title="Area Selection (A)"
-                            >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                                </svg>
-                                Area
-                            </button>
-                            <button
-                                onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); }}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                                title="Lasso Selection (L)"
-                            >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                                </svg>
-                                Lasso
-                            </button>
-                        </div>
-                        {(selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
-                            <button
-                                onClick={() => { setSelectionBoxes([]); setSelectionPolygons([]); }}
-                                className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors"
-                                title="Clear selection area"
-                            >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        )}
-                    </div>
-
                     <StravaHeaderButton
                         isConnected={!!stravaCredentials?.refreshToken}
                         stravaError={stravaError}
@@ -1502,6 +1456,54 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         <button onClick={() => setPickingStart(false)} className="ml-1 text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
                     </div>
                 )}
+
+                {/* Edit Mode Controls - overlay top-right of map */}
+                <div className="absolute top-4 right-4 z-[1000] flex items-center gap-1">
+                    <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium bg-white shadow-md">
+                        <button
+                            onClick={() => { setIsSelectionMode(false); setIsLassoMode(false); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${!isSelectionMode && !isLassoMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            title="Point Mode (P)"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5" />
+                            </svg>
+                            Point
+                        </button>
+                        <button
+                            onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            title="Area Selection (A)"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                            </svg>
+                            Area
+                        </button>
+                        <button
+                            onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            title="Lasso Selection (L)"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                            </svg>
+                            Lasso
+                        </button>
+                    </div>
+                    {(selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
+                        <button
+                            onClick={() => { setSelectionBoxes([]); setSelectionPolygons([]); }}
+                            className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors shadow-md"
+                            title="Clear selection area"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
+
                 <Map
                     bbox={bbox}
                     onBBoxChange={handleBBoxChange}
