@@ -8,6 +8,10 @@ import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { StatsDialog } from '@/components/StatsDialog';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
+import { RwgpsSettingsDialog } from '@/components/RwgpsSettingsDialog';
+import { RouteNameDialog } from '@/components/RouteNameDialog';
+import { RwgpsSuccessDialog } from '@/components/RwgpsSuccessDialog';
+import { RwgpsHeaderButton } from '@/components/RwgpsHeaderButton';
 import { HowToDialog } from '@/components/HowToDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from '@/lib/pointMove';
@@ -80,6 +84,11 @@ export default function Home() {
     const [showGarminSettings, setShowGarminSettings] = useState(false);
     const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
     const [isGarminUploading, setIsGarminUploading] = useState(false);
+    const [showRwgpsSettings, setShowRwgpsSettings] = useState(false);
+    const [rwgpsCredentials, setRwgpsCredentials] = useState<any>(undefined);
+    const [isRwgpsUploading, setIsRwgpsUploading] = useState(false);
+    const [showRouteNameDialog, setShowRouteNameDialog] = useState(false);
+    const [rwgpsUploadResult, setRwgpsUploadResult] = useState<{ routeUrl: string } | null>(null);
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -207,6 +216,9 @@ export default function Home() {
 
         const savedGarminEmail = localStorage.getItem('garmin_email');
         setGarminCredentials(savedGarminEmail ? { email: savedGarminEmail } : {});
+
+        const savedRwgpsSettings = localStorage.getItem('rwgps_settings');
+        setRwgpsCredentials(savedRwgpsSettings ? JSON.parse(savedRwgpsSettings) : {});
     }, []);
 
     useEffect(() => {
@@ -525,6 +537,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
     };
 
     const handleGarminSend = async (name: string, email: string, password: string) => {
+        setRouteName(name);
         setIsGarminUploading(true);
         try {
             const res = await fetch('/api/export/garmin', {
@@ -541,6 +554,36 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             setError({ message: `Garmin Upload Failed: ${err.message}` });
         } finally {
             setIsGarminUploading(false);
+        }
+    };
+
+    const sendToRwgps = () => {
+        if (!rwgpsCredentials?.accessToken) {
+            setShowRwgpsSettings(true);
+            return;
+        }
+        if (!route) return;
+        setShowRouteNameDialog(true);
+    };
+
+    const handleRouteNameConfirm = async (name: string) => {
+        setRouteName(name);
+        setShowRouteNameDialog(false);
+        setIsRwgpsUploading(true);
+        try {
+            const res = await fetch('/api/export/rwgps', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ route, name, accessToken: rwgpsCredentials.accessToken }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'RideWithGPS upload failed');
+            setRwgpsUploadResult({ routeUrl: data.routeUrl });
+        } catch (err: any) {
+            console.error('RideWithGPS upload error:', err);
+            setError({ message: `RideWithGPS Upload Failed: ${err.message}` });
+        } finally {
+            setIsRwgpsUploading(false);
         }
     };
 
@@ -1051,6 +1094,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         }}
                     />
 
+                    <RwgpsHeaderButton
+                        isConnected={!!rwgpsCredentials?.accessToken}
+                        isLoading={isRwgpsUploading}
+                        onClick={() => setShowRwgpsSettings(true)}
+                    />
+
                     {stravaRoads && stravaRoads.length > 0 && (
                         <button
                             onClick={() => setShowStats(true)}
@@ -1277,17 +1326,28 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             <button
                                 onClick={sendToGarmin}
                                 disabled={isGarminUploading}
-                                title="Send directly to Garmin Connect"
-                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
+                                title="Send to Garmin"
+                                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
                             >
                                 {isGarminUploading ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
                                 ) : (
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                                    </svg>
+                                    <span>&rarr;</span>
                                 )}
-                                Send to Garmin
+                                Garmin
+                            </button>
+                            <button
+                                onClick={sendToRwgps}
+                                disabled={isRwgpsUploading}
+                                title="Send to RideWithGPS"
+                                className="flex items-center gap-1.5 px-3 py-2 bg-[#FC4C02] text-white rounded-md text-sm font-semibold hover:bg-[#e34402] transition-all shadow-sm disabled:opacity-60"
+                            >
+                                {isRwgpsUploading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <span>&rarr;</span>
+                                )}
+                                RWGPS
                             </button>
                         </>
                     )}
@@ -1524,10 +1584,31 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
                 <GarminSettingsDialog
                     isOpen={showGarminSettings}
+                    initialName={routeName}
                     onClose={() => setShowGarminSettings(false)}
                     onSend={handleGarminSend}
                     isSending={isGarminUploading}
                 />
+
+                <RwgpsSettingsDialog
+                    isOpen={showRwgpsSettings}
+                    onClose={() => setShowRwgpsSettings(false)}
+                    isConnected={!!rwgpsCredentials?.accessToken}
+                />
+
+                <RouteNameDialog
+                    isOpen={showRouteNameDialog}
+                    initialName={routeName}
+                    onClose={() => setShowRouteNameDialog(false)}
+                    onConfirm={handleRouteNameConfirm}
+                />
+
+                {rwgpsUploadResult && (
+                    <RwgpsSuccessDialog
+                        routeUrl={rwgpsUploadResult.routeUrl}
+                        onClose={() => setRwgpsUploadResult(null)}
+                    />
+                )}
 
                 <StatsDialog
                     isOpen={showStats}

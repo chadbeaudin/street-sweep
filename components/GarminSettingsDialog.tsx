@@ -5,12 +5,13 @@ import { X, Send, User, Lock, AlertCircle, Tag, Loader2 } from 'lucide-react';
 
 interface GarminSendDialogProps {
     isOpen: boolean;
+    initialName: string;
     onClose: () => void;
     onSend: (name: string, email: string, password: string) => void;
     isSending: boolean;
 }
 
-export function GarminSettingsDialog({ isOpen, onClose, onSend, isSending }: GarminSendDialogProps) {
+export function GarminSettingsDialog({ isOpen, initialName, onClose, onSend, isSending }: GarminSendDialogProps) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [name, setName] = useState('');
@@ -20,9 +21,9 @@ export function GarminSettingsDialog({ isOpen, onClose, onSend, isSending }: Gar
             const savedEmail = localStorage.getItem('garmin_email');
             if (savedEmail) setEmail(savedEmail);
             setPassword('');
-            setName('');
+            setName(initialName);
         }
-    }, [isOpen]);
+    }, [isOpen, initialName]);
 
     const handleSend = () => {
         if (!canSend) return;
