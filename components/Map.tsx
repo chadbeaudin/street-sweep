@@ -515,12 +515,14 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         if (!isSelectionMode) {
             selectionStartRef.current = null;
             setDrawingBox(null);
+            if (mapRef.current) mapRef.current.dragging.enable();
             return;
         }
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key !== 'Escape') return;
             selectionStartRef.current = null;
             flushSync(() => setDrawingBox(null));
+            if (mapRef.current) mapRef.current.dragging.enable();
             onSelectionModeChange?.(false);
         };
         window.addEventListener('keydown', handleKeyDown, { capture: true });
@@ -571,10 +573,17 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         if (mapRef.current) mapRef.current.dragging.enable();
     }, [drawingLasso, onSelectionPolygonChange]);
 
+    const handleLassoPointerCancel = useCallback(() => {
+        isDrawingLassoRef.current = false;
+        setDrawingLasso(null);
+        if (mapRef.current) mapRef.current.dragging.enable();
+    }, []);
+
     React.useEffect(() => {
         if (!isLassoMode) {
             isDrawingLassoRef.current = false;
             setDrawingLasso(null);
+            if (mapRef.current) mapRef.current.dragging.enable();
             return;
         }
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -980,6 +989,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onPointerDown={handleLassoPointerDown}
                     onPointerMove={handleLassoPointerMove}
                     onPointerUp={handleLassoPointerUp}
+                    onPointerCancel={handleLassoPointerCancel}
                 />
             )}
 
