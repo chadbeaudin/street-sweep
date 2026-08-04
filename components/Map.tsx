@@ -475,12 +475,14 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         prevRouteRef.current = route;
     }, [route]);
 
-    const handleOverlayMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const handleOverlayPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        mapRef.current?.dragging.disable();
         const rect = e.currentTarget.getBoundingClientRect();
         selectionStartRef.current = L.point(e.clientX - rect.left, e.clientY - rect.top);
     }, []);
 
-    const handleOverlayMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const handleOverlayPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (!selectionStartRef.current || !mapRef.current) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
@@ -489,7 +491,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         setDrawingBox(bboxFromLatLngs(startLatLng, endLatLng));
     }, []);
 
-    const handleOverlayMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const handleOverlayPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (!selectionStartRef.current || !mapRef.current) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const end = L.point(e.clientX - rect.left, e.clientY - rect.top);
@@ -499,8 +501,15 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         onSelectionChange(box);
         setDrawingBox(null);
         selectionStartRef.current = null;
+        mapRef.current?.dragging.enable();
         setTimeout(() => onSelectionModeChange?.(false), 100);
     }, [onSelectionChange, onSelectionModeChange]);
+
+    const handleOverlayPointerCancel = useCallback(() => {
+        selectionStartRef.current = null;
+        setDrawingBox(null);
+        mapRef.current?.dragging.enable();
+    }, []);
 
     React.useEffect(() => {
         if (!isSelectionMode) {
@@ -518,8 +527,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
     }, [isSelectionMode, onSelectionModeChange]);
 
-    const handleLassoMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const handleLassoPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (!isLassoMode || !mapRef.current) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
         const rect = e.currentTarget.getBoundingClientRect();
         const pos = L.point(e.clientX - rect.left, e.clientY - rect.top);
         const latlng = mapRef.current.containerPointToLatLng(pos);
@@ -528,7 +538,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         mapRef.current.dragging.disable();
     }, [isLassoMode]);
 
-    const handleLassoMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const handleLassoPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         if (!isDrawingLassoRef.current || !drawingLasso || !mapRef.current) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const pos = L.point(e.clientX - rect.left, e.clientY - rect.top);
@@ -536,7 +546,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         setDrawingLasso([...drawingLasso, [latlng.lat, latlng.lng]]);
     }, [drawingLasso]);
 
-    const handleLassoMouseUp = useCallback(() => {
+    const handleLassoPointerUp = useCallback(() => {
         if (!isDrawingLassoRef.current || !drawingLasso || drawingLasso.length < 3) {
             isDrawingLassoRef.current = false;
             setDrawingLasso(null);
@@ -955,20 +965,21 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             {isSelectionMode && (
                 <div
                     className="absolute inset-0"
-                    style={{ cursor: 'crosshair', zIndex: 999, userSelect: 'none' }}
-                    onMouseDown={handleOverlayMouseDown}
-                    onMouseMove={handleOverlayMouseMove}
-                    onMouseUp={handleOverlayMouseUp}
+                    style={{ cursor: 'crosshair', zIndex: 999, userSelect: 'none', touchAction: 'none' }}
+                    onPointerDown={handleOverlayPointerDown}
+                    onPointerMove={handleOverlayPointerMove}
+                    onPointerUp={handleOverlayPointerUp}
+                    onPointerCancel={handleOverlayPointerCancel}
                 />
             )}
 
             {isLassoMode && (
                 <div
                     className="absolute inset-0"
-                    style={{ cursor: 'crosshair', zIndex: 999, userSelect: 'none' }}
-                    onMouseDown={handleLassoMouseDown}
-                    onMouseMove={handleLassoMouseMove}
-                    onMouseUp={handleLassoMouseUp}
+                    style={{ cursor: 'crosshair', zIndex: 999, userSelect: 'none', touchAction: 'none' }}
+                    onPointerDown={handleLassoPointerDown}
+                    onPointerMove={handleLassoPointerMove}
+                    onPointerUp={handleLassoPointerUp}
                 />
             )}
 
