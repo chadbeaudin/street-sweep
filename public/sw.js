@@ -2,7 +2,11 @@ const CACHE = 'streetsweep-shell-v1';
 const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/apple-touch-icon.png'];
 
 self.addEventListener('install', (event) => {
-    event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+    event.waitUntil(
+        caches.open(CACHE)
+            .then((c) => Promise.allSettled(SHELL.map((u) => c.add(u))))
+            .then(() => self.skipWaiting())
+    );
 });
 
 self.addEventListener('activate', (event) => {
