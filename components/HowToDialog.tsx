@@ -14,7 +14,8 @@ const slides = [
         title: 'Welcome to StreetSweep',
         body: (
             <>
-                <p>StreetSweep finds roads you haven&apos;t ridden and builds efficient routes to cover them — it solves the <span className="font-medium">Chinese Postman Problem</span> for the area you choose.</p>
+                <p>StreetSweep helps you build an optimized route covering roads you haven&apos;t ridden yet.</p>
+                <p>Unlike typical route planners that focus on the fastest or bike-friendliest path between two points, StreetSweep optimizes for <span className="font-medium">coverage</span> — getting you the most new road with the least backtracking.</p>
                 <p className="text-gray-500">There are two ways to plan a route. Here&apos;s how each works.</p>
             </>
         ),
@@ -51,12 +52,12 @@ const slides = [
         body: (
             <>
                 <ul className="list-disc pl-5 space-y-2 marker:text-indigo-400">
-                    <li>Set a <span className="font-medium">Start Address</span> in Routing Preferences (the gear) so routes begin from home.</li>
                     <li>Connect <span className="font-medium">Strava</span> to overlay roads you&apos;ve already ridden — those are skipped.</li>
-                    <li>Export the finished route as GPX/TCX/FIT or push it to Garmin.</li>
+                    <li>Send it directly to Garmin*, or export as GPX/TCX/FIT.</li>
                 </ul>
                 <div className="text-xs text-gray-500 pt-1 border-t border-gray-100">
-                    <div className="flex items-center gap-2"><span className="w-4 h-1 rounded bg-blue-600" /> roads you&apos;ve ridden &nbsp; <span className="w-4 h-1 rounded bg-indigo-500" /> generated route</div>
+                    <div className="flex items-center gap-2"><span className="w-4 h-1 rounded bg-blue-700" /> roads you&apos;ve ridden &nbsp; <span className="w-4 h-1 rounded bg-red-500" /> generated route</div>
+                    <div className="pt-4">*Garmin push is experimental.</div>
                 </div>
             </>
         ),
