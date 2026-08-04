@@ -25,6 +25,7 @@ const Map = dynamic<any>(() => import('@/components/Map'), {
 import { ElevationProfile } from '@/components/ElevationProfile';
 import pkg from '@/package.json';
 import { haversineM, toSemicircles } from '@/lib/geometry';
+import { shareOrDownloadGpx } from '@/lib/gpxShare';
 
 export default function Home() {
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
@@ -478,7 +479,7 @@ export default function Home() {
         return () => clearTimeout(timer);
     }, [manualRoute, selectionBoxes, selectionPolygons, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
 
-    const downloadGPX = () => {
+    const downloadGPX = async () => {
         if (!route) return;
 
         const gpx = `<?xml version="1.0" encoding="UTF-8"?>
@@ -492,15 +493,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
   </trk>
 </gpx>`;
 
-        const blob = new Blob([gpx], { type: 'application/gpx+xml' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'route.gpx';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        await shareOrDownloadGpx(gpx, 'route.gpx');
     };
 
     const [isFitDownloading, setIsFitDownloading] = useState(false);
