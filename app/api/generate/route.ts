@@ -118,7 +118,12 @@ export async function POST(request: Request) {
             ? selectedPoints[selectedPoints.length - 1]
             : (combinedSelections.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
         const riddenPenalty = routingOptions?.riddenPenalty || 15; // Default to 15 if not specified
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty, selectionPolygons.length > 0 ? selectionPolygons : null);
+        // Bounding box elasticity (feet, from settings) lets required-edge inclusion reach
+        // slightly beyond a drawn Area/Lasso box instead of stopping mid-edge at an
+        // artificial boundary dead-end. 0 = previous behavior (no change).
+        const boxElasticityFeet = routingOptions?.boxElasticity || 0;
+        const boxElasticityMeters = boxElasticityFeet * 0.3048;
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty, selectionPolygons.length > 0 ? selectionPolygons : null, boxElasticityMeters);
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {

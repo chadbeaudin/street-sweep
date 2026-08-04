@@ -1119,7 +1119,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null, boxElasticityMeters = 0): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -1156,11 +1156,11 @@ export class StreetGraph {
                 if (d > maxCornerDist) { maxCornerDist = d; farCorner = c; }
             }
 
-            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons);
+            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters);
             if (areaPath.length === 0) {
                 // All area streets already ridden — re-solve including ridden roads so the
                 // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons);
+                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters);
             }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
@@ -1318,8 +1318,11 @@ export class StreetGraph {
                 const v = this.graph.getNode(link.toId);
 
                 if (u && v) {
-                    // ~10m buffer to catch streets exactly on the drawn boundary
-                    const BOX_BUFFER = 0.0001;
+                    // ~10m base buffer to catch streets exactly on the drawn boundary, plus an optional
+                    // user-configurable "elasticity" (in meters) that lets required-edge inclusion reach
+                    // further beyond the drawn box. This is a direct, unconditional extension — the user
+                    // is trading potential extra distance for more swept coverage, on purpose.
+                    const BOX_BUFFER = 0.0001 + (boxElasticityMeters > 0 ? boxElasticityMeters / 111320 : 0);
                     const isRequired = selectionBoxes.some(box => {
                         const uIn = u.data.lat <= box.north + BOX_BUFFER && u.data.lat >= box.south - BOX_BUFFER &&
                             u.data.lon <= box.east + BOX_BUFFER && u.data.lon >= box.west - BOX_BUFFER;

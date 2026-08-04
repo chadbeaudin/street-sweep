@@ -50,7 +50,8 @@ export default function Home() {
         avoidGravel: false,
         avoidHighways: false,
         avoidTrails: false,
-        riddenPenalty: 15
+        riddenPenalty: 15,
+        boxElasticity: 0
     });
     const [showOptions, setShowOptions] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -1220,6 +1221,21 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                                 />
                                                 <p className="text-xs text-gray-500 mt-2">Higher values strongly prefer unridden roads (less backtracking)</p>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Bounding Box Elasticity: {routingOptions.boxElasticity} ft
+                                                </label>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="500"
+                                                    step="10"
+                                                    value={routingOptions.boxElasticity}
+                                                    onChange={(e) => setRoutingOptions({ ...routingOptions, boxElasticity: parseInt(e.target.value) })}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-2">Sweeps streets up to this far past a drawn Area/Lasso box, not just what&apos;s inside it — can add distance to the route</p>
                                             </div>
                                         </div>
                                     </div>
