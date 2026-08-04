@@ -386,7 +386,9 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   }
 
   // 3. Check persistent DB cache (Neon — shared across instances).
-  const dbCached = await getDbCached(cacheKey, minElements, bbox);
+  // With a self-hosted Overpass, re-querying it is as fast as a Neon round-trip
+  // and doesn't cost egress, so skip Neon reads entirely and fall through to it.
+  const dbCached = process.env.OVERPASS_URL ? null : await getDbCached(cacheKey, minElements, bbox);
   if (dbCached && dbCached.elements.length > 0) {
     console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
     OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now });
