@@ -36,6 +36,13 @@ const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
 // Default penalty for previously-ridden roads. Can be overridden per-request.
 const DEFAULT_RIDDEN_PENALTY = 15;
+// Odd-node (T-join) matching penalty for ridden roads. Deliberately much lower than
+// DEFAULT_RIDDEN_PENALTY: that value made the matcher double back on long unridden
+// required roads instead of taking a short ridden connector (#48). But using no
+// penalty at all (as before this constant) let the matcher freely route through
+// long ridden stretches whenever marginally shorter than doubling back. This value
+// still favors real short connectors while discouraging casual ridden-road use.
+const MATCHING_RIDDEN_PENALTY = 6;
 
 // Spatial index cell size in degrees (~55m at equator). Small enough to
 // keep cell buckets tiny, large enough that typical clicks find candidates
@@ -1440,12 +1447,41 @@ export class StreetGraph {
         const reachableNodes = new Set(components[0]);
         const riddenPenaltyMap = this.buildRiddenPenaltyMap(riddenPenalty);
 
+        // Links that represent a real, unridden, road-class street (no cycleways/tracks,
+        // no already-ridden segments). Used below to tell a truly isolated unridden pocket
+        // (only reachable by detouring through already-ridden roads) apart from an island
+        // that just happens to have a fresh road-class connection the required-edge BFS
+        // didn't see (it only walks required edges — see #41).
+        const freshRoadClassLinkIds = new Set<string>();
+        this.graph.forEachLink((link: any) => {
+            if (link.data.isRidden || link.data.isAvoided) return;
+            if (link.data.highway === 'cycleway' || link.data.highway === 'track') return;
+            freshRoadClassLinkIds.add(link.id);
+        });
+        // An isolated pocket is skipped (left uncovered this trip) rather than force-bridged
+        // when detouring in and back out via ridden roads would cost several times more than
+        // the pocket itself is worth in fresh mileage.
+        const SKIP_DETOUR_MULTIPLIER = 3;
+
         for (let i = 1; i < components.length; i++) {
             const island = components[i];
+            const islandSet = new Set(island);
+
+            const hasFreshRoadConnection = this.findClosestTargetMultiSource(islandSet, reachableNodes, freshRoadClassLinkIds, undefined) !== null;
+            if (!hasFreshRoadConnection) {
+                const islandLength = requiredEdges.reduce((sum, re) => (islandSet.has(re.u) && islandSet.has(re.v)) ? sum + re.link.data.weight : sum, 0);
+                const detour = this.findClosestTargetMultiSource(islandSet, reachableNodes, undefined, undefined);
+                const roundTripDetourCost = detour ? detour.path.reduce((s, p) => s + p.weight, 0) * 2 : Infinity;
+                if (roundTripDetourCost > islandLength * SKIP_DETOUR_MULTIPLIER) {
+                    console.log(`${ts()} Skipping isolated pocket (${island.length} nodes, ${islandLength.toFixed(0)}m required) — only reachable via a ~${roundTripDetourCost.toFixed(0)}m round-trip detour through already-ridden roads.`);
+                    continue;
+                }
+            }
+
             // Single multi-source Dijkstra from every island node finds the closest
             // (island, reachable) pair in one pass. When connecting islands we allow
             // using ANY link in the graph (no allowedLinks restriction).
-            const bestResult = this.findClosestTargetMultiSource(new Set(island), reachableNodes, undefined, riddenPenaltyMap);
+            const bestResult = this.findClosestTargetMultiSource(islandSet, reachableNodes, undefined, riddenPenaltyMap);
             if (bestResult) {
                 island.forEach(n => reachableNodes.add(n));
                 bestResult.path.forEach((p: any) => {
@@ -1490,14 +1526,12 @@ export class StreetGraph {
         const oddArray = Array.from(remainingOdd);
         const distMatrix = new Map<string, Map<string, { weight: number, path: any[] }>>();
         
-        // 1. Compute APSP for odd nodes using RAW lengths (penalty=1).
-        // The ridden penalty must not apply here: it made doubling long unridden
-        // required roads look cheaper than short connectors over ridden roads,
-        // producing redundant back-and-forth passes (e.g. W 21st Ave doubled twice).
-        // A second traversal of a required road covers nothing new, so matching
-        // should simply minimize real distance.
+        // 1. Compute APSP for odd nodes with a mild ridden penalty (see
+        // MATCHING_RIDDEN_PENALTY comment) so short ridden connectors are still
+        // preferred over long ones, without out-weighing doubling a nearby
+        // required road entirely.
         for (const u of oddArray) {
-            const res = this.findAllTargets(u, remainingOdd, undefined, 1);
+            const res = this.findAllTargets(u, remainingOdd, undefined, MATCHING_RIDDEN_PENALTY);
             distMatrix.set(u, res);
         }
 
