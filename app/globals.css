@@ -7,3 +7,22 @@ body {
     height: 100%;
     margin: 0;
 }
+
+/* mobile viewport correctness */
+:root {
+    --app-h: 100dvh;
+}
+.h-app {
+    height: 100dvh;
+}
+@supports not (height: 100dvh) {
+    .h-app {
+        height: 100vh;
+    }
+}
+.safe-b {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-t {
+    padding-top: env(safe-area-inset-top);
+}
