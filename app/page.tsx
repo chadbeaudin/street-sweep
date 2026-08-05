@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { StatsDialog } from '@/components/StatsDialog';
@@ -53,6 +53,8 @@ export default function Home() {
         riddenPenalty: 15
     });
     const [showOptions, setShowOptions] = useState(false);
+    const [showMobileMenu, setShowMobileMenu] = useState(false);
+    const [showMobileExport, setShowMobileExport] = useState(false);
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [isLassoMode, setIsLassoMode] = useState(false);
@@ -1029,7 +1031,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 </a>
 
 
-                <div className="flex items-center gap-3">
+                <div className="hidden md:flex items-center gap-3">
                     <StravaHeaderButton
                         isConnected={!!stravaCredentials?.refreshToken}
                         stravaError={stravaError}
@@ -1321,9 +1323,182 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         )}
                     </button>
                 </div>
+
+                <div className="flex md:hidden items-center gap-2">
+                    <StravaHeaderButton
+                        isConnected={!!stravaCredentials?.refreshToken}
+                        stravaError={stravaError}
+                        isLoading={isStravaLoading}
+                        onClick={() => setShowStravaSettings(true)}
+                        onRefresh={() => {
+                            clearCachedRoads();
+                            setStravaRefreshKey(k => k + 1);
+                        }}
+                    />
+
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowMobileMenu(!showMobileMenu)}
+                            className={`flex items-center justify-center min-h-[44px] min-w-[44px] p-2 rounded-md border shadow-sm transition-colors ${showMobileMenu
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
+                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                }`}
+                            title="More"
+                        >
+                            <Menu className="w-5 h-5" />
+                        </button>
+
+                        {showMobileMenu && (
+                            <>
+                                <div
+                                    className="fixed inset-0 z-[1001]"
+                                    onClick={() => setShowMobileMenu(false)}
+                                ></div>
+                                <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
+                                    <button
+                                        onClick={() => { setShowRwgpsSettings(true); setShowMobileMenu(false); }}
+                                        className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                                    >
+                                        {rwgpsCredentials?.accessToken ? 'RideWithGPS' : 'Connect RideWithGPS'}
+                                    </button>
+                                    {stravaRoads && stravaRoads.length > 0 && (
+                                        <button
+                                            onClick={() => { setShowStats(true); setShowMobileMenu(false); }}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                                        >
+                                            Stats
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => { importFileRef.current?.click(); setShowMobileMenu(false); }}
+                                        disabled={isImporting}
+                                        className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center disabled:opacity-60"
+                                    >
+                                        {isImporting ? 'Importing…' : 'Import Route'}
+                                    </button>
+                                    {isImportedRoute && route && (
+                                        <button
+                                            onClick={() => { clearPoints(); setShowMobileMenu(false); }}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-purple-700 hover:bg-purple-50 flex items-center"
+                                        >
+                                            Clear Imported Route
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => { setShowAbout(true); setShowMobileMenu(false); }}
+                                        className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                                    >
+                                        About
+                                    </button>
+                                    <div className="border-t border-gray-100 flex">
+                                        <button
+                                            onClick={() => { handleUndo(); setShowMobileMenu(false); }}
+                                            disabled={historyIndex < 0}
+                                            className="flex-1 justify-center px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 disabled:text-gray-300 flex items-center gap-1.5"
+                                        >
+                                            <Undo2 className="w-4 h-4" /> Undo
+                                        </button>
+                                        <button
+                                            onClick={() => { handleRedo(); setShowMobileMenu(false); }}
+                                            disabled={historyIndex >= history.length - 1}
+                                            className="flex-1 justify-center px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 disabled:text-gray-300 flex items-center gap-1.5"
+                                        >
+                                            <Redo2 className="w-4 h-4" /> Redo
+                                        </button>
+                                    </div>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
             </header>
 
             <div className="flex-1 flex flex-col relative min-h-0">
+                {/* Mobile bottom action bar (Task D1: Option 2) */}
+                <div className="md:hidden absolute inset-x-0 bottom-0 z-[1000] flex items-center gap-2 px-3 pt-2 pb-2 safe-b bg-white/92 backdrop-blur border-t border-gray-200">
+                    <button
+                        onClick={() => handleGenerate()}
+                        disabled={loading}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
+                    >
+                        {loading ? (
+                            <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Generating...
+                            </>
+                        ) : (
+                            'Regenerate Route'
+                        )}
+                    </button>
+
+                    {route && (
+                        <>
+                            <button
+                                onClick={downloadGPX}
+                                title="Share GPX"
+                                className="flex items-center justify-center gap-1.5 px-3 py-2 min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all shrink-0"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                GPX
+                            </button>
+
+                            <div className="relative shrink-0">
+                                <button
+                                    onClick={() => setShowMobileExport(!showMobileExport)}
+                                    title="More export options"
+                                    className="flex items-center justify-center min-h-[44px] min-w-[44px] px-2 py-2 bg-white border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-all"
+                                >
+                                    <MoreVertical className="w-4 h-4" />
+                                </button>
+
+                                {showMobileExport && (
+                                    <>
+                                        <div
+                                            className="fixed inset-0 z-[1001]"
+                                            onClick={() => setShowMobileExport(false)}
+                                        ></div>
+                                        <div className="absolute right-0 bottom-full mb-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 overflow-hidden ring-1 ring-black ring-opacity-5">
+                                            <button
+                                                onClick={() => { downloadFIT(); setShowMobileExport(false); }}
+                                                disabled={isFitDownloading}
+                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                            >
+                                                {isFitDownloading ? 'Downloading…' : 'FIT'}
+                                            </button>
+                                            <button
+                                                onClick={() => { sendToGarmin(); setShowMobileExport(false); }}
+                                                disabled={isGarminUploading}
+                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                            >
+                                                {isGarminUploading ? 'Uploading…' : 'Send to Garmin'}
+                                            </button>
+                                            <button
+                                                onClick={() => { sendToRwgps(); setShowMobileExport(false); }}
+                                                disabled={isRwgpsUploading}
+                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                            >
+                                                {isRwgpsUploading ? 'Uploading…' : 'Send to RideWithGPS'}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </>
+                    )}
+
+                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0) && (
+                        <button
+                            onClick={clearPoints}
+                            title={(route || selectionBoxes.length > 0) ? 'Start Over' : 'Clear Workspace'}
+                            className="flex items-center justify-center min-h-[44px] min-w-[44px] px-2 py-2 bg-white border border-red-200 rounded-md text-red-600 hover:bg-red-50 transition-all shrink-0"
+                        >
+                            <Eraser className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+
                 {/* Routing Status Pill */}
                 {((activeSteps > 0 && selectedPoints.length >= 2) || isAutoGenerating) && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
