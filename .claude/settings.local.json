@@ -83,7 +83,29 @@
       "Bash(grep -oE \"runtime error|Unhandled Runtime|Hydration|did not match|Text content does not match|Cannot read propert[^\\\\\"<]{0,80}\")",
       "Bash(python3 -c \"import yaml;yaml.safe_load\\(open\\('.github/workflows/docker-publish.yml'\\)\\);print\\('yaml valid'\\)\")",
       "Bash(vercel --version)",
-      "Bash(vercel env *)"
+      "Bash(vercel env *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:ridewithgps.com)",
+      "Bash(grep -n '^[^ ].*:$\\\\|^  [a-zA-Z0-9/{}._-]*:$' /Users/chadbeaudin/.claude/projects/-Users-chadbeaudin-dev-projects-StreetSweep/933c75ed-74fa-4e42-96d8-88e269f3324b/tool-results/webfetch-1785844751886-jkfdl2.bin)",
+      "Bash(command -v starship)",
+      "Read(//Users/chadbeaudin/.config/**)",
+      "Read(//Users/chadbeaudin/**)",
+      "Bash(awk 'NR>=12 && NR<=2015' /Users/chadbeaudin/.claude/projects/-Users-chadbeaudin-dev-projects-StreetSweep/933c75ed-74fa-4e42-96d8-88e269f3324b/tool-results/webfetch-1785844751886-jkfdl2.bin)",
+      "WebFetch(domain:www.reddit.com)",
+      "WebFetch(domain:old.reddit.com)",
+      "WebFetch(domain:r.jina.ai)",
+      "Bash(convert -version)",
+      "Bash(python3 -m pip install --quiet Pillow)",
+      "Read(//tmp/**)",
+      "Bash(sips -g hasAlpha rwgps_apple_icon.png)",
+      "Bash(npx eslint *)",
+      "Bash(npm version *)",
+      "Bash(npm ci *)",
+      "Bash(cp /Users/chadbeaudin/dev/projects/StreetSweep/.env /Users/chadbeaudin/dev/projects/street-sweep-pr59/.env)",
+      "Bash(cp /Users/chadbeaudin/dev/projects/StreetSweep/.env.local /Users/chadbeaudin/dev/projects/street-sweep-pr59/.env.local)",
+      "Bash(pkill -f \"next dev -p 3888 -p 3888\")",
+      "Bash(pkill -f \"next dev -p 3888\")"
     ]
   }
 }
