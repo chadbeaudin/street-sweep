@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
-import { fetchCyclingRiddenRoads, getStravaAccessToken, getStravaAthleteId } from '@/lib/strava';
+import { fetchCyclingRiddenRoads, resolveAthleteId } from '@/lib/strava';
 import { dedupeRiddenRoads } from '@/lib/riddenRoads';
 import { OSMWay } from '@/lib/types';
 import { prisma } from '@/lib/prisma';
@@ -14,16 +14,6 @@ const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 const MAX_TILES = Number(process.env.RIDDEN_MAX_TILES ?? 500);
 
 interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
-
-const ATHLETE_ID_CACHE = new Map<string, string>();
-async function resolveAthleteId(creds: Creds): Promise<string> {
-    const k = creds.refreshToken || '';
-    if (k && ATHLETE_ID_CACHE.has(k)) return ATHLETE_ID_CACHE.get(k)!;
-    const token = await getStravaAccessToken(creds);
-    const id = await getStravaAthleteId(token);
-    if (k) ATHLETE_ID_CACHE.set(k, id);
-    return id;
-}
 
 function roadsFromOSM(data: { elements: any[] }): [number, number][][] {
     const nodeMap = new Map<number, [number, number]>();

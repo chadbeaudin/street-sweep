@@ -257,7 +257,7 @@ export default function Home() {
             fetch('/api/strava/activities', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ stravaCredentials })
+                body: JSON.stringify({ stravaCredentials, forceSync: skipCache })
             })
                 .then(res => res.json())
                 .then(data => {

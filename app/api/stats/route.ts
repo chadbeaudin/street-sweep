@@ -9,7 +9,7 @@ import {
     computeRideRecords,
     RideRecords
 } from '@/lib/stats';
-import { getStravaAccessToken, getStravaAthleteId, fetchCyclingRiddenRoads } from '@/lib/strava';
+import { resolveAthleteId, fetchCyclingRiddenRoads } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -69,19 +69,6 @@ interface StravaCredentials {
     clientId?: string;
     clientSecret?: string;
     refreshToken?: string;
-}
-
-// Resolving the Strava athlete ID requires a token refresh + /athlete call.
-// Cache the lookup by refresh_token so repeat hits in the same process skip it.
-const ATHLETE_ID_CACHE = new Map<string, string>();
-
-async function resolveAthleteId(creds: StravaCredentials): Promise<string> {
-    const cacheKey = creds.refreshToken || '';
-    if (cacheKey && ATHLETE_ID_CACHE.has(cacheKey)) return ATHLETE_ID_CACHE.get(cacheKey)!;
-    const accessToken = await getStravaAccessToken(creds);
-    const id = await getStravaAthleteId(accessToken);
-    if (cacheKey) ATHLETE_ID_CACHE.set(cacheKey, id);
-    return id;
 }
 
 function networkPolylinesFromOSM(data: { elements: any[] }): [number, number][][] {

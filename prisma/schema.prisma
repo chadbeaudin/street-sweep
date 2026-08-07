@@ -72,3 +72,11 @@ model StatsCache {
 
   @@map("stats_cache")
 }
+
+model StravaActivityCache {
+  athleteId  String   @id
+  activities Json
+  syncedAt   DateTime @default(now())
+
+  @@map("strava_activity_cache")
+}

@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { fetchCyclingRiddenRoads } from '@/lib/strava';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        const { stravaCredentials } = body;
+        const { stravaCredentials, forceSync } = body;
 
         if (stravaCredentials) {
             console.log(`[API/Strava] Received credentials in request. Keys: ${Object.keys(stravaCredentials).join(', ')}`);
@@ -18,6 +18,7 @@ export async function POST(req: Request) {
             console.log('[API/Strava] No credentials in request body, will fallback to server-side ENV.');
         }
 
+        if (forceSync) await forceSyncStravaActivities(stravaCredentials);
         const { riddenRoads, activityElevations, activityTypes } = await fetchCyclingRiddenRoads(stravaCredentials);
 
         return NextResponse.json({ riddenRoads, activityElevations, activityTypes });

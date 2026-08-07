@@ -1,6 +1,7 @@
 import polyline from '@mapbox/polyline';
 import { isBikingActivity } from './stats';
 import { haversineM } from './geometry';
+import { prisma } from './prisma';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -44,7 +45,7 @@ export interface RiddenActivities {
 // moves (stationary/indoor trainers) are dropped here so they never reach the
 // map overlay, coverage stats, or the routing ridden-penalty.
 export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<RiddenActivities> {
-    const all = await fetchAllStravaActivities(creds);
+    const all = await getCachedOrFetchActivities(creds);
     const real = all
         .filter(a => isBikingActivity(a.sport_type || a.type))
         .map(a => ({ a, poly: polyline.decode(a.map.summary_polyline) as [number, number][] }))
@@ -135,8 +136,27 @@ export async function getStravaAthleteId(accessToken: string): Promise<string> {
     return String(data.id);
 }
 
+// Resolving the athlete ID costs a live Strava call (token refresh + /athlete),
+// so it's cached in-process by refresh_token. Shared here rather than each
+// caller keeping its own copy, so they all draw down the same in-memory cache
+// instead of independently re-resolving (and re-costing rate-limit budget).
+const ATHLETE_ID_CACHE = new Map<string, string>();
+
+export async function resolveAthleteId(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<string> {
+    const cacheKey = creds?.refreshToken || '';
+    if (cacheKey && ATHLETE_ID_CACHE.has(cacheKey)) return ATHLETE_ID_CACHE.get(cacheKey)!;
+    const accessToken = await getStravaAccessToken(creds);
+    const athleteId = await getStravaAthleteId(accessToken);
+    if (cacheKey) ATHLETE_ID_CACHE.set(cacheKey, athleteId);
+    return athleteId;
+}
+
 export async function fetchAllStravaActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<StravaActivity[]> {
     const accessToken = await getStravaAccessToken(creds);
+    return fetchAllStravaActivitiesWithToken(accessToken);
+}
+
+async function fetchAllStravaActivitiesWithToken(accessToken: string): Promise<StravaActivity[]> {
     let page = 1;
     const perPage = 200;
     const allActivities: StravaActivity[] = [];
@@ -180,4 +200,44 @@ export async function fetchAllStravaActivities(creds?: { clientId?: string; clie
     }
 
     return allActivities;
+}
+
+// Postgres-backed cache for the raw activity list (per athlete), so the derived
+// caches (ridden-roads, stats) and the client IndexedDB cache don't each force
+// their own live paginated Strava fetch. Independent of Strava's rate limit,
+// which is shared application-wide across every user — see issue #61.
+const ACTIVITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<StravaActivity[]> {
+    // Resolving athleteId (cached) costs no live call on a warm cache, so a
+    // Postgres cache hit below needs zero Strava API calls at all.
+    const athleteId = await resolveAthleteId(creds);
+
+    const cached = await prisma.stravaActivityCache.findUnique({ where: { athleteId } }).catch(() => null);
+    if (cached && Date.now() - cached.syncedAt.getTime() < ACTIVITY_CACHE_TTL_MS) {
+        console.log(`[Strava] Serving ${(cached.activities as unknown as StravaActivity[]).length} activities from Postgres cache for athlete ${athleteId}`);
+        return cached.activities as unknown as StravaActivity[];
+    }
+
+    const accessToken = await getStravaAccessToken(creds);
+    const activities = await fetchAllStravaActivitiesWithToken(accessToken);
+    await prisma.stravaActivityCache.upsert({
+        where: { athleteId },
+        create: { athleteId, activities: activities as any, syncedAt: new Date() },
+        update: { activities: activities as any, syncedAt: new Date() },
+    }).catch(e => console.warn(`[Strava] Failed to persist activity cache for ${athleteId}: ${e.message}`));
+
+    return activities;
+}
+
+// Bypasses the cache TTL check so the UI's "Sync" button can force a fresh pull.
+export async function forceSyncStravaActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<void> {
+    const athleteId = await resolveAthleteId(creds);
+    const accessToken = await getStravaAccessToken(creds);
+    const activities = await fetchAllStravaActivitiesWithToken(accessToken);
+    await prisma.stravaActivityCache.upsert({
+        where: { athleteId },
+        create: { athleteId, activities: activities as any, syncedAt: new Date() },
+        update: { activities: activities as any, syncedAt: new Date() },
+    });
 }
