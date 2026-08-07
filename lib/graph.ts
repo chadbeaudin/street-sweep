@@ -42,7 +42,7 @@ const DEFAULT_RIDDEN_PENALTY = 15;
 // penalty at all (as before this constant) let the matcher freely route through
 // long ridden stretches whenever marginally shorter than doubling back. This value
 // still favors real short connectors while discouraging casual ridden-road use.
-const MATCHING_RIDDEN_PENALTY = 6;
+const MATCHING_RIDDEN_PENALTY = 4;
 
 // Spatial index cell size in degrees (~55m at equator). Small enough to
 // keep cell buckets tiny, large enough that typical clicks find candidates
