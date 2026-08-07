@@ -475,6 +475,21 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         prevRouteRef.current = route;
     }, [route]);
 
+    // The selection/lasso overlay is a sibling of the Leaflet map container
+    // (positioned on top via z-index, not a DOM descendant), so wheel events
+    // land on it and never bubble to Leaflet's own scroll-zoom handler — they'd
+    // otherwise just be swallowed. Forward them manually, zoomed toward the
+    // cursor to match Leaflet's native scroll-wheel behavior (#63).
+    const handleOverlayWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+        if (!mapRef.current) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const point = L.point(e.clientX - rect.left, e.clientY - rect.top);
+        const latlng = mapRef.current.containerPointToLatLng(point);
+        const delta = e.deltaY < 0 ? 1 : -1;
+        mapRef.current.setZoomAround(latlng, mapRef.current.getZoom() + delta);
+    }, []);
+
     const handleOverlayPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
         e.currentTarget.setPointerCapture(e.pointerId);
         mapRef.current?.dragging.disable();
@@ -980,6 +995,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onPointerMove={handleOverlayPointerMove}
                     onPointerUp={handleOverlayPointerUp}
                     onPointerCancel={handleOverlayPointerCancel}
+                    onWheel={handleOverlayWheel}
                 />
             )}
 
@@ -991,6 +1007,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onPointerMove={handleLassoPointerMove}
                     onPointerUp={handleLassoPointerUp}
                     onPointerCancel={handleLassoPointerCancel}
+                    onWheel={handleOverlayWheel}
                 />
             )}
 
