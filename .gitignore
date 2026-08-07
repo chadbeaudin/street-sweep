@@ -40,3 +40,6 @@ ts-debug.log*
 
 # Disk-backed OSM cache (regenerable from Neon or Overpass)
 /.cache/
+
+# Claude Code local (per-machine) settings, not shared project config
+.claude/settings.local.json
