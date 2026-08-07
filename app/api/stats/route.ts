@@ -283,10 +283,10 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
 // same user doesn't trigger overlapping refreshes from rapid dialog opens.
 const REFRESHING: Set<string> = new Set();
 
-// Neon's HTTP driver intermittently rejects with `TypeError: fetch failed` on
-// transient network blips. Retry idempotent DB ops rather than surfacing the
-// blip to the user (reads) or throwing away minutes of compute (writes).
-async function withNeonRetry<T>(op: () => Promise<T>, label: string): Promise<T> {
+// The DB connection can intermittently reject on transient network blips.
+// Retry idempotent DB ops rather than surfacing the blip to the user (reads)
+// or throwing away minutes of compute (writes).
+async function withDbRetry<T>(op: () => Promise<T>, label: string): Promise<T> {
     const delays = [500, 2000, 5000];
     for (let attempt = 0; attempt <= delays.length; attempt++) {
         try {
@@ -301,7 +301,7 @@ async function withNeonRetry<T>(op: () => Promise<T>, label: string): Promise<T>
 }
 
 async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
-    await withNeonRetry(() => prisma.statsCache.upsert({
+    await withDbRetry(() => prisma.statsCache.upsert({
         where: { athleteId },
         create: { athleteId, stats: stats as any, refreshedAt: new Date() },
         update: { stats: stats as any, refreshedAt: new Date() }
@@ -335,7 +335,7 @@ export async function POST(request: Request) {
         }
 
         const athleteId = await resolveAthleteId(stravaCredentials);
-        const cached = await withNeonRetry(() => prisma.statsCache.findUnique({ where: { athleteId } }), 'read cache');
+        const cached = await withDbRetry(() => prisma.statsCache.findUnique({ where: { athleteId } }), 'read cache');
 
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();

@@ -1,6 +1,6 @@
 {
   "name": "street-sweep",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3888",
@@ -15,7 +15,7 @@
     "@garmin/fitsdk": "^21.202.0",
     "@mapbox/polyline": "^1.2.1",
     "@neondatabase/serverless": "^1.1.0",
-    "@prisma/adapter-neon": "^7.8.0",
+    "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.8.0",
     "@turf/distance": "^7.3.1",
     "@types/mapbox__polyline": "^1.0.5",
@@ -27,6 +27,7 @@
     "next": "^14.2.3",
     "ngraph.graph": "^20.0.1",
     "ngraph.path": "^1.4.0",
+    "pg": "^8.22.0",
     "polyline": "^0.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -40,6 +41,7 @@
     "@types/jest": "^30.0.0",
     "@types/leaflet": "^1.9.8",
     "@types/node": "^20.12.7",
+    "@types/pg": "^8.20.4",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.23",

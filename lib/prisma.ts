@@ -1,13 +1,10 @@
 import { PrismaClient } from './generated/prisma/client';
-import { PrismaNeonHttp } from '@prisma/adapter-neon';
+import { PrismaPg } from '@prisma/adapter-pg';
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
 function createClient() {
-    // keepalive:false forces a fresh HTTP connection per query. The long-lived
-    // dev-server client otherwise reuses a pooled Neon socket that goes stale
-    // after idle, surfacing as intermittent `TypeError: fetch failed`.
-    const adapter = new PrismaNeonHttp(process.env.DATABASE_URL!, { fetchOptions: { keepalive: false } });
+    const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
     return new PrismaClient({ adapter });
 }
 
