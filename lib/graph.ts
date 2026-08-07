@@ -833,7 +833,7 @@ export class StreetGraph {
     }
 
     /** Returns a penalty map (10×) for all ridden edges, for use when bridging disconnected components. */
-    private buildRiddenPenaltyMap(riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): Map<string, number> {
+    public buildRiddenPenaltyMap(riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): Map<string, number> {
         const penalties = new Map<string, number>();
         this.graph.forEachLink((link: any) => {
             if (link.data.isRidden) penalties.set(link.id, riddenPenalty);

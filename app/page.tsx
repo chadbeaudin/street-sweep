@@ -51,7 +51,8 @@ export default function Home() {
         avoidHighways: false,
         avoidTrails: false,
         riddenPenalty: 15,
-        boxElasticity: 0
+        boxElasticity: 0,
+        pointRoutePenalty: 4
     });
     const [showOptions, setShowOptions] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
@@ -1221,6 +1222,20 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                                 />
                                                 <p className="text-xs text-gray-500 mt-2">Higher values strongly prefer unridden roads (less backtracking)</p>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Point Route Detour Preference: {routingOptions.pointRoutePenalty}x
+                                                </label>
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="20"
+                                                    value={routingOptions.pointRoutePenalty}
+                                                    onChange={(e) => setRoutingOptions({ ...routingOptions, pointRoutePenalty: parseInt(e.target.value) })}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-2">How far out of your way to go for new streets when routing point-to-point (not area/lasso). Higher values detour more.</p>
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">

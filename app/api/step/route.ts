@@ -52,10 +52,24 @@ export async function POST(req: NextRequest) {
         // during pathfinding instead of mutating the graph weights.
         const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads || null, routingOptions);
 
-        // Get link IDs that should be penalized (already traversed in current session)
+        // Get link IDs that should be penalized: already traversed in the current
+        // session (avoid backtracking) and already ridden per Strava (prefer new
+        // streets — point-to-point routing previously ignored ridden status entirely).
+        // Deliberately separate from the area-mode riddenPenalty slider (default 15):
+        // point-to-point has no bounded "required road" to fall back on like the CPP
+        // solver does, so a strong penalty can drag the path into a large detour
+        // chasing distant unridden streets instead of a sensible mostly-unridden route.
         let penalizedLinks: Map<string, number> | undefined;
         if (manualRoute && Array.isArray(manualRoute) && manualRoute.length > 0) {
             penalizedLinks = graph.getTraversalPenalties(manualRoute, 5);
+        }
+        const pointRoutePenalty = routingOptions?.pointRoutePenalty || 4;
+        const riddenPenalties = graph.buildRiddenPenaltyMap(pointRoutePenalty);
+        if (riddenPenalties.size > 0) {
+            penalizedLinks = penalizedLinks ?? new Map<string, number>();
+            for (const [linkId, mult] of riddenPenalties) {
+                penalizedLinks.set(linkId, (penalizedLinks.get(linkId) ?? 1) * mult);
+            }
         }
 
         const snappedData = graph.findClosestPointOnEdge(point.lat, point.lon);
