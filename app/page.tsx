@@ -1758,6 +1758,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         }
                     }}
                     onSelectionModeChange={setIsSelectionMode}
+                    onLassoModeChange={setIsLassoMode}
                     isEraserMode={isEraserMode}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}

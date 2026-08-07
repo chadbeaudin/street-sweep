@@ -43,6 +43,7 @@ interface MapProps {
     onSelectionChange: (box: { north: number; south: number; east: number; west: number } | null) => void;
     onSelectionPolygonChange?: (polygon: [number, number][] | null) => void;
     onSelectionModeChange?: (isSelectionMode: boolean) => void;
+    onLassoModeChange?: (isLassoMode: boolean) => void;
     isEraserMode?: boolean;
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
     preAreaPointCount?: number | null;
@@ -425,7 +426,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -586,7 +587,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         isDrawingLassoRef.current = false;
         setDrawingLasso(null);
         if (mapRef.current) mapRef.current.dragging.enable();
-    }, [drawingLasso, onSelectionPolygonChange]);
+        // Match Area mode: return to Point mode after a completed selection.
+        setTimeout(() => onLassoModeChange?.(false), 100);
+    }, [drawingLasso, onSelectionPolygonChange, onLassoModeChange]);
 
     const handleLassoPointerCancel = useCallback(() => {
         isDrawingLassoRef.current = false;
