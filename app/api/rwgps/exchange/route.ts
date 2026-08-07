@@ -14,7 +14,8 @@ export async function POST(req: Request) {
             );
         }
 
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://${new URL(req.url).host}`;
+        const proto = req.headers.get('x-forwarded-proto') || new URL(req.url).protocol.replace(':', '');
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${new URL(req.url).host}`;
         const redirectUri = `${baseUrl}/rwgps-auth`;
 
         const params = new URLSearchParams();

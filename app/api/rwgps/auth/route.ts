@@ -9,7 +9,8 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'RideWithGPS OAuth client ID not configured on server.' }, { status: 500 });
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://${new URL(req.url).host}`;
+    const proto = req.headers.get('x-forwarded-proto') || new URL(req.url).protocol.replace(':', '');
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${new URL(req.url).host}`;
     const redirectUri = `${baseUrl}/rwgps-auth`;
 
     const state = crypto.randomUUID();
