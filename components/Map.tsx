@@ -649,7 +649,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
     const buildChevronMarkers = React.useCallback((pts: [number, number][]) => {
         if (pts.length < 2) return [];
-        const SPACING_M = 150;
+        const SPACING_M = 400;
         const markers: { lat: number; lon: number; angle: number }[] = [];
         const toRad = (d: number) => d * Math.PI / 180;
         const toDeg = (r: number) => r * 180 / Math.PI;
@@ -808,7 +808,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         key={`route-normal-${idx}`}
                         positions={segment}
                         color="#EF4444"
-                        weight={5}
+                        weight={6}
                         opacity={0.85}
                         interactive={false}
                     />
@@ -820,7 +820,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         key={`route-construction-${idx}`}
                         positions={segment}
                         color="#F59E0B" // Orange/amber for construction
-                        weight={5}
+                        weight={6}
                         opacity={0.9}
                         interactive={false}
                         dashArray="10, 10"
@@ -835,11 +835,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         interactive={false}
                         icon={L.divIcon({
                             className: '',
-                            html: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" style="transform:rotate(${m.angle}deg);display:block;">
-                                <polyline points="4,14 8,4 12,14" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.95"/>
+                            html: `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 22 22" style="transform:rotate(${m.angle}deg);display:block;filter:drop-shadow(0 0 1px rgba(0,0,0,.5));">
+                                <polyline points="5,19 11,5 17,19" stroke="white" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+                                <polyline points="5,19 11,5 17,19" stroke="black" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
                             </svg>`,
-                            iconSize: [16, 16],
-                            iconAnchor: [8, 8],
+                            iconSize: [22, 22],
+                            iconAnchor: [11, 11],
                         })}
                     />
                 ))}
