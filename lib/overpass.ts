@@ -339,7 +339,8 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
       version: 0.6,
       generator: 'StreetSweep Dummy',
       osm3s: { timestamp_osm_base: new Date().toISOString(), copyright: '' },
-      elements: []
+      elements: [],
+      skippedTooLarge: true
     };
   }
 

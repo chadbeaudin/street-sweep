@@ -24,6 +24,10 @@ export interface OverpassResponse {
         copyright: string;
     };
     elements: OSMElement[];
+    // Set when the request was deliberately skipped for being too large to
+    // safely send to the Overpass mirror — distinct from a genuine empty/failed
+    // OSM response, so callers don't report it as a service outage.
+    skippedTooLarge?: boolean;
 }
 
 export interface BoundingBox {

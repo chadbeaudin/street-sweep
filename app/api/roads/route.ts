@@ -69,7 +69,9 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        const degraded = osmData.elements.length === 0;
+        // Deliberately-skipped oversized requests aren't a service problem —
+        // just the viewport being too big — so don't flag them as degraded.
+        const degraded = osmData.elements.length === 0 && !osmData.skippedTooLarge;
         return NextResponse.json({ roads, degraded });
 
     } catch (error: any) {

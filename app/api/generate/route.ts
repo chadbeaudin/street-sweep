@@ -98,6 +98,11 @@ export async function POST(request: Request) {
         }
         console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
+        if (osmData.skippedTooLarge) {
+            console.warn(`${ts()} Selected area too large for a single request:`, bufferedBbox);
+            return NextResponse.json({ error: 'Selected area is too large — zoom in or draw a smaller area and try again.' }, { status: 400 });
+        }
+
         if (osmData.elements.length === 0) {
             console.warn(`${ts()} OSM data is empty for bbox:`, bufferedBbox);
             return NextResponse.json({ error: 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 503 });
