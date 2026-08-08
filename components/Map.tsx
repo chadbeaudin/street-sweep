@@ -762,11 +762,26 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         position={[startPoint.lat, startPoint.lon]}
                         icon={L.divIcon({
                             className: '',
-                            html: '<div style="font-size:22px;line-height:22px;transform:translate(-50%,-90%);filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))">🏠</div>',
-                            iconSize: [22, 22],
-                            iconAnchor: [11, 20],
+                            // Hit area (36px) is padded well past the visible glyph (22px) — at
+                            // low zoom a click near the icon could otherwise land a block away
+                            // from the actual saved coordinate. Anchored dead-center so the
+                            // clickable box and the visible emoji line up exactly (the old
+                            // combination of iconAnchor + an extra CSS translate offset caused
+                            // the two to diverge).
+                            html: '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:22px;line-height:22px;filter:drop-shadow(0 1px 1px rgba(0,0,0,.4))">🏠</div>',
+                            iconSize: [36, 36],
+                            iconAnchor: [18, 18],
                         })}
                         title={startPoint.label}
+                        zIndexOffset={600}
+                        eventHandlers={{
+                            click: (e: any) => {
+                                L.DomEvent.stopPropagation(e);
+                                if (isPickingStart) { onStartPick?.(startPoint.lat, startPoint.lon); return; }
+                                if (isSelectionMode || isLassoMode || isEraserMode) return;
+                                onPointAdd({ lat: startPoint.lat, lon: startPoint.lon });
+                            },
+                        }}
                     />
                 )}
                 <GeolocateOnMount />
