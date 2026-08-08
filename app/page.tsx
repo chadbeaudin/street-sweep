@@ -84,7 +84,6 @@ export default function Home() {
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
     const [stravaRefreshKey, setStravaRefreshKey] = useState(0);
-    const [showAbout, setShowAbout] = useState(false);
     const [showStats, setShowStats] = useState(false);
     const [showGarminSettings, setShowGarminSettings] = useState(false);
     const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
@@ -1116,13 +1115,6 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </button>
                     )}
 
-                    <button
-                        onClick={() => setShowAbout(true)}
-                        className="px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
-                    >
-                        About
-                    </button>
-
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <button
                             onClick={() => setShowOptions(true)}
@@ -1438,10 +1430,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                         </button>
                                     )}
                                     <button
-                                        onClick={() => { setShowAbout(true); setShowMobileMenu(false); }}
+                                        onClick={() => { setShowHowTo(true); setShowMobileMenu(false); }}
                                         className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                                     >
-                                        About
+                                        How To / About
                                     </button>
                                     <div className="border-t border-gray-100 flex">
                                         <button
@@ -1564,70 +1556,33 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </span>
                     </div>
                 )}
-                {/* First-Time User Welcome / About Overlay */}
-                {(showAbout || (stravaCredentials !== undefined && !stravaCredentials.refreshToken)) && (
+                {/* First-Time User Welcome: prompt to connect Strava */}
+                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && (
                     <div className="absolute inset-0 z-[1100] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg text-center border border-gray-100 animate-in fade-in zoom-in duration-300 relative">
-                            {showAbout && (
-                                <button
-                                    onClick={() => setShowAbout(false)}
-                                    className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
-                                >
-                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                </button>
-                            )}
                             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100 mx-auto mb-6">
                                 <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A2 2 0 013 15.414V5.586a2 2 0 012.316-1.97l5.447 1.258a2 2 0 001.374 0l5.447-1.258A2 2 0 0121 5.586v9.828a2 2 0 01-1.236 1.861L15 20l-6-2.586L9 20z" />
                                 </svg>
                             </div>
-                            <h2 className="text-2xl font-bold text-gray-900 mb-4 tracking-tight">About StreetSweep</h2>
+                            <h2 className="text-2xl font-bold text-gray-900 mb-4 tracking-tight">Welcome to StreetSweep</h2>
                             <div className="text-gray-600 mb-8 font-medium leading-relaxed space-y-4 text-left">
                                 <p>
                                     <strong>Street Sweep</strong> helps cyclists, runners, and hikers explore new areas they have not previously traveled.
                                     Connect your Strava account to import all your activities which will be displayed on a single map.
                                     StreetSweep will then help you generate optimized routes, previously untraveled by you, with minimal backtracking.
                                 </p>
-                                {!stravaCredentials?.refreshToken && (
-                                    <p className="text-indigo-600 text-sm italic">
-                                        To get started creating your custom routes, we need to connect your Strava account to synchronize your activity data.
-                                    </p>
-                                )}
-                                <div className="pt-4 mt-4 border-t border-gray-100 flex items-center justify-between">
-                                    <div className="text-xs text-gray-400 font-medium">
-                                        Version {pkg.version}
-                                    </div>
-                                    <a 
-                                        href="https://github.com/chadbeaudin/street-sweep" 
-                                        target="_blank" 
-                                        rel="noopener noreferrer"
-                                        className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-indigo-600 font-semibold transition-colors"
-                                    >
-                                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                            <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
-                                        </svg>
-                                        GitHub Repository
-                                    </a>
-                                </div>
+                                <p className="text-indigo-600 text-sm italic">
+                                    To get started creating your custom routes, we need to connect your Strava account to synchronize your activity data.
+                                </p>
                             </div>
-                            {!stravaCredentials?.refreshToken ? (
-                                <button
-                                    onClick={() => setShowStravaSettings(true)}
-                                    className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#FC4C02] text-white rounded-xl text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200"
-                                >
-                                    <Settings className="w-4 h-4" />
-                                    Setup Strava Connection
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={() => setShowAbout(false)}
-                                    className="w-full px-6 py-3.5 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-100"
-                                >
-                                    Got it!
-                                </button>
-                            )}
+                            <button
+                                onClick={() => setShowStravaSettings(true)}
+                                className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#FC4C02] text-white rounded-xl text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200"
+                            >
+                                <Settings className="w-4 h-4" />
+                                Setup Strava Connection
+                            </button>
                         </div>
                     </div>
                 )}
