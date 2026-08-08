@@ -23,7 +23,7 @@ export function ExportTipsDialog({ isOpen, onClose, onContinue }: ExportTipsDial
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm flex flex-col overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
                     <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                        <Lightbulb className="w-5 h-5 text-amber-500" /> Before You Ride
+                        <Lightbulb className="w-5 h-5 text-amber-500" /> Useful Tips
                     </h2>
                     <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500">
                         <X className="w-5 h-5" />
