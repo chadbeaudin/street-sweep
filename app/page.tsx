@@ -1903,7 +1903,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                 <button
                     onClick={() => setShowHowTo(true)}
                     title="How to use StreetSweep"
-                    className="fixed bottom-12 left-4 z-[1100] w-9 h-9 rounded-full bg-white border border-gray-200 shadow-lg text-indigo-600 font-bold hover:bg-gray-50 flex items-center justify-center"
+                    className={`fixed ${elevationData ? 'bottom-[13rem]' : 'bottom-12'} left-4 z-[1100] w-9 h-9 rounded-full bg-white border border-gray-200 shadow-lg text-indigo-600 font-bold hover:bg-gray-50 flex items-center justify-center transition-[bottom]`}
                 >
                     ?
                 </button>
