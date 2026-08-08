@@ -23,7 +23,13 @@ export async function POST(req: NextRequest) {
             east: bbox.east + BUFFER
         };
 
-        const osmData = await fetchOSMData(bufferedBbox);
+        let osmData;
+        try {
+            osmData = await fetchOSMData(bufferedBbox);
+        } catch (osmError: any) {
+            console.error('Roads API OSM fetch error:', osmError);
+            return NextResponse.json({ error: osmError.message || 'OSM data fetch failed', degraded: true }, { status: 500 });
+        }
 
         // The OSM API fallback returns ways as node-id references without inline
         // geometry (unlike Overpass `out geom`). Build a node lookup so we can

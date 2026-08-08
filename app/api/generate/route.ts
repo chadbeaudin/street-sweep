@@ -89,12 +89,18 @@ export async function POST(request: Request) {
         };
 
         console.log(`${ts()} Fetching OSM data for buffered bbox:`, bufferedBbox);
-        const osmData = await fetchOSMData(bufferedBbox);
+        let osmData;
+        try {
+            osmData = await fetchOSMData(bufferedBbox);
+        } catch (osmError: any) {
+            console.error(`${ts()} OSM fetch failed:`, osmError);
+            return NextResponse.json({ error: osmError.message || 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 500 });
+        }
         console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
         if (osmData.elements.length === 0) {
             console.warn(`${ts()} OSM data is empty for bbox:`, bufferedBbox);
-            return NextResponse.json({ error: 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.' }, { status: 503 });
+            return NextResponse.json({ error: 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 503 });
         }
 
         const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads, routingOptions);
@@ -198,6 +204,9 @@ export async function POST(request: Request) {
         return NextResponse.json({ ...geoJson, degraded });
     } catch (error: any) {
         console.error('Error in generate route:', error);
-        return NextResponse.json({ error: error.message || 'Internal Server Error', degraded: true }, { status: 500 });
+        // Not flagged degraded — this catches routing/elevation/graph failures
+        // downstream of the OSM fetch, which already handles its own errors above.
+        // A generic crash here isn't an OSM outage and shouldn't be reported as one.
+        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
 }
