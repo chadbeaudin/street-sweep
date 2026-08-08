@@ -1,4 +1,4 @@
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from './pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from './pointMove';
 
 function makePoints(count: number): Waypoint[] {
     return Array.from({ length: count }, (_, i) => ({
@@ -239,6 +239,99 @@ describe('insertWaypointAtSegment', () => {
             const seg1Before = route[1].length;
             insertWaypointAtSegment(makePoints(4), route, 1, NEW_PT);
             expect(route[1]).toHaveLength(seg1Before);
+        });
+    });
+});
+
+// ── removeWaypoint ────────────────────────────────────────────────────────────
+
+describe('removeWaypoint', () => {
+    describe('removing an interior point (idx 1 of 4)', () => {
+        const pts = makePoints(4);
+        const route = makeRoute(3);
+        const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pts, route, 1);
+
+        it('produces 3 waypoints', () => expect(newPoints).toHaveLength(3));
+        it('removes the point at idx 1', () => {
+            expect(newPoints).toEqual([pts[0], pts[2], pts[3]]);
+        });
+        it('produces 2 route segments', () => expect(newRoute).toHaveLength(2));
+        it('replaces both adjacent segments with one empty placeholder', () => {
+            expect(newRoute[0]).toEqual([]);
+        });
+        it('preserves the untouched trailing segment', () => {
+            expect(newRoute[1]).toEqual(route[2]);
+        });
+        it('flags the placeholder index for re-routing', () => {
+            expect(segmentToRoute).toBe(0);
+        });
+    });
+
+    describe('removing the first point (idx 0 of 4)', () => {
+        const pts = makePoints(4);
+        const route = makeRoute(3);
+        const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pts, route, 0);
+
+        it('produces 3 waypoints starting at the old idx 1', () => {
+            expect(newPoints).toEqual([pts[1], pts[2], pts[3]]);
+        });
+        it('drops only the first segment', () => {
+            expect(newRoute).toEqual([route[1], route[2]]);
+        });
+        it('needs no re-routing', () => expect(segmentToRoute).toBeNull());
+    });
+
+    describe('removing the last point (idx 3 of 4)', () => {
+        const pts = makePoints(4);
+        const route = makeRoute(3);
+        const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pts, route, 3);
+
+        it('produces 3 waypoints ending at the old idx 2', () => {
+            expect(newPoints).toEqual([pts[0], pts[1], pts[2]]);
+        });
+        it('drops only the last segment', () => {
+            expect(newRoute).toEqual([route[0], route[1]]);
+        });
+        it('needs no re-routing', () => expect(segmentToRoute).toBeNull());
+    });
+
+    describe('removing the only point (1 point total)', () => {
+        it('produces an empty points and route array', () => {
+            const pts = makePoints(1);
+            const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pts, [], 0);
+            expect(newPoints).toEqual([]);
+            expect(newRoute).toEqual([]);
+            expect(segmentToRoute).toBeNull();
+        });
+    });
+
+    describe('removing one of two points', () => {
+        it('removing the first leaves the second with no segments', () => {
+            const pts = makePoints(2);
+            const route = makeRoute(1);
+            const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pts, route, 0);
+            expect(newPoints).toEqual([pts[1]]);
+            expect(newRoute).toEqual([]);
+            expect(segmentToRoute).toBeNull();
+        });
+
+        it('removing the last leaves the first with no segments', () => {
+            const pts = makePoints(2);
+            const route = makeRoute(1);
+            const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pts, route, 1);
+            expect(newPoints).toEqual([pts[0]]);
+            expect(newRoute).toEqual([]);
+            expect(segmentToRoute).toBeNull();
+        });
+    });
+
+    describe('immutability', () => {
+        it('does not mutate the original points or route arrays', () => {
+            const pts = makePoints(4);
+            const route = makeRoute(3);
+            removeWaypoint(pts, route, 1);
+            expect(pts).toHaveLength(4);
+            expect(route).toHaveLength(3);
         });
     });
 });

@@ -33,6 +33,7 @@ interface MapProps {
     onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
     onPointMoveStart?: () => void;
     onPointMoveEnd?: () => void;
+    onPointDelete?: (idx: number) => void;
     onRouteSegmentInsert?: (segmentIdx: number, point: { lat: number; lon: number }) => void;
     manualRoute: [number, number][][];
     allRoads: [number, number][][];
@@ -426,7 +427,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -923,6 +924,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             icon={markerIcon}
                             draggable={true}
                             zIndexOffset={500}
+                            title="Drag to move, right-click to delete"
                             eventHandlers={{
                                 dragstart: (e: any) => {
                                     onPointMoveStart?.();
@@ -932,7 +934,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                                     const position = marker.getLatLng();
                                     onPointMove(idx, { lat: position.lat, lon: position.lng });
                                     onPointMoveEnd?.();
-                                }
+                                },
+                                contextmenu: (e: any) => {
+                                    L.DomEvent.stopPropagation(e);
+                                    L.DomEvent.preventDefault(e);
+                                    onPointDelete?.(idx);
+                                },
                             }}
                         />
                     );

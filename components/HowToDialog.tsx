@@ -32,7 +32,7 @@ const slides = [
                     <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-blue-500 border border-white shadow" /> Waypoint</span>
                     <span className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-500 border border-white shadow" /> End point</span>
                 </div>
-                <p className="text-gray-500">Drag a waypoint to move it, or drag the route line to insert a new one. Best for planning a specific path.</p>
+                <p className="text-gray-500">Drag a waypoint to move it, right-click to delete it, or drag the route line to insert a new one. Best for planning a specific path.</p>
             </>
         ),
     },

@@ -43,6 +43,37 @@ export function getAffectedSegmentIndices(movedIdx: number, pointCount: number):
 }
 
 /**
+ * Removes the waypoint at `idx`, merging the two route segments that touched it
+ * (if any) into a single segment to be re-routed by the caller. Mirrors the
+ * inverse of `insertWaypointAtSegment`.
+ *
+ * - Removing an endpoint (idx 0 or last) just drops its one adjacent segment —
+ *   no re-routing needed, so `segmentToRoute` is null.
+ * - Removing an interior point drops both adjacent segments and leaves a single
+ *   placeholder at `segmentToRoute` connecting the former neighbors.
+ */
+export function removeWaypoint(
+    points: Waypoint[],
+    route: [number, number][][],
+    idx: number
+): { newPoints: Waypoint[]; newRoute: [number, number][][]; segmentToRoute: number | null } {
+    const newPoints = [...points.slice(0, idx), ...points.slice(idx + 1)];
+
+    if (idx === 0) {
+        return { newPoints, newRoute: route.slice(1), segmentToRoute: null };
+    }
+    if (idx === points.length - 1) {
+        return { newPoints, newRoute: route.slice(0, idx - 1), segmentToRoute: null };
+    }
+    const newRoute: [number, number][][] = [
+        ...route.slice(0, idx - 1),
+        [],
+        ...route.slice(idx + 1),
+    ];
+    return { newPoints, newRoute, segmentToRoute: idx - 1 };
+}
+
+/**
  * Returns a new points array with the waypoint matching `pointId` replaced by
  * `newPoint`, preserving the position of every other waypoint.  Returns null if
  * the point no longer exists (was removed while the async snap was in flight).

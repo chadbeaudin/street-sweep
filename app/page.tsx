@@ -14,7 +14,7 @@ import { RwgpsSuccessDialog } from '@/components/RwgpsSuccessDialog';
 import { RwgpsHeaderButton } from '@/components/RwgpsHeaderButton';
 import { HowToDialog } from '@/components/HowToDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, Waypoint } from '@/lib/pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo } from '@/lib/routeHistory';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -867,6 +867,62 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }, 500); // Increased timeout to be safer
     }, []);
 
+    const handlePointDelete = useCallback((idx: number) => {
+        const currentBbox = bboxRef.current;
+        if (!currentBbox) return;
+        if (idx < 0 || idx >= pointsRef.current.length) return;
+
+        const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pointsRef.current, manualRouteRef.current, idx);
+        pointsRef.current = newPoints;
+        manualRouteRef.current = newRoute;
+        setSelectedPoints([...newPoints]);
+        setManualRoute([...newRoute]);
+
+        const commitSnapshot = () => {
+            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+            const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+            historyRef.current = [...newHistory, snapshot];
+            historyIndexRef.current = historyRef.current.length - 1;
+            setHistory(historyRef.current);
+            setHistoryIndex(historyIndexRef.current);
+        };
+
+        if (segmentToRoute === null) {
+            commitSnapshot();
+            return;
+        }
+
+        setActiveSteps(prev => prev + 1);
+        clickChainRef.current = clickChainRef.current.then(async () => {
+            try {
+                const p1 = newPoints[segmentToRoute];
+                const p2 = newPoints[segmentToRoute + 1];
+                const stepRes = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        point: p2,
+                        lastPoint: p1,
+                        bbox: currentBbox,
+                        manualRoute: newRoute.filter((_, i) => i !== segmentToRoute),
+                        riddenRoads: stravaRoadsRef.current,
+                        routingOptions: routingOptionsRef.current
+                    })
+                });
+                const stepData = await stepRes.json();
+                const updatedSegments = [...manualRouteRef.current];
+                if (stepData.path) updatedSegments[segmentToRoute] = stepData.path;
+                manualRouteRef.current = updatedSegments;
+                setManualRoute(updatedSegments);
+                commitSnapshot();
+            } catch (err) {
+                console.error('Failed to delete point:', err);
+            } finally {
+                setActiveSteps(prev => Math.max(0, prev - 1));
+            }
+        });
+    }, []);
+
     const handleRouteSegmentInsert = useCallback((segmentIdx: number, rawPoint: { lat: number; lon: number }) => {
         const wasImported = isImportedRouteRef.current;
         isImportedRouteRef.current = false;
@@ -1695,6 +1751,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     onPointMove={handlePointMove}
                     onPointMoveStart={handlePointMoveStart}
                     onPointMoveEnd={handlePointMoveEnd}
+                    onPointDelete={handlePointDelete}
                     onRouteSegmentInsert={handleRouteSegmentInsert}
                     manualRoute={manualRoute}
                     allRoads={allRoads}
