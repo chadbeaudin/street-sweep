@@ -13,6 +13,7 @@ import { RouteNameDialog } from '@/components/RouteNameDialog';
 import { RwgpsSuccessDialog } from '@/components/RwgpsSuccessDialog';
 import { RwgpsHeaderButton } from '@/components/RwgpsHeaderButton';
 import { HowToDialog } from '@/components/HowToDialog';
+import { ExportTipsDialog } from '@/components/ExportTipsDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo } from '@/lib/routeHistory';
@@ -93,6 +94,8 @@ export default function Home() {
     const [isRwgpsUploading, setIsRwgpsUploading] = useState(false);
     const [showRouteNameDialog, setShowRouteNameDialog] = useState(false);
     const [rwgpsUploadResult, setRwgpsUploadResult] = useState<{ routeUrl: string } | null>(null);
+    const [showExportTips, setShowExportTips] = useState(false);
+    const pendingExportTargetRef = useRef<'garmin' | 'rwgps' | null>(null);
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -539,7 +542,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
     };
 
-    const sendToGarmin = () => {
+    const doSendToGarmin = () => {
         if (!route) return;
         setShowGarminSettings(true);
     };
@@ -565,7 +568,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
     };
 
-    const sendToRwgps = () => {
+    const doSendToRwgps = () => {
         if (!rwgpsCredentials?.accessToken) {
             if (route) {
                 sessionStorage.setItem('rwgps_pending_route', JSON.stringify({ route, name: routeName }));
@@ -575,6 +578,33 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
         if (!route) return;
         setShowRouteNameDialog(true);
+    };
+
+    const EXPORT_TIPS_DISMISSED_KEY = 'streetsweep_hide_export_tips';
+
+    const runExportOrShowTips = (target: 'garmin' | 'rwgps') => {
+        let dismissed = false;
+        try { dismissed = localStorage.getItem(EXPORT_TIPS_DISMISSED_KEY) === '1'; } catch { /* ignore */ }
+        if (dismissed) {
+            target === 'garmin' ? doSendToGarmin() : doSendToRwgps();
+            return;
+        }
+        pendingExportTargetRef.current = target;
+        setShowExportTips(true);
+    };
+
+    const sendToGarmin = () => runExportOrShowTips('garmin');
+    const sendToRwgps = () => runExportOrShowTips('rwgps');
+
+    const handleExportTipsContinue = (dontShowAgain: boolean) => {
+        if (dontShowAgain) {
+            try { localStorage.setItem(EXPORT_TIPS_DISMISSED_KEY, '1'); } catch { /* ignore */ }
+        }
+        setShowExportTips(false);
+        const target = pendingExportTargetRef.current;
+        pendingExportTargetRef.current = null;
+        if (target === 'garmin') doSendToGarmin();
+        else if (target === 'rwgps') doSendToRwgps();
     };
 
     const handleRouteNameConfirm = async (name: string) => {
@@ -1837,6 +1867,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     initialName={routeName}
                     onClose={() => setShowRouteNameDialog(false)}
                     onConfirm={handleRouteNameConfirm}
+                />
+
+                <ExportTipsDialog
+                    isOpen={showExportTips}
+                    onClose={() => { setShowExportTips(false); pendingExportTargetRef.current = null; }}
+                    onContinue={handleExportTipsContinue}
                 />
 
                 {rwgpsUploadResult && (
