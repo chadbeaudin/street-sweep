@@ -223,7 +223,19 @@ export default function Home() {
         setGarminCredentials(savedGarminEmail ? { email: savedGarminEmail } : {});
 
         const savedRwgpsSettings = localStorage.getItem('rwgps_settings');
-        setRwgpsCredentials(savedRwgpsSettings ? JSON.parse(savedRwgpsSettings) : {});
+        const rwgpsSettings = savedRwgpsSettings ? JSON.parse(savedRwgpsSettings) : {};
+        setRwgpsCredentials(rwgpsSettings);
+
+        const pendingRwgpsRoute = sessionStorage.getItem('rwgps_pending_route');
+        if (pendingRwgpsRoute) {
+            sessionStorage.removeItem('rwgps_pending_route');
+            const { route: pendingRoute, name: pendingName } = JSON.parse(pendingRwgpsRoute);
+            setRoute(pendingRoute);
+            if (pendingName) setRouteName(pendingName);
+            if (rwgpsSettings?.accessToken) {
+                setShowRouteNameDialog(true);
+            }
+        }
     }, []);
 
     useEffect(() => {
@@ -556,6 +568,9 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
     const sendToRwgps = () => {
         if (!rwgpsCredentials?.accessToken) {
+            if (route) {
+                sessionStorage.setItem('rwgps_pending_route', JSON.stringify({ route, name: routeName }));
+            }
             setShowRwgpsSettings(true);
             return;
         }
@@ -970,6 +985,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         clickChainRef.current = Promise.resolve();
         preAreaPointCountRef.current = null;
         isImportedRouteRef.current = false;
+        selectionPolygonsRef.current = [];
 
         // Reset state
         setIsImportedRoute(false);
@@ -981,6 +997,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setElevationData(null);
         setTotalDistance(null);
         setSelectionBoxes([]);
+        setSelectionPolygons([]);
         setPreAreaPointCount(null);
         setActiveSteps(0);
     }, []);
@@ -1107,30 +1124,36 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     </button>
 
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
-                        <div className="relative">
-                            <button
-                                onClick={() => setShowOptions(!showOptions)}
-                                className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-sm font-medium transition-colors border shadow-sm ${showOptions
-                                    ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
-                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                title="Routing Options"
-                            >
-                                <Settings2 className="w-4 h-4" />
-                                <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${showOptions ? 'rotate-180' : ''}`} />
-                            </button>
+                        <button
+                            onClick={() => setShowOptions(true)}
+                            className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-sm font-medium transition-colors border shadow-sm ${showOptions
+                                ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
+                                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                }`}
+                            title="Routing Options"
+                        >
+                            <Settings2 className="w-4 h-4" />
+                        </button>
 
-                            {showOptions && (
-                                <>
-                                    <div
-                                        className="fixed inset-0 z-[1001]"
-                                        onClick={() => setShowOptions(false)}
-                                    ></div>
-                                    <div className="absolute left-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-left overflow-hidden ring-1 ring-black ring-opacity-5">
-                                        <div className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 border-b border-gray-100">
-                                            Routing Preferences
-                                        </div>
-                                        <div className="p-1.5 space-y-1">
+                        {showOptions && (
+                            <div
+                                className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+                                onClick={() => setShowOptions(false)}
+                            >
+                                <div
+                                    className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[85vh] overflow-y-auto"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 sticky top-0">
+                                        <h2 className="text-lg font-bold text-gray-900">Routing Preferences</h2>
+                                        <button
+                                            onClick={() => setShowOptions(false)}
+                                            className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500"
+                                        >
+                                            <X className="w-5 h-5" />
+                                        </button>
+                                    </div>
+                                    <div className="p-3 space-y-1">
                                             <div className="px-2 pt-1 pb-2 mb-1 border-b border-gray-100">
                                                 <div className="text-[11px] font-semibold text-gray-500 mb-1 flex items-center gap-1.5">
                                                     <HomeIcon className="w-3.5 h-3.5 text-indigo-500" /> Start Address
@@ -1252,11 +1275,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                                 />
                                                 <p className="text-xs text-gray-500 mt-2">Sweeps streets up to this far past a drawn Area/Lasso box, not just what&apos;s inside it — can add distance to the route</p>
                                             </div>
-                                        </div>
                                     </div>
-                                </>
-                            )}
-                        </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
@@ -1331,12 +1353,12 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             </button>
                         </>
                     )}
-                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0) && (
+                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
                         <button
                             onClick={clearPoints}
                             className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
                         >
-                            {(route || selectionBoxes.length > 0) ? 'Start Over' : 'Clear Workspace'}
+                            {(route || selectionBoxes.length > 0 || selectionPolygons.length > 0) ? 'Start Over' : 'Clear Workspace'}
                         </button>
                     )}
                     <button
@@ -1519,10 +1541,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         </>
                     )}
 
-                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0) && (
+                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
                         <button
                             onClick={clearPoints}
-                            title={(route || selectionBoxes.length > 0) ? 'Start Over' : 'Clear Workspace'}
+                            title={(route || selectionBoxes.length > 0 || selectionPolygons.length > 0) ? 'Start Over' : 'Clear Workspace'}
                             className="flex items-center justify-center min-h-[44px] min-w-[44px] px-2 py-2 bg-white border border-red-200 rounded-md text-red-600 hover:bg-red-50 transition-all shrink-0"
                         >
                             <Eraser className="w-4 h-4" />
