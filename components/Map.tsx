@@ -18,6 +18,37 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+// Cached per (color, pending) combo instead of rebuilt on every render — a fresh
+// L.divIcon each render makes react-leaflet call marker.setIcon() on every update,
+// which can collide with Leaflet's own drag-cleanup (finishDrag) and throw.
+const pointMarkerIconCache = new globalThis.Map<string, L.DivIcon>();
+function getPointMarkerIcon(color: string, pending: boolean): L.DivIcon {
+    const key = `${color}|${pending}`;
+    let icon = pointMarkerIconCache.get(key);
+    if (!icon) {
+        icon = L.divIcon({
+            className: 'custom-point-marker',
+            html: `<div style="
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 14px;
+                height: 14px;
+                background: ${color};
+                border: 2px solid white;
+                border-radius: 50%;
+                box-shadow: 0 0 4px rgba(0,0,0,0.3);
+                ${pending ? 'animation: pulse 1s infinite;' : ''}
+            "></div>`,
+            iconSize: [32, 32],
+            iconAnchor: [16, 16],
+        });
+        pointMarkerIconCache.set(key, icon);
+    }
+    return icon;
+}
+
 interface MapProps {
     bbox: { south: number; west: number; north: number; east: number } | null;
     onBBoxChange: (bbox: { south: number; west: number; north: number; east: number }) => void;
@@ -902,20 +933,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     const isLast = idx === selectedPoints.length - 1 && (selectionBoxes.length === 0 || isPostAreaPoint);
                     const color = isFirst ? '#10B981' : (isLast ? '#EF4444' : '#3B82F6');
 
-                    const markerIcon = L.divIcon({
-                        className: 'custom-point-marker',
-                        html: `<div style="
-                            width: 14px; 
-                            height: 14px; 
-                            background: ${color}; 
-                            border: 2px solid white; 
-                            border-radius: 50%; 
-                            box-shadow: 0 0 4px rgba(0,0,0,0.3);
-                            ${point.status === 'pending' ? 'animation: pulse 1s infinite;' : ''}
-                        "></div>`,
-                        iconSize: [14, 14],
-                        iconAnchor: [7, 7],
-                    });
+                    // Visible dot stays 14px, but the icon (and thus the draggable/clickable
+                    // hit area) is padded out to 32px — the 14px target was too small to
+                    // reliably grab with a real mouse among dense, overlapping streets.
+                    const markerIcon = getPointMarkerIcon(color, point.status === 'pending');
 
                     return (
                         <Marker
@@ -932,13 +953,27 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                                 dragend: (e: any) => {
                                     const marker = e.target;
                                     const position = marker.getLatLng();
-                                    onPointMove(idx, { lat: position.lat, lon: position.lng });
-                                    onPointMoveEnd?.();
+                                    // Defer past this tick — Leaflet's own drag-cleanup (finishDrag)
+                                    // is still unwinding here, and a same-tick icon swap (from the
+                                    // resulting status: 'pending' re-render) re-enters it on a stale
+                                    // internal reference and throws inside leaflet-src.js.
+                                    setTimeout(() => {
+                                        onPointMove(idx, { lat: position.lat, lon: position.lng });
+                                        onPointMoveEnd?.();
+                                    }, 0);
                                 },
                                 contextmenu: (e: any) => {
                                     L.DomEvent.stopPropagation(e);
                                     L.DomEvent.preventDefault(e);
-                                    onPointDelete?.(idx);
+                                    const marker = e.target;
+                                    const container = L.DomUtil.create('div', 'waypoint-popup');
+                                    const btn = L.DomUtil.create('button', 'waypoint-popup-delete', container);
+                                    btn.textContent = 'Delete Waypoint';
+                                    btn.onclick = () => {
+                                        onPointDelete?.(idx);
+                                        marker.closePopup();
+                                    };
+                                    marker.bindPopup(container, { closeButton: false, className: 'waypoint-context-popup', offset: [0, -6] }).openPopup();
                                 },
                             }}
                         />
@@ -1086,6 +1121,28 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 }
                 .leaflet-container .leaflet-marker-icon.leaflet-interactive:active {
                     cursor: grabbing !important;
+                }
+                .waypoint-context-popup .leaflet-popup-content-wrapper {
+                    padding: 0;
+                    border-radius: 6px;
+                }
+                .waypoint-context-popup .leaflet-popup-content {
+                    margin: 0;
+                }
+                .waypoint-context-popup .leaflet-popup-tip {
+                    display: none;
+                }
+                .waypoint-popup-delete {
+                    display: block;
+                    padding: 8px 14px;
+                    color: #DC2626;
+                    font-size: 13px;
+                    font-weight: 600;
+                    white-space: nowrap;
+                    cursor: pointer;
+                }
+                .waypoint-popup-delete:hover {
+                    background: #FEF2F2;
                 }
             `}</style>
         </div>
