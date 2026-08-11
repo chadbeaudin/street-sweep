@@ -9,9 +9,10 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const RIDDEN_VERSION = 1;
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
-// Guard against launching a giant precompute against public Overpass. Raise this
-// once a full-coverage self-hosted Overpass is in place (OVERPASS_URL).
-const MAX_TILES = Number(process.env.RIDDEN_MAX_TILES ?? 500);
+// Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has
+// no external rate limit, so this is generous — it exists to catch pathological
+// cases (corrupt data, a global-spanning footprint), not typical riders.
+const MAX_TILES = Number(process.env.RIDDEN_MAX_TILES ?? 5000);
 
 interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
 
