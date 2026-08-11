@@ -163,6 +163,8 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     }, [isOpen, riddenRoads, stravaCredentials]);
 
     const [ftpReadings, setFtpReadings] = useState<FtpReading[] | null>(null);
+    const [showFtpDetail, setShowFtpDetail] = useState(false);
+    useEffect(() => { if (!isOpen) setShowFtpDetail(false); }, [isOpen]);
 
     useEffect(() => {
         if (!isOpen || !stravaCredentials?.refreshToken) return;
@@ -388,9 +390,33 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                             {ftpReadings && ftpReadings.length > 0 && (() => {
                                 const latest = ftpReadings[ftpReadings.length - 1];
                                 const chartData = ftpReadings.map(r => ({ ...r, label: new Date(r.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }));
+
+                                if (!showFtpDetail) {
+                                    return (
+                                        <button
+                                            onClick={() => setShowFtpDetail(true)}
+                                            className="w-full flex items-center gap-4 bg-gray-50 border border-gray-100 rounded-xl p-3 hover:bg-gray-100 transition-colors text-left"
+                                        >
+                                            <div className="w-9 h-9 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                                                <Zap className="w-4.5 h-4.5 text-indigo-600" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">FTP</div>
+                                                <div className="text-xl font-bold text-gray-900 tabular-nums leading-none mt-0.5">{latest.value}<span className="text-sm font-medium text-gray-400 ml-1">w</span></div>
+                                            </div>
+                                            <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                                        </button>
+                                    );
+                                }
+
                                 return (
                                     <div>
-                                        <h3 className="text-sm font-semibold text-gray-700 mb-3">FTP</h3>
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <button onClick={() => setShowFtpDetail(false)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                            <h3 className="text-sm font-semibold text-gray-700">FTP</h3>
+                                        </div>
                                         <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                                             <div className="flex items-center gap-4 mb-3">
                                                 <div className="w-9 h-9 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
