@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X, Loader2, MapPin, RefreshCw, ChevronDown, ChevronRight, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route } from 'lucide-react';
+import { X, Loader2, MapPin, RefreshCw, ChevronDown, ChevronRight, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route, Zap } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface CityStats {
     name: string;
@@ -79,6 +80,19 @@ function itemsForStep(bs: BikingGeographies, step: DrillStep): { name: string; c
         .map(ci => ({ name: ci.name, country: ci.country, state: ci.state, county: ci.county ?? undefined }));
 }
 
+interface FtpReading {
+    value: number;
+    date: string;
+    activityId: number;
+}
+
+function formatDaysAgo(dateIso: string): string {
+    const days = Math.floor((Date.now() - new Date(dateIso).getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 0) return 'today';
+    if (days === 1) return '1 day ago';
+    return `${days} days ago`;
+}
+
 function formatAge(refreshedAt?: string): string | null {
     if (!refreshedAt) return null;
     const ms = Date.now() - new Date(refreshedAt).getTime();
@@ -147,6 +161,36 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             if (pollTimer) clearTimeout(pollTimer);
         };
     }, [isOpen, riddenRoads, stravaCredentials]);
+
+    const [ftpReadings, setFtpReadings] = useState<FtpReading[] | null>(null);
+
+    useEffect(() => {
+        if (!isOpen || !stravaCredentials?.refreshToken) return;
+        let cancelled = false;
+        let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const fetchOnce = async () => {
+            try {
+                const res = await fetch('/api/ftp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ stravaCredentials })
+                });
+                const data = await res.json();
+                if (cancelled || data.error) return;
+                setFtpReadings(data.readings ?? []);
+                if ((data.computing || data.refreshing) && !cancelled) {
+                    pollTimer = setTimeout(fetchOnce, 5000);
+                }
+            } catch { /* non-critical, leave previous readings in place */ }
+        };
+        fetchOnce();
+
+        return () => {
+            cancelled = true;
+            if (pollTimer) clearTimeout(pollTimer);
+        };
+    }, [isOpen, stravaCredentials]);
 
     if (!isOpen) return null;
 
@@ -340,6 +384,50 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     })()}
                                 </div>
                             )}
+
+                            {ftpReadings && ftpReadings.length > 0 && (() => {
+                                const latest = ftpReadings[ftpReadings.length - 1];
+                                const chartData = ftpReadings.map(r => ({ ...r, label: new Date(r.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }));
+                                return (
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-gray-700 mb-3">FTP</h3>
+                                        <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                                            <div className="flex items-center gap-4 mb-3">
+                                                <div className="w-9 h-9 rounded-lg bg-indigo-100 flex items-center justify-center flex-shrink-0">
+                                                    <Zap className="w-4.5 h-4.5 text-indigo-600" />
+                                                </div>
+                                                <div>
+                                                    <div className="text-2xl font-bold text-gray-900 tabular-nums leading-none">{latest.value}<span className="text-sm font-medium text-gray-400 ml-1">w</span></div>
+                                                    <div className="text-xs text-gray-500 mt-1">{new Date(latest.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} · {formatDaysAgo(latest.date)}</div>
+                                                </div>
+                                            </div>
+                                            {chartData.length > 1 && (
+                                                <>
+                                                    <div className="h-32">
+                                                        <ResponsiveContainer width="100%" height="100%">
+                                                            <LineChart data={chartData} margin={{ top: 4, right: 8, left: 4, bottom: 0 }}>
+                                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+                                                                <XAxis dataKey="label" tick={false} axisLine={false} tickLine={false} />
+                                                                <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} axisLine={false} tickLine={false} width={32} domain={['dataMin - 10', 'dataMax + 10']} />
+                                                                <Tooltip
+                                                                    formatter={(value?: number) => [`${value ?? 0}w`, 'FTP']}
+                                                                    contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #E5E7EB' }}
+                                                                />
+                                                                <Line type="monotone" dataKey="value" stroke="#4F46E5" strokeWidth={2} dot={{ r: 3, fill: '#4F46E5', strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                                                            </LineChart>
+                                                        </ResponsiveContainer>
+                                                    </div>
+                                                    <div className="flex justify-between px-1 mt-1">
+                                                        {chartData.map((r, i) => (
+                                                            <span key={i} className="text-[10px] text-gray-400">{r.label}</span>
+                                                        ))}
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
 
                             <div>
                                 <div className="flex items-center justify-between mb-3">

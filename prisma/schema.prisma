@@ -80,3 +80,11 @@ model StravaActivityCache {
 
   @@map("strava_activity_cache")
 }
+
+model FtpReadingCache {
+  athleteId   String   @id
+  readings    Json
+  refreshedAt DateTime @default(now())
+
+  @@map("ftp_reading_cache")
+}

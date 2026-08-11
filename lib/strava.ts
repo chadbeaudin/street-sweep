@@ -2,6 +2,7 @@ import polyline from '@mapbox/polyline';
 import { isBikingActivity } from './stats';
 import { haversineM } from './geometry';
 import { prisma } from './prisma';
+import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -30,6 +31,7 @@ export interface StravaActivity {
     total_elevation_gain?: number; // meters; Strava returns 0 if unknown
     type: string;
     sport_type?: string;
+    comment_count?: number;
 }
 
 export interface RiddenActivities {
@@ -240,4 +242,44 @@ export async function forceSyncStravaActivities(creds?: { clientId?: string; cli
         create: { athleteId, activities: activities as any, syncedAt: new Date() },
         update: { activities: activities as any, syncedAt: new Date() },
     });
+}
+
+// Scans the athlete's own comments on their activities for FTP mentions (#76).
+// The activity list already carries comment_count, so only activities that
+// actually have comments cost an extra API call. Activities named "FTP ..."
+// (e.g. "FTP Test") also get their full description checked — that field only
+// comes back from the per-activity detail endpoint, so it's reserved for
+// name-matched activities to avoid one detail call per activity in the history.
+export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<FtpReading[]> {
+    const accessToken = await getStravaAccessToken(creds);
+    const activities = await getCachedOrFetchActivities(creds);
+    const authHeaders = { Authorization: `Bearer ${accessToken}` };
+
+    const readings: FtpReading[] = [];
+    for (const activity of activities) {
+        const nameSignalsFtp = /ftp/i.test(activity.name);
+
+        if (nameSignalsFtp) {
+            const detailRes = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}`, { headers: authHeaders });
+            if (detailRes.ok) {
+                const detail = await detailRes.json() as { description?: string };
+                if (detail.description) {
+                    const value = parseFtpFromNamedActivityComment(detail.description);
+                    if (value !== null) readings.push({ value, date: activity.start_date, activityId: activity.id });
+                }
+            }
+        }
+
+        if ((activity.comment_count ?? 0) === 0) continue;
+        const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}/comments`, { headers: authHeaders });
+        if (!res.ok) continue;
+        const comments = await res.json() as { text: string }[];
+        for (const comment of comments) {
+            const value = nameSignalsFtp
+                ? parseFtpFromNamedActivityComment(comment.text)
+                : parseFtpFromComment(comment.text);
+            if (value !== null) readings.push({ value, date: activity.start_date, activityId: activity.id });
+        }
+    }
+    return readings.sort((a, b) => a.date.localeCompare(b.date));
 }
