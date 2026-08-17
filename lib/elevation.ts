@@ -56,8 +56,11 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
         totalMiles += distance(point(coordinates[i - 1]), point(coordinates[i]), { units: 'miles' });
     }
 
-    const pointsPerMile = 200; // Doubled from 99 for more granular hover tracking
-    let targetPoints = Math.max(50, Math.min(1000, Math.round(totalMiles * pointsPerMile)));
+    const pointsPerMile = 200;
+    // Cap doubled to 2000 — for routes long enough to hit it, this was the actual
+    // limiter on hover granularity (not pointsPerMile), e.g. a 50mi route was
+    // capped to ~20 pts/mile (~264ft between hover samples) regardless of this rate.
+    let targetPoints = Math.max(50, Math.min(2000, Math.round(totalMiles * pointsPerMile)));
     targetPoints = Math.min(targetPoints, coordinates.length);
 
     const sampledCoords: [number, number][] = [];
