@@ -259,10 +259,21 @@ export class StreetGraph {
 
                         let dist = this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon);
                         // Multiply distance for avoided roads to discourage their use in routing.
-                        // trunk: 20x — at-grade crossings are short; we just want to prefer alternatives.
-                        // trunk_link/motorway_link: 50x — actual ramps cyclists should never ride.
+                        // This is a soft penalty, not a hard block — findPath/findClosestTarget
+                        // weight by distance without excluding isAvoided links, so a route that
+                        // genuinely needs a trunk segment (e.g. pins dropped directly on one)
+                        // still uses it; it's just deprioritized when a real alternative exists.
+                        // trunk: 12x with "Avoid Highways" on (prefer alternatives), 2x with it
+                        // off (still nudge away from at-grade highway crossings, but let a
+                        // direct route use it freely).
+                        // trunk_link/motorway_link (on/off ramps): same idea — 30x by default
+                        // so a route doesn't wander onto one for no reason, but only 5x with
+                        // "Avoid Highways" off so a route that actually needs the ramp (e.g. to
+                        // reach a trunk road pins were dropped on) can still take it.
                         if (highway === 'trunk') {
-                            dist *= 20;
+                            dist *= options?.avoidHighways ? 12 : 2;
+                        } else if (highway === 'motorway_link' || highway === 'trunk_link') {
+                            dist *= options?.avoidHighways ? 30 : 5;
                         } else if (isAvoided) {
                             dist *= 50;
                         }

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { fetchCyclingRiddenRoads, resolveAthleteId } from '@/lib/strava';
 import { dedupeRiddenRoads } from '@/lib/riddenRoads';
-import { OSMWay } from '@/lib/types';
+import { roadsFromOSM } from '@/lib/roadsFromOSM';
 import { prisma } from '@/lib/prisma';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -15,23 +15,6 @@ const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 const MAX_TILES = Number(process.env.RIDDEN_MAX_TILES ?? 5000);
 
 interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
-
-function roadsFromOSM(data: { elements: any[] }): [number, number][][] {
-    const nodeMap = new Map<number, [number, number]>();
-    for (const el of data.elements) if (el.type === 'node') nodeMap.set(el.id, [el.lat, el.lon]);
-    const roads: [number, number][][] = [];
-    for (const el of data.elements) {
-        if (el.type !== 'way') continue;
-        const way = el as OSMWay;
-        const hw = way.tags?.highway;
-        if (hw === 'motorway' || hw === 'trunk' || hw === 'motorway_link' || hw === 'trunk_link') continue;
-        let path: [number, number][];
-        if (way.geometry) path = way.geometry.map(p => [p.lat, p.lon]);
-        else { path = []; for (const nid of way.nodes ?? []) { const c = nodeMap.get(nid); if (c) path.push(c); } }
-        if (path.length > 1) roads.push(path);
-    }
-    return roads;
-}
 
 const REFRESHING = new Set<string>();
 

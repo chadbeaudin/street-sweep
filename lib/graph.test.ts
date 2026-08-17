@@ -375,6 +375,107 @@ describe('StreetGraph', () => {
         expect(result[result.length - 1].lat).toBe(0.1);
         expect(result[result.length - 1].lon).toBe(0.1);
     });
+
+    test('trunk penalty is 12x with avoidHighways on, 2x with it off', () => {
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.01 },
+                { type: 'way', id: 300, nodes: [1, 2], tags: { highway: 'trunk' } }
+            ]
+        };
+
+        const avoiding = new StreetGraph();
+        avoiding.buildFromOSM(mockData, null, { avoidHighways: true });
+        const baseDist = avoiding.graph.getLink('1', '2')!.data.weight / 12;
+
+        const notAvoiding = new StreetGraph();
+        notAvoiding.buildFromOSM(mockData, null, { avoidHighways: false });
+
+        expect(avoiding.graph.getLink('1', '2')!.data.weight).toBeCloseTo(baseDist * 12, 3);
+        expect(notAvoiding.graph.getLink('1', '2')!.data.weight).toBeCloseTo(baseDist * 2, 3);
+    });
+
+    test('trunk is still traversable (not hard-blocked) when routing directly between two points on it', () => {
+        // Trunk road 1-2-3, with a much longer residential detour 1-4-5-3 as the "alternative".
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0.05, lon: 0 },
+                { type: 'node', id: 5, lat: 0.05, lon: 0.002 },
+                { type: 'way', id: 400, nodes: [1, 2, 3], tags: { highway: 'trunk' } },
+                { type: 'way', id: 401, nodes: [1, 4, 5, 3], tags: { highway: 'residential' } }
+            ]
+        };
+
+        const graph = new StreetGraph();
+        graph.buildFromOSM(mockData, null, { avoidHighways: false });
+        const result = graph.findPath('1', '3');
+
+        expect(result.length).toBeGreaterThan(0);
+        const usedTrunk = result.some(p => graph.graph.getLink(p.id, p.idNext)?.data.highway === 'trunk');
+        expect(usedTrunk).toBe(true);
+    });
+
+    test('ramp (motorway_link/trunk_link) penalty is 30x with avoidHighways on, 5x with it off', () => {
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.01 },
+                { type: 'way', id: 500, nodes: [1, 2], tags: { highway: 'trunk_link' } }
+            ]
+        };
+
+        const avoiding = new StreetGraph();
+        avoiding.buildFromOSM(mockData, null, { avoidHighways: true });
+        const baseDist = avoiding.graph.getLink('1', '2')!.data.weight / 30;
+
+        const notAvoiding = new StreetGraph();
+        notAvoiding.buildFromOSM(mockData, null, { avoidHighways: false });
+
+        expect(avoiding.graph.getLink('1', '2')!.data.weight).toBeCloseTo(baseDist * 30, 3);
+        expect(notAvoiding.graph.getLink('1', '2')!.data.weight).toBeCloseTo(baseDist * 5, 3);
+    });
+
+    test('a route can use an on-ramp to actually reach a trunk road when avoidHighways is off', () => {
+        // Local road 1-2, ramp 2-3 (trunk_link) onto trunk 3-4, vs. a much longer detour 1-5-6-4.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0, lon: 0.003 },
+                { type: 'node', id: 5, lat: 0.05, lon: 0 },
+                { type: 'node', id: 6, lat: 0.05, lon: 0.003 },
+                { type: 'way', id: 600, nodes: [1, 2], tags: { highway: 'residential' } },
+                { type: 'way', id: 601, nodes: [2, 3], tags: { highway: 'trunk_link' } },
+                { type: 'way', id: 602, nodes: [3, 4], tags: { highway: 'trunk' } },
+                { type: 'way', id: 603, nodes: [1, 5, 6, 4], tags: { highway: 'residential' } }
+            ]
+        };
+
+        const graph = new StreetGraph();
+        graph.buildFromOSM(mockData, null, { avoidHighways: false });
+        const result = graph.findPath('1', '4');
+
+        expect(result.length).toBeGreaterThan(0);
+        const usedRamp = result.some(p => graph.graph.getLink(p.id, p.idNext)?.data.highway === 'trunk_link');
+        expect(usedRamp).toBe(true);
+    });
 });
 
 describe('Point-in-Polygon Functions', () => {
