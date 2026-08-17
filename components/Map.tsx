@@ -8,6 +8,7 @@ import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
 import { dedupeRiddenRoads } from '@/lib/riddenRoads';
 import { bboxFromLatLngs } from '@/lib/selectionBox';
+import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -697,42 +698,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { normalSegments: normal, constructionSegments: construction, hasConstruction: hasAnyConstruction };
     }, [route]);
 
-    const buildChevronMarkers = React.useCallback((pts: [number, number][]) => {
-        if (pts.length < 2) return [];
-        const SPACING_M = 400;
-        const markers: { lat: number; lon: number; angle: number }[] = [];
-        const toRad = (d: number) => d * Math.PI / 180;
-        const toDeg = (r: number) => r * 180 / Math.PI;
-        const haversineM = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-            const R = 6371000;
-            const dLat = toRad(lat2 - lat1); const dLon = toRad(lon2 - lon1);
-            const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        };
-        const bearing = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-            const dLon = toRad(lon2 - lon1);
-            const y = Math.sin(dLon) * Math.cos(toRad(lat2));
-            const x = Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) - Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
-            return (toDeg(Math.atan2(y, x)) + 360) % 360;
-        };
-        let distSinceLastChevron = SPACING_M / 2;
-        for (let i = 1; i < pts.length; i++) {
-            const [lon1, lat1] = pts[i - 1];
-            const [lon2, lat2] = pts[i];
-            const segLen = haversineM(lat1, lon1, lat2, lon2);
-            let remaining = segLen; let traveled = 0;
-            while (distSinceLastChevron + remaining >= SPACING_M) {
-                const overshoot = SPACING_M - distSinceLastChevron;
-                traveled += overshoot; remaining -= overshoot; distSinceLastChevron = 0;
-                const frac = traveled / segLen;
-                markers.push({ lat: lat1 + (lat2 - lat1) * frac, lon: lon1 + (lon2 - lon1) * frac, angle: bearing(lat1, lon1, lat2, lon2) });
-            }
-            distSinceLastChevron += remaining;
-        }
-        return markers;
-    }, []);
+    const buildChevronMarkers = React.useCallback(buildChevronMarkersImpl, []);
 
-    // Chevron markers: one every ~150m along the full generated route
+    // Chevron markers: one every ~400m along the full generated route,
+    // spatially de-duplicated (see buildChevronMarkers) for zigzagging routes.
     const chevronMarkers = React.useMemo(() => {
         if (!route || route.length < 2) return [];
         return buildChevronMarkers(route.map(p => [p[0], p[1]] as [number, number]));
