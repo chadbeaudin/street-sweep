@@ -453,8 +453,13 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               // Calibrated to the ways-only query above (~500k ways/sq deg urban);
               // see minElements above. Rejecting valid responses here cascades into
               // circuit-breaker failures on healthy mirrors and slow API fallbacks.
+              // The density floor assumes urban road grids — it's wrong for legitimately
+              // sparse/rural terrain (e.g. high desert), so only apply it to public
+              // mirrors; our self-hosted instance (OVERPASS_URL) is full-coverage and
+              // authoritative, so a low count there means the area really is sparse.
+              const isSelfHosted = endpoint === process.env.OVERPASS_URL;
               const sparseFloor = Math.min(500, Math.round(bboxArea * 100_000));
-              if (data.elements.length === 0 || (bboxArea > 0.003 && data.elements.length < sparseFloor)) {
+              if (data.elements.length === 0 || (!isSelfHosted && bboxArea > 0.003 && data.elements.length < sparseFloor)) {
                 console.warn(`${ts()} Mirror ${endpoint} returned ${data.elements.length} elements (floor ${sparseFloor}). Trying next mirror...`);
                 recordFailure(endpoint);
                 continue;

@@ -72,3 +72,32 @@ describe('fetchOSMData robustness', () => {
         expect(data).toEqual(mockResponse);
     });
 });
+
+describe('fetchOSMData sparse-floor trust for self-hosted Overpass', () => {
+    const selfHostedUrl = 'https://self-hosted.test/api/interpreter';
+    // A large-enough bbox (> 0.003 sq deg) to trigger the sparse-floor guard.
+    const largeBBox = { south: 44.05, west: -121.35, north: 44.15, east: -121.15 };
+
+    beforeEach(() => {
+        jest.resetModules();
+        process.env.OVERPASS_URL = selfHostedUrl;
+        global.fetch = jest.fn();
+    });
+
+    afterEach(() => {
+        delete process.env.OVERPASS_URL;
+        jest.restoreAllMocks();
+    });
+
+    it('trusts a low-element response from the self-hosted mirror instead of cascading to public mirrors', async () => {
+        const { fetchOSMData: fetchWithSelfHosted, resetCircuitBreakers: reset } = require('./overpass');
+        reset();
+
+        const sparseButRealResponse = { elements: [{ type: 'way', id: 1, nodes: [] }] }; // 1 elem, well under any urban floor
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, json: async () => sparseButRealResponse });
+
+        const data = await fetchWithSelfHosted(largeBBox);
+        expect(data).toEqual(sparseButRealResponse);
+        expect(global.fetch).toHaveBeenCalledTimes(1); // no cascade to other mirrors
+    });
+});
