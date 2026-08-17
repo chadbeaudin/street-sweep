@@ -7,7 +7,7 @@
 
 const M_PER_DEG_LAT = 111320;
 const TOLERANCE_M = 20;      // how close a GPS point must be to a segment
-const MIN_COVERED_M = 8;     // min traversed length for a segment to count (kills intersection spurs)
+const MIN_COVERED_M = 11;    // min traversed length for a segment to count (kills intersection spurs)
 const STEP_M = 12;           // densify stride so sparse GPS points don't skip segments
 const GRID = 0.005;          // ~500m spatial cells
 
