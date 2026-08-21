@@ -88,6 +88,24 @@ export async function POST(request: Request) {
             east: maxLon + BUFFER
         };
 
+        // Pure point-to-point routing (no drawn area) fetches the ENTIRE bounding
+        // rectangle between the points, not just a corridor along the route — so two
+        // points a long distance apart create a bbox that can overwhelm Overpass
+        // (times out on every mirror). Fail fast with a specific, accurate message
+        // instead of a multi-minute mirror-timeout cascade ending in a vague one.
+        // Capped at the same 0.5° bbox limit lib/overpass.ts already enforces as a
+        // hard ceiling, so this doesn't reject anything that could succeed anyway.
+        const hasDrawnArea = (selectionBoxes && selectionBoxes.length > 0) || (selectionPolygons && selectionPolygons.length > 0);
+        if (!hasDrawnArea) {
+            const latSpan = bufferedBbox.north - bufferedBbox.south;
+            const lonSpan = bufferedBbox.east - bufferedBbox.west;
+            const MAX_POINT_ROUTE_SPAN_DEG = 0.5; // ~55km — matches lib/overpass.ts's hard cap
+            if (latSpan > MAX_POINT_ROUTE_SPAN_DEG || lonSpan > MAX_POINT_ROUTE_SPAN_DEG) {
+                console.warn(`${ts()} Point-to-point span too large (${latSpan.toFixed(3)}x${lonSpan.toFixed(3)}), failing fast.`);
+                return NextResponse.json({ error: 'Those points are too far apart to route directly — try breaking the route into shorter segments.' }, { status: 400 });
+            }
+        }
+
         console.log(`${ts()} Fetching OSM data for buffered bbox:`, bufferedBbox);
         let osmData;
         try {

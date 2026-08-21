@@ -54,4 +54,25 @@ describe('POST /api/generate', () => {
         expect(data.degraded).toBe(true);
         expect(Object.keys(data)).toEqual(expect.arrayContaining(['error', 'degraded']));
     });
+
+    it('fails fast with a specific message for point-to-point routing across a long distance, without calling fetchOSMData', async () => {
+        // Two points ~70km apart (> 0.5° span), no drawn area — should be rejected before any OSM fetch.
+        await POST(makeRequest({
+            bbox: { north: 39.03, south: 39.01, east: -104.69, west: -104.71 },
+            manualRoute: [[-104.70, 39.02], [-104.00, 39.70]],
+        }));
+        const [data, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(400);
+        expect(data.error).toMatch(/too far apart/i);
+        expect(mockedFetchOSM).not.toHaveBeenCalled();
+    });
+
+    it('does not fast-fail a large drawn-area selection (only applies to pure point-to-point)', async () => {
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        await POST(makeRequest({
+            bbox: { north: 39.03, south: 39.01, east: -104.69, west: -104.71 },
+            selectionBoxes: [{ north: 39.30, south: 39.02, east: -104.40, west: -104.70 }],
+        }));
+        expect(mockedFetchOSM).toHaveBeenCalled();
+    });
 });
