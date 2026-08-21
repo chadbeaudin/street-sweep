@@ -1550,9 +1550,14 @@ export class StreetGraph {
             return distToNatural <= NATURAL_ENDPOINT_SEARCH_RADIUS_M ? naturalNearest : literalNearest;
         };
 
-        // Only the endpoint gets natural-node preference — startPoint is always a real
-        // user-chosen location (approach start, home address, explicit pin) and should
-        // snap to the literal nearest node.
+        // Only the endpoint gets natural-node preference. Tried applying this to
+        // startPoint too (reasoning: the mixed-mode entryBridge already walks a real
+        // path from the user's pin to wherever this solve's start node ends up, so
+        // moving the start seemed safe) — but that backfires: the entry bridge snaps
+        // to the LITERAL nearest node (separate code, not natural-aware), so moving
+        // the internal start elsewhere forces the bridge to detour back through the
+        // literal entry node's own edges, creating a fresh backtrack right at the
+        // entry junction instead of removing one. See #64 discussion.
         const startNode = startPoint ? findEndpointNode(startPoint, false) : null;
         const endNode = endPoint ? findEndpointNode(endPoint, preferNaturalEndpoint) : null;
 
