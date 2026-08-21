@@ -46,4 +46,13 @@ describe('buildChevronMarkers', () => {
         expect(buildChevronMarkers([])).toEqual([]);
         expect(buildChevronMarkers([[0, 0]])).toEqual([]);
     });
+
+    it('densityScale > 1 roughly halves chevron count (zoomed-out view)', () => {
+        const lengthM = 4000;
+        const pts: [number, number][] = [[0, 0], [0, metersToLatDeg(lengthM)]];
+        const normal = buildChevronMarkers(pts, 1);
+        const zoomedOut = buildChevronMarkers(pts, 2);
+        expect(zoomedOut.length).toBeLessThan(normal.length);
+        expect(zoomedOut.length).toBeCloseTo(normal.length / 2, 0);
+    });
 });

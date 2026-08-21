@@ -10,10 +10,14 @@ export interface ChevronMarker {
 // an earlier chevron in map space. Skip a candidate that's too close to one
 // already placed so density reflects the physical area, not how many times
 // the route happened to pass through it.
-export function buildChevronMarkers(pts: [number, number][]): ChevronMarker[] {
+// densityScale multiplies both the along-path spacing and the spatial dedup
+// gap — pass > 1 to thin chevrons out further when zoomed out (a fixed ground
+// spacing looks denser and denser as more of it fits on screen), and 1 at the
+// zoom level the base spacing was tuned for.
+export function buildChevronMarkers(pts: [number, number][], densityScale = 1): ChevronMarker[] {
     if (pts.length < 2) return [];
-    const SPACING_M = 400;
-    const MIN_SPATIAL_GAP_M = 120;
+    const SPACING_M = 400 * densityScale;
+    const MIN_SPATIAL_GAP_M = 120 * densityScale;
     const markers: ChevronMarker[] = [];
     const toRad = (d: number) => d * Math.PI / 180;
     const toDeg = (r: number) => r * 180 / Math.PI;

@@ -133,9 +133,16 @@ function GeolocateOnMount() {
     return null;
 }
 
-function MapRefCapture({ mapRef }: { mapRef: React.MutableRefObject<L.Map | null> }) {
+function MapRefCapture({ mapRef, onZoomChange }: { mapRef: React.MutableRefObject<L.Map | null>, onZoomChange?: (zoom: number) => void }) {
     const map = useMap();
     useEffect(() => { mapRef.current = map; }, [map, mapRef]);
+    useEffect(() => {
+        if (!onZoomChange) return;
+        onZoomChange(map.getZoom());
+        const handler = () => onZoomChange(map.getZoom());
+        map.on('zoomend', handler);
+        return () => { map.off('zoomend', handler); };
+    }, [map, onZoomChange]);
     return null;
 }
 
@@ -463,6 +470,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
+    const [zoom, setZoom] = React.useState(13);
     const selectionStartRef = React.useRef<L.Point | null>(null);
     const isDrawingLassoRef = React.useRef(false);
 
@@ -700,12 +708,19 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
     const buildChevronMarkers = React.useCallback(buildChevronMarkersImpl, []);
 
-    // Chevron markers: one every ~400m along the full generated route,
-    // spatially de-duplicated (see buildChevronMarkers) for zigzagging routes.
+    // Base spacing is tuned for zoom 14 (block-level detail). Each level zoomed
+    // out doubles the ground distance a given screen distance covers, so a fixed
+    // ground spacing reads as denser and denser — scale spacing/dedup-gap to
+    // compensate, roughly halving chevron count per level zoomed out.
+    const CHEVRON_BASE_ZOOM = 14;
+    const chevronDensityScale = Math.min(4, Math.max(1, Math.pow(2, CHEVRON_BASE_ZOOM - zoom)));
+
+    // Chevron markers: one every ~400m (scaled by zoom) along the full generated
+    // route, spatially de-duplicated (see buildChevronMarkers) for zigzagging routes.
     const chevronMarkers = React.useMemo(() => {
         if (!route || route.length < 2) return [];
-        return buildChevronMarkers(route.map(p => [p[0], p[1]] as [number, number]));
-    }, [route, buildChevronMarkers]);
+        return buildChevronMarkers(route.map(p => [p[0], p[1]] as [number, number]), chevronDensityScale);
+    }, [route, buildChevronMarkers, chevronDensityScale]);
 
 
 
@@ -755,7 +770,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 )}
                 <GeolocateOnMount />
                 <InvalidateSizeOnRoute route={route} />
-                <MapRefCapture mapRef={mapRef} />
+                <MapRefCapture mapRef={mapRef} onZoomChange={setZoom} />
 
                 {/* Escape key handler for selection mode */}
                 <SelectionTool onSelectionChange={onSelectionChange} />
