@@ -350,6 +350,50 @@ describe('StreetGraph', () => {
         expect(distFromEntry).toBeGreaterThan(0.001);
     });
 
+    test('#64: mixed-mode area endpoint prefers a nearby natural odd-degree node over the literal-nearest even one, avoiding an artificial backtrack', () => {
+        // Straight line A-B-C: endpoints A and C are naturally odd-degree (1),
+        // interior node B is naturally even-degree (2). The geometric "far corner"
+        // of the drawn box is closer to B than to C, but forcing the open path to
+        // end exactly at B (even) requires an artificial parity fix — duplicating
+        // an edge to create a backtrack — where ending at C (already odd, a
+        // natural terminus) needs none.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },       // A — approach entry, odd
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },   // B — interior, even
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },   // C — far end, odd
+                { type: 'way', id: 10, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+            ]
+        };
+
+        graph.buildFromOSM(mockData);
+
+        const manualRoute: [number, number][] = [
+            [0, -0.001], // approach start, outside the box
+            [0, 0],      // arrives at A
+        ];
+        // Box's far corner (from A) is B's longitude (0.001), not C's (0.002) —
+        // literal-nearest-node would pick B; natural-endpoint search should still
+        // find C within the search radius and prefer it.
+        const selectionBoxes = [{ north: 0.0001, south: -0.0001, east: 0.0011, west: 0 }];
+
+        const result = graph.solveCPP(undefined, undefined, manualRoute, selectionBoxes);
+
+        // No backtrack: the route should visit each of A, B, C exactly once in order
+        // (open path A→B→C), not double back over any edge to fix an artificial
+        // parity requirement at B.
+        const coords = result.map(p => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`);
+        const visitsOfB = coords.filter(c => c === '0.0000,0.0010').length;
+        expect(visitsOfB).toBe(1);
+
+        const end = result[result.length - 1];
+        expect(end.lat).toBeCloseTo(0, 4);
+        expect(end.lon).toBeCloseTo(0.002, 4); // ends at C, not B
+    });
+
     test('rotates circuit to start at startNode', () => {
         // Square 1-2-3-4-1
         const mockData: OverpassResponse = {

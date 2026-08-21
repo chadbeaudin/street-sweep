@@ -1130,7 +1130,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null, boxElasticityMeters = 0): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null, boxElasticityMeters = 0, preferNaturalEndpoint = false): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -1167,11 +1167,11 @@ export class StreetGraph {
                 if (d > maxCornerDist) { maxCornerDist = d; farCorner = c; }
             }
 
-            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters);
+            let areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, true);
             if (areaPath.length === 0) {
                 // All area streets already ridden — re-solve including ridden roads so the
                 // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters);
+                areaPath = this.solveCPP(approachStart, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, true);
             }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
@@ -1517,9 +1517,6 @@ export class StreetGraph {
             }
         });
 
-        const startNode = startPoint ? this.findClosestNode(startPoint.lat, startPoint.lon, reachableNodes) : null;
-        const endNode = endPoint ? this.findClosestNode(endPoint.lat, endPoint.lon, reachableNodes) : null;
-
         const dMap = new Map<string, number>();
         edgesInFinalGraph.forEach(e => {
             dMap.set(e.u, (dMap.get(e.u) || 0) + 1);
@@ -1528,6 +1525,36 @@ export class StreetGraph {
 
         const nodesToFlip = new Set<string>();
         for (const [n, d] of dMap.entries()) if (d % 2 !== 0) nodesToFlip.add(n);
+
+        // A forced endPoint that's a geometric proxy rather than a real user-chosen
+        // point (e.g. the "far corner" of a drawn area in mixed mode — see #64) has no
+        // relationship to the street graph. Snapping it to the literal nearest node
+        // forces that node's parity, which, if it wasn't already a natural odd-degree
+        // node, creates an artificial detour to fix up a junction with no real need to
+        // be a terminus. When preferNaturalEndpoint is set, prefer the nearest node
+        // that's ALREADY odd-degree (a natural candidate to be a trail endpoint) when
+        // one exists reasonably close by, falling back to the literal nearest node
+        // otherwise. Real user-chosen points (explicit pins, home address) should
+        // always snap to the literal nearest node, so this only applies when opted in.
+        const NATURAL_ENDPOINT_SEARCH_RADIUS_M = 400;
+        const findEndpointNode = (point: { lat: number; lon: number }, preferNatural: boolean): string | null => {
+            const literalNearest = this.findClosestNode(point.lat, point.lon, reachableNodes);
+            if (!preferNatural) return literalNearest;
+            const oddReachable = new Set([...nodesToFlip].filter(n => reachableNodes.has(n)));
+            if (oddReachable.size === 0) return literalNearest;
+            const naturalNearest = this.findClosestNode(point.lat, point.lon, oddReachable);
+            if (!naturalNearest) return literalNearest;
+            const naturalNode = this.graph.getNode(naturalNearest);
+            if (!naturalNode) return literalNearest;
+            const distToNatural = this.haversine(point.lat, point.lon, naturalNode.data.lat, naturalNode.data.lon);
+            return distToNatural <= NATURAL_ENDPOINT_SEARCH_RADIUS_M ? naturalNearest : literalNearest;
+        };
+
+        // Only the endpoint gets natural-node preference — startPoint is always a real
+        // user-chosen location (approach start, home address, explicit pin) and should
+        // snap to the literal nearest node.
+        const startNode = startPoint ? findEndpointNode(startPoint, false) : null;
+        const endNode = endPoint ? findEndpointNode(endPoint, preferNaturalEndpoint) : null;
 
         if (startNode && endNode && startNode !== endNode) {
             if (nodesToFlip.has(startNode)) nodesToFlip.delete(startNode); else nodesToFlip.add(startNode);
