@@ -432,6 +432,50 @@ describe('StreetGraph', () => {
         }
     });
 
+    test('#64 (exit side): mixed-mode area targets a real subsequent waypoint instead of an arbitrary geometric corner', () => {
+        // Grid:  A(0,0) - B(0,0.001) - C(0,0.002)
+        //         |            |            |
+        //        D(0.001,0)-E(0.001,0.001)-F(0.001,0.002)
+        // B and E are the only natural odd-degree (3) nodes. Approach enters near A
+        // (top-left). The real 2nd waypoint (endPoint) sits right next to B — the
+        // OPPOSITE side of the grid from the geometric far corner (near F/C), which
+        // the old code would've blindly targeted regardless of where the route
+        // actually needs to go next.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },        // A
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },    // B — odd
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },    // C
+                { type: 'node', id: 4, lat: 0.001, lon: 0 },     // D
+                { type: 'node', id: 5, lat: 0.001, lon: 0.001 }, // E — odd
+                { type: 'node', id: 6, lat: 0.001, lon: 0.002 }, // F
+                { type: 'way', id: 100, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                { type: 'way', id: 101, nodes: [4, 5, 6], tags: { highway: 'residential' } },
+                { type: 'way', id: 102, nodes: [1, 4], tags: { highway: 'residential' } },
+                { type: 'way', id: 103, nodes: [2, 5], tags: { highway: 'residential' } },
+                { type: 'way', id: 104, nodes: [3, 6], tags: { highway: 'residential' } },
+            ]
+        };
+
+        graph.buildFromOSM(mockData);
+
+        const manualRoute: [number, number][] = [[-0.001, 0], [0, 0]]; // approach arrives at A
+        const selectionBoxes = [{ north: 0.0011, south: -0.0001, east: 0.0021, west: -0.0001 }];
+        const realExitTarget = { lat: 0.0001, lon: 0.001 }; // right next to B
+
+        const result = graph.solveCPP(undefined, realExitTarget, manualRoute, selectionBoxes);
+
+        // The route should end near the real exit target (B), not the geometric far
+        // corner on the opposite side of the grid (near C/F).
+        const end = result[result.length - 1];
+        const distToB = Math.hypot(end.lat - 0, end.lon - 0.001);
+        const distToFarCorner = Math.hypot(end.lat - 0.0011, end.lon - 0.0021);
+        expect(distToB).toBeLessThan(distToFarCorner);
+    });
+
     describe('trimBridgeOverlap', () => {
         const p = (lat: number, lon: number) => ({ lat, lon });
 
