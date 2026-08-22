@@ -6,7 +6,7 @@ import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectan
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
-import { dedupeRiddenRoads } from '@/lib/riddenRoads';
+import { dedupeRiddenRoads, combineRiddenOverlay } from '@/lib/riddenRoads';
 import { bboxFromLatLngs } from '@/lib/selectionBox';
 import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 
@@ -491,14 +491,17 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { lat: route[route.length - 1][1], lon: route[route.length - 1][0] };
     }, [route, selectedPoints]);
 
-    // The ridden overlay: prefer the server-precomputed deduped roads (instant,
-    // viewport-independent). Until that arrives, fall back to deduping the roads
-    // currently loaded for the viewport.
+    // The ridden overlay: the server-precomputed deduped roads (instant,
+    // viewport-independent) plus a fresh viewport-local dedupe of stravaRoads.
+    // precomputedRidden is only refreshed on a ~24h timer with no invalidation
+    // hook when new activities sync, so on its own it can hide a ride from a
+    // few hours ago that the client already knows about — unioning both means
+    // the overlay only ever gains coverage as fresher data arrives, never loses it.
     const snappedStravaRoads = React.useMemo(() => {
-        if (precomputedRidden && precomputedRidden.length > 0) return precomputedRidden;
-        if (!stravaRoads || stravaRoads.length === 0) return [];
-        if (!allRoads || allRoads.length === 0) return [];
-        return dedupeRiddenRoads(stravaRoads, allRoads);
+        const fresh = (stravaRoads && stravaRoads.length > 0 && allRoads && allRoads.length > 0)
+            ? dedupeRiddenRoads(stravaRoads, allRoads)
+            : [];
+        return combineRiddenOverlay(precomputedRidden, fresh);
     }, [precomputedRidden, stravaRoads, allRoads]);
 
     // Fit map whenever the route first appears (e.g. after import)

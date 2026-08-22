@@ -103,3 +103,20 @@ export function dedupeRiddenRoads(
     }
     return out;
 }
+
+// Combines the server-precomputed, viewport-independent ridden overlay with a
+// fresh viewport-local dedupe of the client's own Strava data for display.
+// precomputedRidden is only refreshed on a background timer with no
+// invalidation hook when new activities sync, so on its own it can hide a
+// ride from a few hours ago that the client already knows about. Unioning
+// both means the overlay only ever gains coverage as fresher data arrives —
+// it never regresses to hide a road the user just saw rendered.
+export function combineRiddenOverlay(
+    precomputedRidden: [number, number][][] | null | undefined,
+    freshDeduped: [number, number][][]
+): [number, number][][] {
+    if (precomputedRidden && precomputedRidden.length > 0) {
+        return freshDeduped.length > 0 ? [...precomputedRidden, ...freshDeduped] : precomputedRidden;
+    }
+    return freshDeduped;
+}
