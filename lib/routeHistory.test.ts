@@ -1,4 +1,4 @@
-import { RouteSnapshot, pushSnapshot, undo, redo } from './routeHistory';
+import { RouteSnapshot, pushSnapshot, undo, redo, isFirstPointAfterArea } from './routeHistory';
 
 const snap = (over: Partial<RouteSnapshot> = {}): RouteSnapshot => ({
     points: [],
@@ -65,5 +65,22 @@ describe('routeHistory', () => {
     it('redo at the tip is a no-op', () => {
         const { history, index } = pushSnapshot([], -1, snap());
         expect(redo(history, index).snapshot).toBeNull();
+    });
+});
+
+describe('isFirstPointAfterArea', () => {
+    it('is false when no area has been drawn', () => {
+        expect(isFirstPointAfterArea(null, 0)).toBe(false);
+        expect(isFirstPointAfterArea(null, 3)).toBe(false);
+    });
+
+    it('is true exactly for the first point clicked right after the area', () => {
+        // Area was drawn after 2 points (indices 0,1); the 3rd click is index 2.
+        expect(isFirstPointAfterArea(2, 2)).toBe(true);
+    });
+
+    it('is false for points before or after that first post-area point', () => {
+        expect(isFirstPointAfterArea(2, 1)).toBe(false); // still pre-area
+        expect(isFirstPointAfterArea(2, 3)).toBe(false); // second post-area point — steps normally from the first
     });
 });

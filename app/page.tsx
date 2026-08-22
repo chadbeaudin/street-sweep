@@ -16,7 +16,7 @@ import { HowToDialog } from '@/components/HowToDialog';
 import { ExportTipsDialog } from '@/components/ExportTipsDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
-import { RouteSnapshot, undo, redo } from '@/lib/routeHistory';
+import { RouteSnapshot, undo, redo, isFirstPointAfterArea } from '@/lib/routeHistory';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -730,8 +730,11 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
-                // IMPORTANT: Read from ref to get the correct "last point" in the async sequence
-                const lastPoint = tempIdx > 0 ? pointsRef.current[tempIdx - 1] : null;
+                // IMPORTANT: Read from ref to get the correct "last point" in the async sequence.
+                // See isFirstPointAfterArea: skip stepping from the pre-area point when this is
+                // the first point clicked after an area/lasso was drawn.
+                const skipLastPoint = isFirstPointAfterArea(preAreaPointCountRef.current, tempIdx);
+                const lastPoint = (tempIdx > 0 && !skipLastPoint) ? pointsRef.current[tempIdx - 1] : null;
 
                 const stepRes = await fetch('/api/step', {
                     method: 'POST',

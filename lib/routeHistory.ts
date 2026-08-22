@@ -27,3 +27,13 @@ export function redo(history: RouteSnapshot[], index: number): { snapshot: Route
     if (index < history.length - 1) return { snapshot: history[index + 1], index: index + 1 };
     return { snapshot: null, index };
 }
+
+// When a point is clicked right after an area/lasso is drawn, /api/step must
+// NOT be told to path from the point before the area — that ignores the area
+// entirely and produces a real, but wrong, direct road path bypassing it (a
+// visible straight-ish line parallel to the actual route). The server's
+// mixed-mode bridging already connects the area's own end to this point, so
+// it should be treated like a fresh route start (no path segment requested).
+export function isFirstPointAfterArea(preAreaPointCount: number | null, pointIndex: number): boolean {
+    return preAreaPointCount !== null && pointIndex === preAreaPointCount;
+}
