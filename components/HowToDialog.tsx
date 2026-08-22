@@ -73,6 +73,9 @@ const slides = [
                     Connect your Strava account to import all your activities which will be displayed on a single map.
                     StreetSweep will then help you generate optimized routes, previously untraveled by you, with minimal backtracking.
                 </p>
+                <p className="text-gray-500">
+                    This is an open source project. Feel free to submit bugs, request features, or submit a pull request.
+                </p>
                 <div className="flex items-center justify-between pt-3 mt-3 border-t border-gray-100 text-xs text-gray-500">
                     <span className="font-medium">Version {pkg.version}</span>
                     <a
