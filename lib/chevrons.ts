@@ -17,7 +17,11 @@ export interface ChevronMarker {
 export function buildChevronMarkers(pts: [number, number][], densityScale = 1): ChevronMarker[] {
     if (pts.length < 2) return [];
     const SPACING_M = 400 * densityScale;
-    const MIN_SPATIAL_GAP_M = 120 * densityScale;
+    // Raised from 120 — in a genuinely dense grid (small blocks, ~80-100m),
+    // 120m wasn't enough to keep chevrons on adjacent blocks from visually
+    // overlapping on screen, showing up as an overlapping "diamond" of two
+    // opposite-pointing chevrons.
+    const MIN_SPATIAL_GAP_M = 200 * densityScale;
     const markers: ChevronMarker[] = [];
     const toRad = (d: number) => d * Math.PI / 180;
     const toDeg = (r: number) => r * 180 / Math.PI;

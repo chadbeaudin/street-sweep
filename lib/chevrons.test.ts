@@ -27,7 +27,7 @@ describe('buildChevronMarkers', () => {
         }
 
         const markers = buildChevronMarkers(pts);
-        // The bounce points are only 20m apart (well under the 120m dedup gap), so
+        // The bounce points are only 20m apart (well under the 200m dedup gap), so
         // every 400m-interval candidate collapses to a single surviving marker —
         // that collapse is exactly the behavior under test.
         expect(markers.length).toBe(1);
@@ -37,7 +37,7 @@ describe('buildChevronMarkers', () => {
                 const dLat = (markers[i].lat - markers[j].lat) * M_PER_DEG_LAT;
                 const dLon = (markers[i].lon - markers[j].lon) * M_PER_DEG_LAT;
                 const distM = Math.sqrt(dLat * dLat + dLon * dLon);
-                expect(distM).toBeGreaterThanOrEqual(120);
+                expect(distM).toBeGreaterThanOrEqual(200);
             }
         }
     });
