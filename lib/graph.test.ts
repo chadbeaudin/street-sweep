@@ -350,6 +350,66 @@ describe('StreetGraph', () => {
         expect(distFromEntry).toBeGreaterThan(0.001);
     });
 
+    test('mixed mode far-corner target is relative to the point actually entering the area, not the route\'s original first click', () => {
+        // Same 3x3 grid as above, entered at the NW corner (node 1) exactly as
+        // before — but this time the route has an earlier, distant first waypoint
+        // (A) well southeast of the grid before ever reaching the NW entry point.
+        // A sits almost equidistant from every corner, but very slightly closer to
+        // the NW entry itself than to the true diagonal-opposite SE corner —
+        // reproducing a real route shape (start far away, arrive at the area,
+        // sweep it, continue on) where using A instead of the real entry point (B)
+        // as the "far corner" reference picks the corner closest to entry — i.e.
+        // the route loops back near where it came in instead of sweeping away from it.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0.002, lon: 0 },
+                { type: 'node', id: 2, lat: 0.002, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0.002, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0.001, lon: 0 },
+                { type: 'node', id: 5, lat: 0.001, lon: 0.001 },
+                { type: 'node', id: 6, lat: 0.001, lon: 0.002 },
+                { type: 'node', id: 7, lat: 0, lon: 0 },
+                { type: 'node', id: 8, lat: 0, lon: 0.001 },
+                { type: 'node', id: 9, lat: 0, lon: 0.002 },
+                { type: 'way', id: 10, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                { type: 'way', id: 11, nodes: [4, 5, 6], tags: { highway: 'residential' } },
+                { type: 'way', id: 12, nodes: [7, 8, 9], tags: { highway: 'residential' } },
+                { type: 'way', id: 13, nodes: [1, 4, 7], tags: { highway: 'residential' } },
+                { type: 'way', id: 14, nodes: [2, 5, 8], tags: { highway: 'residential' } },
+                { type: 'way', id: 15, nodes: [3, 6, 9], tags: { highway: 'residential' } },
+            ]
+        };
+
+        graph.buildFromOSM(mockData);
+
+        // Full manualRoute: distant first waypoint (A) -> NW entry corner (B, node 1).
+        const manualRoute: [number, number][] = [
+            [0.05, -0.05], // A: the route's very first click, far southeast
+            [0, 0.002],    // arrives at NW corner (node 1) = B, the real area-entry point
+        ];
+        // approachRoute mirrors the real client payload: the walked path up to (and
+        // including) the last pre-area point. Its last entry is what should be used
+        // as the far-corner reference, not manualRoute[0].
+        const approachRoute: [number, number][] = [[0.05, -0.05], [0, 0.002]];
+
+        const selectionBoxes = [{ north: 0.002, south: 0, east: 0.002, west: 0 }];
+
+        const result = graph.solveCPP(undefined, undefined, manualRoute, selectionBoxes, undefined, approachRoute);
+
+        // Must end at the SE corner (node 9), the true diagonal-opposite of the NW
+        // entry (B) — not near B itself, which is what referencing the distant A
+        // would produce here.
+        const end = result[result.length - 1];
+        expect(end.lat).toBeCloseTo(0, 2);
+        expect(end.lon).toBeCloseTo(0.002, 2);
+
+        const distFromEntry = Math.hypot(end.lat - 0.002, end.lon - 0);
+        expect(distFromEntry).toBeGreaterThan(0.001);
+    });
+
     test('#64: mixed-mode area endpoint prefers a nearby natural odd-degree node over the literal-nearest even one, avoiding an artificial backtrack', () => {
         // Straight line A-B-C: endpoints A and C are naturally odd-degree (1),
         // interior node B is naturally even-degree (2). The geometric "far corner"
@@ -474,6 +534,64 @@ describe('StreetGraph', () => {
         const distToB = Math.hypot(end.lat - 0, end.lon - 0.001);
         const distToFarCorner = Math.hypot(end.lat - 0.0011, end.lon - 0.0021);
         expect(distToB).toBeLessThan(distToFarCorner);
+    });
+
+    test('exit bridge does not detour through a farther edge-endpoint candidate when the area already ends at the nearer one', () => {
+        // Same grid as the #64 exit-side test. B is the natural odd-degree node the
+        // area's own trail already ends at. The post-area target sits essentially AT
+        // B (on the B-E edge, a hair away from B) — so the exit bridge should need
+        // ~0 extra distance, not detour out to E (111m away) and back because E
+        // happened to be tried as a pathfinding candidate before recognizing the
+        // area's own endpoint was already one of the edge's two nodes.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },        // A
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },    // B — odd
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },    // C
+                { type: 'node', id: 4, lat: 0.001, lon: 0 },     // D
+                { type: 'node', id: 5, lat: 0.001, lon: 0.001 }, // E — odd
+                { type: 'node', id: 6, lat: 0.001, lon: 0.002 }, // F
+                { type: 'way', id: 100, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                { type: 'way', id: 101, nodes: [4, 5, 6], tags: { highway: 'residential' } },
+                { type: 'way', id: 102, nodes: [1, 4], tags: { highway: 'residential' } },
+                { type: 'way', id: 103, nodes: [2, 5], tags: { highway: 'residential' } },
+                { type: 'way', id: 104, nodes: [3, 6], tags: { highway: 'residential' } },
+            ]
+        };
+
+        graph.buildFromOSM(mockData);
+
+        const manualRoute: [number, number][] = [[-0.001, 0], [0, 0]];
+        const selectionBoxes = [{ north: 0.0011, south: -0.0001, east: 0.0021, west: -0.0001 }];
+        const realExitTarget = { lat: 0.00001, lon: 0.001 }; // essentially at B, on the B-E edge
+
+        const result = graph.solveCPP(undefined, realExitTarget, manualRoute, selectionBoxes);
+
+        // B legitimately appears earlier too — the CPP's own T-join matching duplicates
+        // the B-E edge to fix parity (B and E are the only odd nodes), so the area's
+        // required coverage trail itself passes through B before ever reaching the
+        // exit bridge. That's real, necessary mileage, not the bug. The bug under test
+        // is specifically what happens AFTER the area trail's own last point — so find
+        // the LAST B (the actual area-end / exit-bridge start), not the first.
+        const M_PER_DEG = 111320;
+        const dist = (a: { lat: number; lon: number }, b: { lat: number; lon: number }) => {
+            const dLat = (a.lat - b.lat) * M_PER_DEG;
+            const dLon = (a.lon - b.lon) * M_PER_DEG;
+            return Math.hypot(dLat, dLon);
+        };
+        let bIdx = -1;
+        for (let i = result.length - 1; i >= 0; i--) {
+            if (Math.abs(result[i].lat - 0) < 1e-6 && Math.abs(result[i].lon - 0.001) < 1e-6) { bIdx = i; break; }
+        }
+        expect(bIdx).toBeGreaterThanOrEqual(0);
+        let tailDist = 0;
+        for (let i = bIdx; i < result.length - 1; i++) {
+            tailDist += dist(result[i], result[i + 1]);
+        }
+        expect(tailDist).toBeLessThan(50);
     });
 
     describe('trimBridgeOverlap', () => {

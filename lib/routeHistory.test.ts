@@ -1,4 +1,4 @@
-import { RouteSnapshot, pushSnapshot, undo, redo, isFirstPointAfterArea } from './routeHistory';
+import { RouteSnapshot, pushSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from './routeHistory';
 
 const snap = (over: Partial<RouteSnapshot> = {}): RouteSnapshot => ({
     points: [],
@@ -82,5 +82,24 @@ describe('isFirstPointAfterArea', () => {
     it('is false for points before or after that first post-area point', () => {
         expect(isFirstPointAfterArea(2, 1)).toBe(false); // still pre-area
         expect(isFirstPointAfterArea(2, 3)).toBe(false); // second post-area point — steps normally from the first
+    });
+});
+
+describe('shouldAddComputedEndpoint', () => {
+    it('is false when there is no area', () => {
+        expect(shouldAddComputedEndpoint(2, 2, false)).toBe(false);
+    });
+
+    it('is false when no area has been drawn yet (preAreaPointCount null)', () => {
+        expect(shouldAddComputedEndpoint(null, 2, true)).toBe(false);
+    });
+
+    it('is true right after an area is drawn with no real point placed past it yet', () => {
+        // 2 points before the area (indices 0,1); no 3rd point clicked yet.
+        expect(shouldAddComputedEndpoint(2, 2, true)).toBe(true);
+    });
+
+    it('is false once a real post-area point already exists — add the marker only once', () => {
+        expect(shouldAddComputedEndpoint(2, 3, true)).toBe(false);
     });
 });

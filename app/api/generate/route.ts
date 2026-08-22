@@ -137,15 +137,22 @@ export async function POST(request: Request) {
 
         // Use both rectangular boxes and polygons for routing
         const combinedSelections: Array<{ north: number; south: number; east: number; west: number }> = [...(selectionBoxes || [])];
+        // combinedSelections only holds boxes — a lasso-only selection (polygons,
+        // no boxes) must still count as "has an area" here, or hasPostAreaPoints
+        // and the endPoint fallback below silently treat it as point-only routing.
+        // That previously made endPoint default to the last REAL waypoint (the
+        // point just before the lasso) whenever no post-area point existed yet,
+        // sending the area's own coverage trail right back at its own entry point.
+        const hasAreaSelection = combinedSelections.length > 0 || selectionPolygons.length > 0;
 
         // In mixed mode (manualRoute + selections), only pass endPoint when there are
         // genuine post-area waypoints. Approach-only waypoints must not trigger an exit bridge.
-        const hasPostAreaPoints = combinedSelections.length > 0
+        const hasPostAreaPoints = hasAreaSelection
             && preAreaPointCount != null
             && selectedPoints?.length > preAreaPointCount;
         const endPoint = hasPostAreaPoints
             ? selectedPoints[selectedPoints.length - 1]
-            : (combinedSelections.length > 0 ? undefined : selectedPoints?.[selectedPoints.length - 1]);
+            : (hasAreaSelection ? undefined : selectedPoints?.[selectedPoints.length - 1]);
         const riddenPenalty = routingOptions?.riddenPenalty || 15; // Default to 15 if not specified
         // Bounding box elasticity (feet, from settings) lets required-edge inclusion reach
         // slightly beyond a drawn Area/Lasso box instead of stopping mid-edge at an

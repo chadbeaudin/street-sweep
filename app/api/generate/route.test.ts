@@ -15,8 +15,13 @@ jest.mock('@/lib/elevation', () => ({
 
 import { POST } from './route';
 import { fetchOSMData } from '@/lib/overpass';
+import { StreetGraph } from '@/lib/graph';
+import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
 
 const mockedFetchOSM = fetchOSMData as jest.MockedFunction<typeof fetchOSMData>;
+const mockedGetCachedGraph = StreetGraph.getCachedGraph as jest.MockedFunction<typeof StreetGraph.getCachedGraph>;
+const mockedFetchElevation = fetchElevationData as jest.MockedFunction<typeof fetchElevationData>;
+const mockedCalcElevationProfile = calculateElevationProfile as jest.MockedFunction<typeof calculateElevationProfile>;
 
 const validBbox = { north: 39.03, south: 39.01, east: -104.69, west: -104.71 };
 
@@ -74,5 +79,35 @@ describe('POST /api/generate', () => {
             selectionBoxes: [{ north: 39.30, south: 39.02, east: -104.40, west: -104.70 }],
         }));
         expect(mockedFetchOSM).toHaveBeenCalled();
+    });
+
+    it('does not pass the pre-area waypoint as endPoint for a lasso-only selection with no post-area point yet', async () => {
+        // A lasso (selectionPolygons, no selectionBoxes) drawn right after a 2-point
+        // route, with no waypoint added past it yet. combinedSelections only tracks
+        // boxes, so a lasso-only selection previously fell through to "no area
+        // selected" and defaulted endPoint to the last real waypoint (the point
+        // just before the lasso) — sending the area's own coverage trail back at
+        // its own entry point instead of sweeping away from it.
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        const solveCPPSpy = jest.fn().mockReturnValue([{ lat: 1, lon: 1 }]);
+        mockedGetCachedGraph.mockReturnValueOnce({ solveCPP: solveCPPSpy } as any);
+        mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[1, 1]] } as any);
+        mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 0 } as any]);
+
+        const selectedPoints = [
+            { lat: 39.02, lon: -104.71 }, // A
+            { lat: 39.025, lon: -104.705 }, // B — last real point, entry to the lasso
+        ];
+        await POST(makeRequest({
+            bbox: validBbox,
+            manualRoute: [[-104.71, 39.02], [-104.705, 39.025]],
+            selectedPoints,
+            preAreaPointCount: selectedPoints.length,
+            selectionPolygons: [[[39.02, -104.71], [39.03, -104.71], [39.03, -104.69], [39.02, -104.69]]],
+        }));
+
+        expect(solveCPPSpy).toHaveBeenCalled();
+        const endPointArg = solveCPPSpy.mock.calls[0][1];
+        expect(endPointArg).toBeUndefined();
     });
 });

@@ -16,7 +16,7 @@ import { HowToDialog } from '@/components/HowToDialog';
 import { ExportTipsDialog } from '@/components/ExportTipsDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
-import { RouteSnapshot, undo, redo, isFirstPointAfterArea } from '@/lib/routeHistory';
+import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from '@/lib/routeHistory';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -440,6 +440,28 @@ export default function Home() {
                 setRoute(feature.geometry.coordinates);
                 setElevationData(feature.properties.elevationProfile);
                 setTotalDistance(feature.properties.totalDistance);
+
+                // When an area/lasso sweep has no real waypoint placed after it yet,
+                // the coverage trail's end is a server-computed point the user has
+                // never seen or been able to touch. Materialize it as a real,
+                // draggable waypoint (same as any clicked point) so it's visible and
+                // the user can drag it to redirect where the sweep ends.
+                const hasArea = selectionBoxesRef.current.length > 0 || selectionPolygonsRef.current.length > 0;
+                if (shouldAddComputedEndpoint(preAreaPointCountRef.current, pointsRef.current.length, hasArea)) {
+                    const coords = feature.geometry.coordinates;
+                    if (coords.length > 0) {
+                        const [lon, lat] = coords[coords.length - 1];
+                        const newPoint = { lat, lon, id: Math.random().toString(36).substr(2, 9), status: 'snapped' as const };
+                        pointsRef.current = [...pointsRef.current, newPoint];
+                        setSelectedPoints([...pointsRef.current]);
+                        const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                        const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+                        historyRef.current = [...newHistory, snapshot];
+                        historyIndexRef.current = historyRef.current.length - 1;
+                        setHistory(historyRef.current);
+                        setHistoryIndex(historyIndexRef.current);
+                    }
+                }
             } else {
                 if (!isSilent) setError({ message: "No route generated." });
             }

@@ -37,3 +37,12 @@ export function redo(history: RouteSnapshot[], index: number): { snapshot: Route
 export function isFirstPointAfterArea(preAreaPointCount: number | null, pointIndex: number): boolean {
     return preAreaPointCount !== null && pointIndex === preAreaPointCount;
 }
+
+// After generating a mixed-mode area/lasso sweep with no real waypoint placed
+// after it yet, the coverage trail's end is a server-computed point the user
+// has never clicked and can't see or drag. It should be materialized as a
+// real, editable waypoint — but only once: as soon as a real post-area point
+// exists (currentPointCount > preAreaPointCount), don't add another.
+export function shouldAddComputedEndpoint(preAreaPointCount: number | null, currentPointCount: number, hasArea: boolean): boolean {
+    return hasArea && preAreaPointCount !== null && currentPointCount === preAreaPointCount;
+}
