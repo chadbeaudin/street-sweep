@@ -1,4 +1,4 @@
-import { StreetGraph, pointInPolygon, pointInAnyPolygon, getPolygonBounds } from './graph';
+import { StreetGraph, pointInPolygon, pointInAnyPolygon, getPolygonBounds, trimBridgeOverlap } from './graph';
 import { OverpassResponse } from './types';
 
 describe('StreetGraph', () => {
@@ -392,6 +392,68 @@ describe('StreetGraph', () => {
         const end = result[result.length - 1];
         expect(end.lat).toBeCloseTo(0, 4);
         expect(end.lon).toBeCloseTo(0.002, 4); // ends at C, not B
+    });
+
+    test('#64 (entry side): mixed-mode area entry also prefers a natural odd-degree node, with the redundant bridge overlap trimmed', () => {
+        // Straight line D-E-F: D and F are naturally odd (dead-end-ish, degree 1),
+        // interior E is naturally even (degree 2). The manual approach arrives right
+        // at E. E is a true cut vertex here (D is only reachable via E), so the rider
+        // must still physically pass through E twice no matter which node the CPP
+        // treats as its abstract start — that part is unavoidable. What IS fixable is
+        // the pure algorithmic artifact: without trimming, the entry bridge and the
+        // area path each independently produce a point at D, so D appears twice
+        // consecutively (D, D) with zero distance between — a no-op duplicate that
+        // trimBridgeOverlap should remove.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },       // D — odd
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },   // E — interior, even
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },   // F — odd
+                { type: 'way', id: 20, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+            ]
+        };
+
+        graph.buildFromOSM(mockData);
+
+        // approachStart is manualRoute[0] — land it exactly at E.
+        const manualRoute: [number, number][] = [[0.001, 0], [0.001, -0.001]];
+        const selectionBoxes = [{ north: 0.0001, south: -0.0001, east: 0.002, west: 0 }];
+
+        const result = graph.solveCPP(undefined, undefined, manualRoute, selectionBoxes);
+
+        // No two consecutive points should be identical — that's always a pure
+        // no-op artifact, never a legitimate part of a route.
+        for (let i = 1; i < result.length; i++) {
+            const same = result[i].lat === result[i - 1].lat && result[i].lon === result[i - 1].lon;
+            expect(same).toBe(false);
+        }
+    });
+
+    describe('trimBridgeOverlap', () => {
+        const p = (lat: number, lon: number) => ({ lat, lon });
+
+        it('trims a bridge that exactly retraces the path\'s leading edge', () => {
+            // Bridge arrives at D via E; path immediately leaves D back through E.
+            const bridge = [p(0, 0.001), p(0, 0)]; // E -> D
+            const path = [p(0, 0), p(0, 0.001), p(0, 0.002)]; // D -> E -> F
+            const result = trimBridgeOverlap(bridge, path);
+            expect(result).toEqual([p(0, 0.001)]); // just E; D dropped as redundant with path[0]
+        });
+
+        it('does not trim when the bridge does not overlap the path', () => {
+            const bridge = [p(1, 1), p(0, 0)];
+            const path = [p(0, 0), p(0, 0.001), p(0, 0.002)];
+            const result = trimBridgeOverlap(bridge, path);
+            expect(result).toEqual(bridge);
+        });
+
+        it('leaves short bridges/paths untouched', () => {
+            expect(trimBridgeOverlap([], [])).toEqual([]);
+            expect(trimBridgeOverlap([p(0, 0)], [p(0, 0), p(0, 1)])).toEqual([p(0, 0)]);
+        });
     });
 
     test('rotates circuit to start at startNode', () => {

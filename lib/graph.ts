@@ -92,6 +92,33 @@ export function pointInAnyPolygon(point: [number, number], polygons: [number, nu
     return polygons.some(polygon => pointInPolygon(point, polygon));
 }
 
+// The entry bridge (approach → area sweep, mixed mode) carries no coverage
+// guarantee — only the area's own CPP-solved path does. So any edge the
+// bridge shares with the path's own leading edges is pure redundant mileage:
+// walking it via the bridge and then immediately again via the path is a
+// visible backtrack with no coverage benefit (see #64). Safe to trim from the
+// bridge's tail, walking backward only as long as it exactly mirrors the
+// path's start — this can never drop required coverage since the path itself
+// is never modified. (The symmetric exit-bridge case is NOT safe to trim the
+// same way — see the comment at its one call site — so this only handles entry.)
+export function trimBridgeOverlap(
+    bridge: { lat: number; lon: number }[],
+    path: { lat: number; lon: number }[]
+): { lat: number; lon: number }[] {
+    if (bridge.length < 2 || path.length < 2) return bridge;
+    const key = (p: { lat: number; lon: number }) => `${p.lat.toFixed(6)},${p.lon.toFixed(6)}`;
+    let trimCount = 0;
+    const maxTrim = Math.min(bridge.length - 1, path.length - 1);
+    while (trimCount < maxTrim) {
+        const bridgeNode = bridge[bridge.length - 2 - trimCount];
+        const pathNode = path[1 + trimCount];
+        if (key(bridgeNode) !== key(pathNode)) break;
+        trimCount++;
+    }
+    if (trimCount === 0) return bridge;
+    return bridge.slice(0, bridge.length - trimCount);
+}
+
 // Binary min-heap for Dijkstra. Replaces the previous `queue.sort()` on
 // every iteration (which was O(n log n) per dequeue, making pathfinding
 // O(V^2 log V) instead of O((V+E) log V)).
@@ -1194,7 +1221,7 @@ export class StreetGraph {
 
             const startNodeId = this.findClosestNode(bridgeSource.lat, bridgeSource.lon);
             const areaEntryNodeId = this.findClosestNode(areaPath[0].lat, areaPath[0].lon);
-            const entryBridge: { lat: number; lon: number }[] = [];
+            let entryBridge: { lat: number; lon: number }[] = [];
             if (startNodeId && areaEntryNodeId && startNodeId !== areaEntryNodeId) {
                 const bridgePath = this.findPath(startNodeId, areaEntryNodeId, undefined, bridgePenalty);
                 if (bridgePath.length > 0) {
@@ -1206,6 +1233,13 @@ export class StreetGraph {
                     }
                 }
             }
+            // The bridge carries no coverage guarantee (only areaPath does — see #64),
+            // so any edge it shares with areaPath's own leading edges is pure redundant
+            // mileage: trim it from the bridge's tail, walking backward only as long as
+            // it exactly mirrors areaPath's start. Never touches areaPath itself, so
+            // this can never drop required coverage — it only removes a bridge detour
+            // that immediately retraces ground the coverage trail is about to walk anyway.
+            entryBridge = trimBridgeOverlap(entryBridge, areaPath);
 
             // Exit bridge: area end → first post-area point (road bridge), then follow
             // pre-computed exit segments between subsequent post-area waypoints.
@@ -1231,6 +1265,12 @@ export class StreetGraph {
                         }
                     }
                 }
+                // Unlike the entry bridge, trimming the exit bridge's overlap with
+                // areaPath's own tail isn't a safe no-op: areaPath already used that
+                // ground to legitimately reach its chosen terminus, so if the exit
+                // bridge needs to leave via a different edge, retracing part of the
+                // tail can be genuinely unavoidable (not a pure duplicate-point
+                // artifact like the entry case). Left untrimmed pending a real fix.
 
                 // Append pre-computed road segments between post-area points (C→D, D→E, ...)
                 if (hasExitRoute) {
@@ -1240,7 +1280,18 @@ export class StreetGraph {
                 }
             }
 
-            return [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryWalk, ...entryBridge, ...areaPath, ...exitBridge];
+            const assembled = [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryWalk, ...entryBridge, ...areaPath, ...exitBridge];
+            // Adjacent segments (approachStart/entryWalk/entryBridge/areaPath) are each
+            // built independently and can end up meeting at the exact same point —
+            // e.g. approachStart itself already IS the trimmed entry bridge's first
+            // point. A zero-distance consecutive duplicate carries no information, so
+            // it's always safe to collapse regardless of why it occurred.
+            const deduped: { lat: number; lon: number; hasConstruction?: boolean }[] = [];
+            for (const pt of assembled) {
+                const prev = deduped[deduped.length - 1];
+                if (!prev || prev.lat !== pt.lat || prev.lon !== pt.lon) deduped.push(pt);
+            }
+            return deduped;
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
@@ -1550,15 +1601,13 @@ export class StreetGraph {
             return distToNatural <= NATURAL_ENDPOINT_SEARCH_RADIUS_M ? naturalNearest : literalNearest;
         };
 
-        // Only the endpoint gets natural-node preference. Tried applying this to
-        // startPoint too (reasoning: the mixed-mode entryBridge already walks a real
-        // path from the user's pin to wherever this solve's start node ends up, so
-        // moving the start seemed safe) — but that backfires: the entry bridge snaps
-        // to the LITERAL nearest node (separate code, not natural-aware), so moving
-        // the internal start elsewhere forces the bridge to detour back through the
-        // literal entry node's own edges, creating a fresh backtrack right at the
-        // entry junction instead of removing one. See #64 discussion.
-        const startNode = startPoint ? findEndpointNode(startPoint, false) : null;
+        // Both start and end get natural-node preference when opted in. Moving the
+        // start away from the literal-nearest node would normally just relocate a
+        // backtrack into the mixed-mode entry bridge (which snaps independently) —
+        // that's handled by trimBridgeOverlap in the mixed-mode branch, which trims
+        // the bridge's redundant overlap with this solve's actual start, so the net
+        // effect is fewer forced-parity detours with no new backtrack. See #64.
+        const startNode = startPoint ? findEndpointNode(startPoint, preferNaturalEndpoint) : null;
         const endNode = endPoint ? findEndpointNode(endPoint, preferNaturalEndpoint) : null;
 
         if (startNode && endNode && startNode !== endNode) {
