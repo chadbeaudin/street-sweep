@@ -14,7 +14,7 @@ import { RwgpsSuccessDialog } from '@/components/RwgpsSuccessDialog';
 import { RwgpsHeaderButton } from '@/components/RwgpsHeaderButton';
 import { HowToDialog } from '@/components/HowToDialog';
 import { ExportTipsDialog } from '@/components/ExportTipsDialog';
-import { getCachedRoads, setCachedRoads, clearCachedRoads } from '@/lib/stravaCache';
+import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from '@/lib/routeHistory';
 
@@ -302,13 +302,20 @@ export default function Home() {
         });
     }, [stravaCredentials, stravaRefreshKey]);
 
-    // Fetch the server-precomputed, deduped ridden-road overlay once. It's
+    // Fetch the server-precomputed, deduped ridden-road overlay. It's
     // viewport-independent, so the map draws it instantly with no per-pan wait.
+    // This payload can run several MB for a rider with a lot of history, and
+    // the server itself only refreshes it on its own ~24h timer — so it's
+    // cached client-side (IndexedDB) the same way /api/strava/activities
+    // already is, instead of re-fetching the full payload on every page load.
     useEffect(() => {
         if (!stravaCredentials?.refreshToken) { setPrecomputedRidden(null); return; }
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
-        const load = async () => {
+        const credentialsKey = JSON.stringify(stravaCredentials);
+        const skipCache = stravaRefreshKey > 0;
+
+        const fetchFresh = async () => {
             try {
                 const res = await fetch('/api/ridden-roads', {
                     method: 'POST',
@@ -317,11 +324,26 @@ export default function Home() {
                 });
                 const data = await res.json();
                 if (cancelled || data.error) return;
-                if (Array.isArray(data.roads) && data.roads.length > 0) setPrecomputedRidden(data.roads);
-                if ((data.computing || data.refreshing) && !cancelled) timer = setTimeout(load, 8000);
+                if (Array.isArray(data.roads) && data.roads.length > 0) {
+                    setPrecomputedRidden(data.roads);
+                    setCachedPrecomputedRoads(data.roads, data.refreshedAt ?? null, credentialsKey);
+                }
+                if ((data.computing || data.refreshing) && !cancelled) timer = setTimeout(fetchFresh, 8000);
             } catch { /* leave client fallback in place */ }
         };
-        load();
+
+        if (skipCache) {
+            fetchFresh();
+        } else {
+            getCachedPrecomputedRoads(credentialsKey).then(cachedRoads => {
+                if (cancelled) return;
+                if (cachedRoads) {
+                    setPrecomputedRidden(cachedRoads);
+                } else {
+                    fetchFresh();
+                }
+            });
+        }
         return () => { cancelled = true; if (timer) clearTimeout(timer); };
     }, [stravaCredentials, stravaRefreshKey]);
 
@@ -1168,6 +1190,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         onClick={() => setShowStravaSettings(true)}
                         onRefresh={() => {
                             clearCachedRoads();
+                            clearCachedPrecomputedRoads();
                             setStravaRefreshKey(k => k + 1);
                         }}
                     />
@@ -1488,6 +1511,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         onClick={() => setShowStravaSettings(true)}
                         onRefresh={() => {
                             clearCachedRoads();
+                            clearCachedPrecomputedRoads();
                             setStravaRefreshKey(k => k + 1);
                         }}
                     />
