@@ -28,6 +28,7 @@ import pkg from '@/package.json';
 import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
 import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
+import { calculateElevationGainLoss } from '@/lib/elevation';
 
 export default function Home() {
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
@@ -1185,12 +1186,10 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
 
     const totalElevationGain = useMemo(() => {
         if (!elevationData || elevationData.length < 2) return 0;
-        let gain = 0;
-        for (let i = 1; i < elevationData.length; i++) {
-            const diff = elevationData[i].elevation - elevationData[i - 1].elevation;
-            if (diff > 0) gain += diff;
-        }
-        return Math.round(gain);
+        // 15ft hysteresis threshold, calibrated against RWGPS's numbers for a real
+        // route — see lib/elevation.ts for why naive per-point summation wildly
+        // overstates gain on routes with hundreds of points.
+        return calculateElevationGainLoss(elevationData.map(p => p.elevation), 15).gain;
     }, [elevationData]);
 
     return (

@@ -1,5 +1,6 @@
 const FIT_EPOCH_OFFSET = 631065600;
 import { haversineM, toSemicircles } from './geometry';
+import { calculateElevationGainLoss } from './elevation';
 
 const UINT8  = 0x02;
 const UINT16 = 0x84;
@@ -103,23 +104,19 @@ export function buildFitCourse(
 
     // ── record data ──────────────────────────────────────────────────────────
     let totalDistCm = 0;
-    let totalAscent = 0;
-    let totalDescent = 0;
-    let prevEle: number | undefined;
+
+    // 4.5m (~15ft) hysteresis threshold, calibrated against RWGPS's numbers for a
+    // real route (route elevations here are meters). Naive per-point summation
+    // wildly overstates gain/loss on routes with many points, since each point is
+    // an independent DEM lookup. See lib/elevation.ts's calculateElevationGainLoss.
+    const routeElevations = route.map(([, , ele]) => ele).filter((e): e is number => e !== undefined);
+    const { gain: totalAscent, loss: totalDescent } = calculateElevationGainLoss(routeElevations, 4.5);
 
     for (let i = 0; i < route.length; i++) {
         const [lon, lat, ele] = route[i];
         if (i > 0) {
             const [plon, plat] = route[i - 1];
             totalDistCm += Math.round(haversineM(plat, plon, lat, lon) * 100);
-        }
-        if (ele !== undefined) {
-            if (prevEle !== undefined) {
-                const diff = ele - prevEle;
-                if (diff > 0) totalAscent += diff;
-                else totalDescent += -diff;
-            }
-            prevEle = ele;
         }
 
         data.push(3);
