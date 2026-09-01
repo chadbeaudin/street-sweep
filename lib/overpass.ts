@@ -1,4 +1,5 @@
 import { BoundingBox, OverpassResponse, OSMElement } from './types';
+import { isRoutableHighway } from './highwayFilter';
 import { prisma } from './prisma';
 import { readDiskCache, writeDiskCache } from './osmDiskCache';
 
@@ -81,11 +82,7 @@ function parseOSMXML(xml: string): OverpassResponse {
     }
   }
 
-  // Parse ways — must match the highway types in the Overpass query
-  const ALLOWED_HIGHWAYS = new Set(['motorway','trunk','primary','secondary','tertiary',
-    'unclassified','residential','living_street','motorway_link','trunk_link',
-    'primary_link','secondary_link','tertiary_link','track','cycleway']);
-
+  // Parse ways — must match the highway types allowed by the Overpass query
   const wayRe = /<way\b([^>]*)>([\s\S]*?)<\/way>/g;
   while ((m = wayRe.exec(xml)) !== null) {
     const attrs = m[1];
@@ -98,7 +95,7 @@ function parseOSMXML(xml: string): OverpassResponse {
     let t: RegExpExecArray | null;
     while ((t = tagRe.exec(body)) !== null) tags[t[1]] = t[2];
 
-    if (!tags['highway'] || !ALLOWED_HIGHWAYS.has(tags['highway'])) continue;
+    if (!isRoutableHighway(tags['highway'], tags)) continue;
     if (tags['access'] === 'private' || tags['access'] === 'no') continue;
 
     const nodes: number[] = [];
@@ -347,7 +344,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   // Tile coords are already multiples of TILE_DEG; format to fixed precision for a stable key.
   const k = (n: number) => n.toFixed(4);
   // v4: fine-grained tile-aligned cache keys (0.005° tiles, ~500m). Old v3 entries ignored.
-  const cacheKey = `v4_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
+  const cacheKey = `v6_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
   const now = Date.now();
 
   // For medium/large areas, reject cached responses that are clearly incomplete.
@@ -410,9 +407,17 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   const requestPromise = (async () => {
     const bikeQuery = `
       [out:json][timeout:90];
-      way["highway"~"motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|track|cycleway"]
-         ["access"!~"private|no"]
-         (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+      (
+        way["highway"~"motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|track|cycleway|path|bridleway"]
+           ["access"!~"private|no"]
+           (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+        way["highway"="footway"]["footway"!~"sidewalk|crossing"]["bicycle"!~"no|private"]
+           ["access"!~"private|no"]
+           (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+        way["highway"="service"]["service"!~"alley|driveway|parking_aisle|emergency_access"]
+           ["access"!~"private|no"]
+           (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+      );
       out geom;
     `;
 
@@ -472,7 +477,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               return data;
             }
 
-            if (response.status === 504 || response.status === 429) {
+            if (response.status === 504 || response.status === 429 || response.status === 509) {
               console.warn(`${ts()} Endpoint ${endpoint} failed with ${response.status}. Trying next...`);
               lastError = new Error(`Overpass API error: ${response.status}`);
               recordFailure(endpoint, true); // transient — short circuit TTL

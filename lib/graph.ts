@@ -4,6 +4,7 @@ import createGraph, { Graph } from 'ngraph.graph';
 import path from 'ngraph.path';
 
 import { OSMWay, OSMNode, OverpassResponse } from './types';
+import { isRoutableHighway } from './highwayFilter';
 
 interface NodeData {
     lat: number;
@@ -223,12 +224,8 @@ export class StreetGraph {
 
                 const highway = way.tags?.highway;
 
-                // Reject non-routable highway types regardless of data source (cache may contain
-                // footways/paths from an earlier fetch before the OSM API filter was added).
-                const ROUTABLE_HIGHWAYS = new Set(['motorway','trunk','primary','secondary','tertiary',
-                    'unclassified','residential','living_street','motorway_link','trunk_link',
-                    'primary_link','secondary_link','tertiary_link','track','cycleway']);
-                if (!highway || !ROUTABLE_HIGHWAYS.has(highway)) continue;
+                // Reject non-routable highway types regardless of data source.
+                if (!isRoutableHighway(highway, way.tags)) continue;
 
                 // SAFETY: Exclude actual motorway lanes — cyclists cannot ride on them.
                 // trunk is kept (with isAvoided=true) so divided-highway crossings remain connected.
@@ -247,7 +244,7 @@ export class StreetGraph {
                 if (options?.avoidHighways && majorHighways.includes(highway || '')) {
                     isAvoided = true;
                 }
-                if (!isAvoided && options?.avoidTrails && ['path', 'track', 'footway', 'cycleway'].includes(highway || '')) {
+                if (!isAvoided && options?.avoidTrails && ['path', 'track', 'footway', 'cycleway', 'bridleway'].includes(highway || '')) {
                     isAvoided = true;
                 }
                 if (!isAvoided && options?.avoidGravel) {

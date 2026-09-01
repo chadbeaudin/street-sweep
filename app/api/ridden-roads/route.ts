@@ -6,7 +6,8 @@ import { roadsFromOSM } from '@/lib/roadsFromOSM';
 import { prisma } from '@/lib/prisma';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
-const RIDDEN_VERSION = 1;
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const RIDDEN_VERSION = 3; // bumped: highway=service (park maintenance/multi-use paths) now included in the road fetch
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 // Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has
@@ -39,6 +40,11 @@ async function compute(riddenRoads: [number, number][][]): Promise<[number, numb
             console.warn(`${ts()} RiddenRoads: tile ${t} failed: ${e.message}`);
         }
         if (++i % 25 === 0) console.log(`${ts()} RiddenRoads: fetched ${i}/${tiles.size} tiles (${failed} failed)`);
+        // Small pacing delay — a full recompute (e.g. after a cache-version bump) can hit
+        // hundreds/thousands of tiles back-to-back and trip the Overpass instance's own
+        // rate limit (509), which cascades into blocking interactive routing for everyone
+        // via the shared circuit breaker. This keeps the background job well under that.
+        await delay(75);
     }
 
     // Don't cache a badly incomplete overlay (e.g. Overpass down) — throw so the
