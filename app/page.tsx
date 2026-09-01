@@ -27,6 +27,7 @@ import { ElevationProfile } from '@/components/ElevationProfile';
 import pkg from '@/package.json';
 import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
+import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
 
 export default function Home() {
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
@@ -106,6 +107,8 @@ export default function Home() {
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
     const generateAbortControllerRef = useRef<AbortController | null>(null);
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
+    const fetchedRoadTilesRef = useRef<Set<string>>(new Set());
+    const roadTileCacheRef = useRef<[number, number][][]>([]);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
     const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[], preAreaPointCount: number | null }[]>([]);
@@ -363,25 +366,46 @@ export default function Home() {
     useEffect(() => {
         if (!bbox) return;
 
+        // Tile the viewport (plus a small buffer) at a coarse grid so panning only
+        // fetches the newly-revealed tiles instead of re-downloading the whole
+        // viewport's road geometry every time — this is the single biggest source
+        // of Vercel "Fast Origin Transfer" usage, since /api/roads fires on every
+        // pan/zoom (moveend).
+        const missing = missingRoadTiles(bbox, fetchedRoadTilesRef.current);
+
+        if (missing.length === 0) {
+            // Every tile in view has already been fetched — reuse the accumulated
+            // cache, no network request needed.
+            if (roadTileCacheRef.current.length > 0) setAllRoads(roadTileCacheRef.current);
+            return;
+        }
+
         roadsAbortControllerRef.current?.abort();
         roadsAbortControllerRef.current = new AbortController();
         const signal = roadsAbortControllerRef.current.signal;
+
+        // Fetch only the bounding box covering the missing tiles, not the full viewport.
+        const fetchBbox = roadBboxForTiles(missing);
 
         const timer = setTimeout(() => {
             fetch('/api/roads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bbox }),
+                body: JSON.stringify({ bbox: fetchBbox }),
                 signal
             })
                 .then(res => res.json())
                 .then(data => {
                     if (data.roads) {
-                        console.log(`[StreetSweep] Received ${data.roads.length} roadmap segments.`);
+                        console.log(`[StreetSweep] Received ${data.roads.length} roadmap segments for ${missing.length} new tiles.`);
                         // Keep the previous road set if this fetch came back empty
                         // (transient Overpass hiccup) so ridden-road snapping doesn't
                         // fall back to raw GPS traces.
-                        if (data.roads.length > 0) setAllRoads(data.roads);
+                        if (data.roads.length > 0) {
+                            for (const t of missing) fetchedRoadTilesRef.current.add(roadTileKey(t));
+                            roadTileCacheRef.current = roadTileCacheRef.current.concat(data.roads);
+                            setAllRoads(roadTileCacheRef.current);
+                        }
                         setServiceWarning(!!data.degraded);
                     }
                 })
