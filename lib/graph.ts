@@ -1269,6 +1269,18 @@ export class StreetGraph {
                         const p = this.findPath(candidateId, areaEntryNodeId, undefined, bridgePenalty);
                         if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
                     }
+                    // The snap-edge nodes can land on a small disconnected fragment (e.g. a trail
+                    // stub whose endpoints don't share a node with the surrounding street graph) —
+                    // fall back to any reachable node within ~550m so a straight-line gap doesn't
+                    // silently replace the bridge. Mirrors /api/step's broader fallback.
+                    if (usedEntryStartId === null) {
+                        const broadCandidates = this.findNodeIdsNearPoint(bridgeSource.lat, bridgeSource.lon, 10);
+                        for (const candidateId of broadCandidates) {
+                            if (entryStartCandidates.includes(candidateId)) continue;
+                            const p = this.findPath(candidateId, areaEntryNodeId, undefined, bridgePenalty);
+                            if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
+                        }
+                    }
                 }
                 // Walk the "first mile" along the actual snap edge from the precise
                 // mid-edge point to the chosen intersection node, instead of leaving a
@@ -1333,6 +1345,15 @@ export class StreetGraph {
                         for (const candidateId of exitStartCandidates) {
                             const p = this.findPath(areaEndNodeId, candidateId, undefined, bridgePenalty);
                             if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
+                        }
+                        // See the identical broad fallback on the entry bridge above.
+                        if (usedExitStartId === null) {
+                            const broadCandidates = this.findNodeIdsNearPoint(bridgeTarget.lat, bridgeTarget.lon, 10);
+                            for (const candidateId of broadCandidates) {
+                                if (exitStartCandidates.includes(candidateId)) continue;
+                                const p = this.findPath(areaEndNodeId, candidateId, undefined, bridgePenalty);
+                                if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
+                            }
                         }
                     }
                     if (bridgePath.length > 0) {
