@@ -1,4 +1,4 @@
-import { StreetGraph, pointInPolygon, pointInAnyPolygon, getPolygonBounds, trimBridgeOverlap } from './graph';
+import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap } from './graph';
 import { OverpassResponse } from './types';
 
 describe('StreetGraph', () => {
@@ -939,6 +939,37 @@ describe('Point-in-Polygon Functions', () => {
             ];
             expect(pointInPolygon([1, 1], polygon)).toBe(true);
             expect(pointInPolygon([3, 1], polygon)).toBe(false);
+        });
+    });
+
+    describe('pointNearOrInPolygon', () => {
+        // ~0.0001 deg is roughly 11m at these latitudes — small enough to test
+        // "just outside the line" without leaving the polygon's bounding box.
+        const square: [number, number][] = [
+            [47.0, -117.0],
+            [47.001, -117.0],
+            [47.001, -116.999],
+            [47.0, -116.999],
+        ];
+
+        test('a point already inside is near-or-in regardless of buffer', () => {
+            expect(pointNearOrInPolygon([47.0005, -116.9995], square, 0)).toBe(true);
+        });
+
+        test('a point just outside the boundary is excluded with zero buffer (the old lasso behavior)', () => {
+            const justOutside: [number, number] = [47.0, -116.9995];
+            const nudged: [number, number] = [justOutside[0] - 0.0001, justOutside[1]];
+            expect(pointInPolygon(nudged, square)).toBe(false);
+            expect(pointNearOrInPolygon(nudged, square, 0)).toBe(false);
+        });
+
+        test('a point just outside the boundary is included once the buffer covers the gap', () => {
+            const nudged: [number, number] = [47.0 - 0.0001, -116.9995]; // ~11m south of the edge
+            expect(pointNearOrInPolygon(nudged, square, 15)).toBe(true);
+        });
+
+        test('a point far outside stays excluded even with a generous buffer', () => {
+            expect(pointNearOrInPolygon([48.0, -116.9995], square, 100)).toBe(false);
         });
     });
 

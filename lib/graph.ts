@@ -93,6 +93,44 @@ export function pointInAnyPolygon(point: [number, number], polygons: [number, nu
     return polygons.some(polygon => pointInPolygon(point, polygon));
 }
 
+// Flat-projection point-to-segment distance in meters. Fine at the tens-of-meters
+// scale this is used at (a lasso-boundary buffer), where the equirectangular
+// approximation's error is negligible.
+function pointToSegmentDistanceMeters(pLat: number, pLon: number, lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const METERS_PER_DEG = 111320;
+    const cosLat = Math.cos(lat1 * Math.PI / 180);
+    const toXY = (lat: number, lon: number): [number, number] => [lon * cosLat * METERS_PER_DEG, lat * METERS_PER_DEG];
+    const [px, py] = toXY(pLat, pLon);
+    const [x1, y1] = toXY(lat1, lon1);
+    const [x2, y2] = toXY(lat2, lon2);
+    const dx = x2 - x1, dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+    const cx = x1 + t * dx, cy = y1 + t * dy;
+    return Math.hypot(px - cx, py - cy);
+}
+
+// Unlike selection boxes (which get an unconditional ~10m buffer plus optional
+// elasticity — see BOX_BUFFER below), lasso polygons previously used strict
+// point-in-polygon containment with zero buffer: a street sitting right on or
+// just outside the drawn boundary was silently excluded, and the elasticity
+// slider had no effect on lassos at all. This mirrors the box behavior.
+export function pointNearOrInPolygon(point: [number, number], polygon: [number, number][], bufferMeters: number): boolean {
+    if (pointInPolygon(point, polygon)) return true;
+    if (bufferMeters <= 0) return false;
+    const [lat, lon] = point;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+        const [lat1, lon1] = polygon[j];
+        const [lat2, lon2] = polygon[i];
+        if (pointToSegmentDistanceMeters(lat, lon, lat1, lon1, lat2, lon2) <= bufferMeters) return true;
+    }
+    return false;
+}
+
+export function pointNearOrInAnyPolygon(point: [number, number], polygons: [number, number][][], bufferMeters: number): boolean {
+    return polygons.some(polygon => pointNearOrInPolygon(point, polygon, bufferMeters));
+}
+
 // The entry bridge (approach → area sweep, mixed mode) carries no coverage
 // guarantee — only the area's own CPP-solved path does. So any edge the
 // bridge shares with the path's own leading edges is pure redundant mileage:
@@ -1545,10 +1583,15 @@ export class StreetGraph {
                 const v = this.graph.getNode(link.toId);
 
                 if (u && v) {
-                    // Check if either endpoint is inside any polygon
+                    // Check if either endpoint is inside (or within the boundary buffer
+                    // of) any polygon — mirrors the box's BOX_BUFFER below so a street
+                    // drawn right on the lasso line, or the elasticity slider, isn't
+                    // silently ignored just because this is a polygon, not a box.
                     const uPoint: [number, number] = [u.data.lat, u.data.lon];
                     const vPoint: [number, number] = [v.data.lat, v.data.lon];
-                    const isRequired = pointInAnyPolygon(uPoint, selectionPolygons) || pointInAnyPolygon(vPoint, selectionPolygons);
+                    const polygonBufferMeters = 11 + Math.max(0, boxElasticityMeters);
+                    const isRequired = pointNearOrInAnyPolygon(uPoint, selectionPolygons, polygonBufferMeters) ||
+                        pointNearOrInAnyPolygon(vPoint, selectionPolygons, polygonBufferMeters);
 
                     if (sampleLogged < 3) {
                         const inPoly = pointInAnyPolygon(uPoint, selectionPolygons);
