@@ -344,7 +344,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   // Tile coords are already multiples of TILE_DEG; format to fixed precision for a stable key.
   const k = (n: number) => n.toFixed(4);
   // v4: fine-grained tile-aligned cache keys (0.005° tiles, ~500m). Old v3 entries ignored.
-  const cacheKey = `v6_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
+  const cacheKey = `v7_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
   const now = Date.now();
 
   // For medium/large areas, reject cached responses that are clearly incomplete.
@@ -414,7 +414,8 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
         way["highway"="footway"]["footway"!~"sidewalk|crossing"]["bicycle"!~"no|private"]
            ["access"!~"private|no"]
            (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
-        way["highway"="service"]["service"!~"alley|driveway|parking_aisle|emergency_access"]
+        way["highway"="service"]["service"!~"alley|driveway|parking_aisle|emergency_access|drive-through"]
+           ["surface"~"unpaved|compacted|gravel|fine_gravel|dirt|ground|grass|earth|woodchips|pebblestone"]
            ["access"!~"private|no"]
            (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
       );

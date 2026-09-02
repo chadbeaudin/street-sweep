@@ -30,14 +30,25 @@ describe('isRoutableHighway', () => {
         expect(isRoutableHighway('footway', { bicycle: 'designated' })).toBe(true);
     });
 
-    it('allows plain service ways (park maintenance/multi-use paths) but excludes driveways, alleys, and parking aisles', () => {
-        expect(isRoutableHighway('service')).toBe(true);
-        expect(isRoutableHighway('service', {})).toBe(true);
+    it('excludes plain service ways by default — most are parking-lot/private access roads', () => {
+        expect(isRoutableHighway('service')).toBe(false);
+        expect(isRoutableHighway('service', {})).toBe(false);
+        expect(isRoutableHighway('service', { surface: 'asphalt' })).toBe(false);
+        expect(isRoutableHighway('service', { surface: 'paved' })).toBe(false);
+    });
+
+    it('allows service ways only with an explicit unpaved/trail-like surface (park maintenance paths)', () => {
         expect(isRoutableHighway('service', { surface: 'compacted' })).toBe(true);
-        expect(isRoutableHighway('service', { service: 'alley' })).toBe(false);
-        expect(isRoutableHighway('service', { service: 'driveway' })).toBe(false);
-        expect(isRoutableHighway('service', { service: 'parking_aisle' })).toBe(false);
-        expect(isRoutableHighway('service', { service: 'emergency_access' })).toBe(false);
+        expect(isRoutableHighway('service', { surface: 'gravel' })).toBe(true);
+        expect(isRoutableHighway('service', { surface: 'dirt' })).toBe(true);
+    });
+
+    it('excludes driveways, alleys, parking aisles, and drive-throughs even with a trail-like surface', () => {
+        expect(isRoutableHighway('service', { service: 'alley', surface: 'compacted' })).toBe(false);
+        expect(isRoutableHighway('service', { service: 'driveway', surface: 'gravel' })).toBe(false);
+        expect(isRoutableHighway('service', { service: 'parking_aisle', surface: 'compacted' })).toBe(false);
+        expect(isRoutableHighway('service', { service: 'emergency_access', surface: 'gravel' })).toBe(false);
+        expect(isRoutableHighway('service', { service: 'drive-through', surface: 'compacted' })).toBe(false);
     });
 
     it('rejects unknown or missing highway types', () => {

@@ -15,13 +15,19 @@ const BASE_ROUTABLE_HIGHWAYS = new Set([
 const SIDEWALK_SUBTYPES = new Set(['sidewalk', 'crossing']);
 const BIKE_FORBIDDEN_TAGS = new Set(['no', 'private']);
 
-// `service` is similarly ambiguous: park maintenance/multi-use paths are
-// commonly tagged plain `highway=service` (no subtype) instead of `path` —
-// this is how paved/compacted paths inside parks (e.g. High Bridge Park's
-// interior network) get in. The `service` subtag is the reliable signal for
-// "this is functional property access, not a path" — driveways, alleys, and
-// parking aisles stay excluded.
-const SERVICE_EXCLUDED_SUBTYPES = new Set(['alley', 'driveway', 'parking_aisle', 'emergency_access']);
+// `service` is mostly NOT a trail signal — plain `highway=service` with no
+// subtype is overwhelmingly parking-lot loops, private complex access roads,
+// and covered/garage circulation (confirmed by querying real OSM data: a
+// residential/commercial area returned dozens of plain-service ways, nearly
+// all parking-lot or driveway-adjacent, versus the rare legitimate park
+// path). `service=drive-through`, `driveway`, `alley`, `parking_aisle`, and
+// `emergency_access` are always excluded outright. A plain/unsubtyped service
+// way is only included when it has an explicit unpaved/trail-like surface —
+// this is how a park's compacted maintenance path (e.g. High Bridge Park's
+// interior network) still gets in, without opening the door to asphalt
+// parking-lot circulation or building drive-throughs.
+const SERVICE_EXCLUDED_SUBTYPES = new Set(['alley', 'driveway', 'parking_aisle', 'emergency_access', 'drive-through']);
+const TRAIL_LIKE_SURFACES = new Set(['unpaved', 'compacted', 'gravel', 'fine_gravel', 'dirt', 'ground', 'grass', 'earth', 'woodchips', 'pebblestone']);
 
 export function isRoutableHighway(highway: string | undefined, tags?: Record<string, string>): boolean {
     if (!highway) return false;
@@ -31,7 +37,8 @@ export function isRoutableHighway(highway: string | undefined, tags?: Record<str
         return true;
     }
     if (highway === 'service') {
-        return !SERVICE_EXCLUDED_SUBTYPES.has(tags?.service ?? '');
+        if (SERVICE_EXCLUDED_SUBTYPES.has(tags?.service ?? '')) return false;
+        return TRAIL_LIKE_SURFACES.has(tags?.surface ?? '');
     }
     return BASE_ROUTABLE_HIGHWAYS.has(highway);
 }

@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const RIDDEN_VERSION = 3; // bumped: highway=service (park maintenance/multi-use paths) now included in the road fetch
+const RIDDEN_VERSION = 4; // bumped: highway=service narrowed to unpaved/trail-like surfaces only (was routing through parking lots/drive-throughs)
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 // Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has

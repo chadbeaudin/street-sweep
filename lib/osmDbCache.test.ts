@@ -60,7 +60,7 @@ describe('OSM DB cache', () => {
 
     it('returns DB-cached data without hitting the network', async () => {
         mockFindUnique.mockResolvedValue({
-            key: 'v6_47.6000,-117.5000,47.7000,-117.3000',
+            key: 'v7_47.6000,-117.5000,47.7000,-117.3000',
             data: mockOsmData,
             fetchedAt: new Date()
         });
@@ -87,7 +87,7 @@ describe('OSM DB cache', () => {
     it('falls through to network when DB cache is expired', async () => {
         const thirtyOneDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
         mockFindUnique.mockResolvedValue({
-            key: 'v6_47.6000,-117.5000,47.7000,-117.3000',
+            key: 'v7_47.6000,-117.5000,47.7000,-117.3000',
             data: mockOsmData,
             fetchedAt: thirtyOneDaysAgo
         });
@@ -114,14 +114,14 @@ describe('OSM DB cache', () => {
         // Allow fire-and-forget upsert to resolve
         await new Promise(resolve => setTimeout(resolve, 10));
         expect(mockUpsert).toHaveBeenCalledWith(expect.objectContaining({
-            where: { key: expect.stringContaining('v6_') },
+            where: { key: expect.stringContaining('v7_') },
             create: expect.objectContaining({ data: mockOsmData })
         }));
     });
 
     it('warms memory cache from DB so second call skips both DB and network', async () => {
         mockFindUnique.mockResolvedValueOnce({
-            key: 'v6_47.6000,-117.5000,47.7000,-117.3000',
+            key: 'v7_47.6000,-117.5000,47.7000,-117.3000',
             data: mockOsmData,
             fetchedAt: new Date()
         });
