@@ -5,6 +5,7 @@ import path from 'ngraph.path';
 
 import { OSMWay, OSMNode, OverpassResponse } from './types';
 import { isRoutableHighway } from './highwayFilter';
+import { haversineM } from './geometry';
 
 interface NodeData {
     lat: number;
@@ -129,6 +130,63 @@ export function pointNearOrInPolygon(point: [number, number], polygon: [number, 
 
 export function pointNearOrInAnyPolygon(point: [number, number], polygons: [number, number][][], bufferMeters: number): boolean {
     return polygons.some(polygon => pointNearOrInPolygon(point, polygon, bufferMeters));
+}
+
+// Projects a mid-edge endpoint click onto its closest edge and trims/extends
+// the trail's coords so the route ends exactly at that point.
+//
+// The Eulerian circuit's traversal order isn't dictated by click order — with
+// a long/complex route, a street shared with an earlier segment (e.g. the
+// endpoint clicked near the route's own start, a normal way to close a loop)
+// can appear only once, and much earlier than the real end. Truncating there
+// would silently discard the rest of the route down to just a handful of
+// points, so a match is only trusted as the true terminus when it's actually
+// near the tail.
+export function applyEndpointSnap(
+    coords: { lat: number; lon: number; hasConstruction?: boolean }[],
+    endPoint: { lat: number; lon: number },
+    snap: { lat: number; lon: number; u: string; v: string },
+    uCoord: { lat: number; lon: number },
+    vCoord: { lat: number; lon: number },
+): { lat: number; lon: number; hasConstruction?: boolean }[] {
+    const distToSnap = haversineM(endPoint.lat, endPoint.lon, snap.lat, snap.lon);
+    const distToU = haversineM(endPoint.lat, endPoint.lon, uCoord.lat, uCoord.lon);
+    const distToV = haversineM(endPoint.lat, endPoint.lon, vCoord.lat, vCoord.lon);
+    const minNodeDist = Math.min(distToU, distToV);
+
+    // Only truncate when the click is genuinely mid-edge, not just slightly
+    // off an intersection due to map rounding. ~5m gap between node and edge snap.
+    const NODE_THRESHOLD_M = 5;
+    if (minNodeDist - distToSnap <= NODE_THRESHOLD_M) return coords;
+
+    const eq = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+    const isU = (c: { lat: number, lon: number }) => eq(c.lat, uCoord.lat) && eq(c.lon, uCoord.lon);
+    const isV = (c: { lat: number, lon: number }) => eq(c.lat, vCoord.lat) && eq(c.lon, vCoord.lon);
+
+    // Find the last time the route traversed the snap edge.
+    let lastIdx = -1;
+    for (let i = 0; i < coords.length - 1; i++) {
+        const a = coords[i], b = coords[i + 1];
+        if ((isU(a) && isV(b)) || (isV(a) && isU(b))) lastIdx = i;
+    }
+
+    const NEAR_END_FRACTION = 0.1;
+    const allowedFromEnd = Math.max(5, Math.ceil(coords.length * NEAR_END_FRACTION));
+    const isNearEnd = lastIdx !== -1 && (coords.length - 1 - lastIdx) <= allowedFromEnd;
+    if (isNearEnd) {
+        // Truncate at the snap point during that traversal.
+        return [...coords.slice(0, lastIdx + 1), { lat: snap.lat, lon: snap.lon }];
+    }
+
+    // The snap edge either wasn't traversed, or only appeared far from the
+    // end. If the trail's final node is one of the snap edge's endpoints,
+    // extend along that edge to the snap point; otherwise leave coords as-is
+    // rather than risk discarding most of the route.
+    const last = coords[coords.length - 1];
+    if (isU(last) || isV(last)) {
+        return [...coords, { lat: snap.lat, lon: snap.lon }];
+    }
+    return coords;
 }
 
 // The entry bridge (approach → area sweep, mixed mode) carries no coverage
@@ -2084,42 +2142,7 @@ export class StreetGraph {
                     const uNode = this.graph.getNode(snap.u);
                     const vNode = this.graph.getNode(snap.v);
                     if (uNode && vNode) {
-                        const distToSnap = this.haversine(endPoint.lat, endPoint.lon, snap.lat, snap.lon);
-                        const distToU = this.haversine(endPoint.lat, endPoint.lon, uNode.data.lat, uNode.data.lon);
-                        const distToV = this.haversine(endPoint.lat, endPoint.lon, vNode.data.lat, vNode.data.lon);
-                        const minNodeDist = Math.min(distToU, distToV);
-
-                        // Only truncate when the click is genuinely mid-edge,
-                        // not just slightly off an intersection due to map
-                        // rounding. ~5m gap between node and edge snap.
-                        const NODE_THRESHOLD_M = 5;
-                        if (minNodeDist - distToSnap > NODE_THRESHOLD_M) {
-                            const eq = (a: number, b: number) => Math.abs(a - b) < 1e-9;
-                            const isU = (c: { lat: number, lon: number }) =>
-                                eq(c.lat, uNode.data.lat) && eq(c.lon, uNode.data.lon);
-                            const isV = (c: { lat: number, lon: number }) =>
-                                eq(c.lat, vNode.data.lat) && eq(c.lon, vNode.data.lon);
-
-                            // Find the last time the route traversed the snap edge.
-                            let lastIdx = -1;
-                            for (let i = 0; i < coords.length - 1; i++) {
-                                const a = coords[i], b = coords[i + 1];
-                                if ((isU(a) && isV(b)) || (isV(a) && isU(b))) lastIdx = i;
-                            }
-
-                            if (lastIdx !== -1) {
-                                // Truncate at the snap point during that traversal.
-                                return [...coords.slice(0, lastIdx + 1), { lat: snap.lat, lon: snap.lon }];
-                            }
-
-                            // The snap edge was not traversed. If the trail's
-                            // final node is one of the snap edge's endpoints,
-                            // extend along that edge to the snap point.
-                            const last = coords[coords.length - 1];
-                            if (isU(last) || isV(last)) {
-                                coords.push({ lat: snap.lat, lon: snap.lon });
-                            }
-                        }
+                        return applyEndpointSnap(coords, endPoint, snap, uNode.data, vNode.data);
                     }
                 }
             }

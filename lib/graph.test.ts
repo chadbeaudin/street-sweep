@@ -1,4 +1,4 @@
-import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap } from './graph';
+import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap } from './graph';
 import { OverpassResponse } from './types';
 
 describe('StreetGraph', () => {
@@ -288,6 +288,71 @@ describe('StreetGraph', () => {
         expect(last.lon).toBeCloseTo(endPoint.lon, 9);
         expect(last.lon).not.toBeCloseTo(0.001, 9);
         expect(last.lon).not.toBeCloseTo(0.002, 9);
+    });
+
+    describe('applyEndpointSnap', () => {
+        // A straight chain, node ids as letters, ~111m apart (0.001 deg).
+        // A-B is the "shared" edge: it appears once near the start (index 0-1)
+        // and the trail continues on for many more points afterward.
+        const A = { lat: 0, lon: 0 };
+        const B = { lat: 0, lon: 0.001 };
+        const uv = { u: 'A', v: 'B' };
+
+        function longTrailStartingWithAB(tailLength: number) {
+            const coords: { lat: number; lon: number }[] = [A, B];
+            for (let i = 1; i <= tailLength; i++) coords.push({ lat: 0, lon: 0.001 + i * 0.001 });
+            return coords;
+        }
+
+        test('regression: does not collapse a long route when the endpoint snaps onto an edge used only near the start', () => {
+            // User's reported bug: clicked an endpoint close to the route's own
+            // start (a normal way to close a loop) — the snap edge (A-B) was
+            // only traversed once, right at the beginning, with 40 more points
+            // after it. The old code truncated to 3 points; it must not now.
+            const coords = longTrailStartingWithAB(40);
+            const endPoint = { lat: 0, lon: 0.0004 }; // mid-edge on A-B, ~44m from A
+            const snap = { lat: 0.0, lon: 0.0004, ...uv };
+
+            const result = applyEndpointSnap(coords, endPoint, snap, A, B);
+
+            expect(result.length).toBe(coords.length); // untouched — real end lies elsewhere
+        });
+
+        test('still truncates when the snap edge is genuinely at the end of a short route', () => {
+            const coords = [A, B]; // A-B is the entire (short) route
+            const endPoint = { lat: 0, lon: 0.0004 };
+            const snap = { lat: 0.0, lon: 0.0004, ...uv };
+
+            const result = applyEndpointSnap(coords, endPoint, snap, A, B);
+
+            const last = result[result.length - 1];
+            expect(last.lat).toBeCloseTo(endPoint.lat, 9);
+            expect(last.lon).toBeCloseTo(endPoint.lon, 9);
+        });
+
+        test('still truncates when the snap edge is the last edge of a long route', () => {
+            const tail = longTrailStartingWithAB(40);
+            // Put A-B at the very end instead of the start.
+            const coords = [...tail.slice(2), A, B];
+            const endPoint = { lat: 0, lon: 0.0004 };
+            const snap = { lat: 0.0, lon: 0.0004, ...uv };
+
+            const result = applyEndpointSnap(coords, endPoint, snap, A, B);
+
+            const last = result[result.length - 1];
+            expect(last.lat).toBeCloseTo(endPoint.lat, 9);
+            expect(last.lon).toBeCloseTo(endPoint.lon, 9);
+        });
+
+        test('leaves coords untouched when the click is effectively at an intersection, not mid-edge', () => {
+            const coords = longTrailStartingWithAB(10);
+            const endPoint = { lat: 0, lon: 0.0000001 }; // right on node A
+            const snap = { lat: 0, lon: 0.0000001, ...uv };
+
+            const result = applyEndpointSnap(coords, endPoint, snap, A, B);
+
+            expect(result).toBe(coords);
+        });
     });
 
     test('mixed mode (manualRoute + selectionBox) produces open path ending at far corner, not back at entry', () => {
