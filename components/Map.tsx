@@ -504,12 +504,15 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return combineRiddenOverlay(precomputedRidden, fresh);
     }, [precomputedRidden, stravaRoads, allRoads]);
 
-    // Fit map whenever the route first appears (e.g. after import)
+    // Fit map whenever an imported route first appears. Only imports — the
+    // user hasn't positioned the map for that route's location yet, unlike
+    // clicking points, where they're already looking at where they want to
+    // route and don't want the view yanked out from under them.
     const prevRouteRef = React.useRef<typeof route>(null);
     React.useEffect(() => {
         const wasEmpty = !prevRouteRef.current || prevRouteRef.current.length === 0;
         const hasRoute = route && route.length > 1;
-        if (wasEmpty && hasRoute && mapRef.current) {
+        if (wasEmpty && hasRoute && isImportedRoute && mapRef.current) {
             const lats = route!.map(p => p[1]);
             const lons = route!.map(p => p[0]);
             mapRef.current.fitBounds(
