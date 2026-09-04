@@ -14,6 +14,8 @@ import { RwgpsSuccessDialog } from '@/components/RwgpsSuccessDialog';
 import { RwgpsHeaderButton } from '@/components/RwgpsHeaderButton';
 import { HowToDialog } from '@/components/HowToDialog';
 import { ExportTipsDialog } from '@/components/ExportTipsDialog';
+import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
+import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from '@/lib/routeHistory';
@@ -98,6 +100,12 @@ export default function Home() {
     const [rwgpsUploadResult, setRwgpsUploadResult] = useState<{ routeUrl: string } | null>(null);
     const [showExportTips, setShowExportTips] = useState(false);
     const pendingExportTargetRef = useRef<'garmin' | 'rwgps' | null>(null);
+    const pendingRwgpsSaveNameRef = useRef<string | null>(null);
+    const [showRwgpsLibrary, setShowRwgpsLibrary] = useState(false);
+    const [isLoadingRwgpsRoute, setIsLoadingRwgpsRoute] = useState(false);
+    const [rwgpsSourceRouteId, setRwgpsSourceRouteId] = useState<number | null>(null);
+    const [showRwgpsSaveConfirm, setShowRwgpsSaveConfirm] = useState(false);
+    const RWGPS_HIDE_RECREATE_WARNING_KEY = 'rwgps_hide_recreate_warning';
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -676,9 +684,52 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         else if (target === 'rwgps') doSendToRwgps();
     };
 
+    const doSaveToRwgps = async (name: string) => {
+        setIsRwgpsUploading(true);
+        try {
+            const res = await fetch('/api/rwgps/save-route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ route, name, accessToken: rwgpsCredentials.accessToken, oldRouteId: rwgpsSourceRouteId }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'RideWithGPS update failed');
+            setRwgpsSourceRouteId(data.routeId);
+            setRwgpsUploadResult({ routeUrl: data.routeUrl });
+        } catch (err: any) {
+            console.error('RideWithGPS update error:', err);
+            setError({ message: `RideWithGPS Update Failed: ${err.message}` });
+        } finally {
+            setIsRwgpsUploading(false);
+        }
+    };
+
+    const handleRwgpsSaveConfirm = (dontShowAgain: boolean) => {
+        if (dontShowAgain) {
+            try { localStorage.setItem(RWGPS_HIDE_RECREATE_WARNING_KEY, '1'); } catch { /* ignore */ }
+        }
+        setShowRwgpsSaveConfirm(false);
+        const name = pendingRwgpsSaveNameRef.current;
+        pendingRwgpsSaveNameRef.current = null;
+        if (name) doSaveToRwgps(name);
+    };
+
     const handleRouteNameConfirm = async (name: string) => {
         setRouteName(name);
         setShowRouteNameDialog(false);
+
+        if (rwgpsSourceRouteId) {
+            let dismissed = false;
+            try { dismissed = localStorage.getItem(RWGPS_HIDE_RECREATE_WARNING_KEY) === '1'; } catch { /* ignore */ }
+            if (dismissed) {
+                doSaveToRwgps(name);
+            } else {
+                pendingRwgpsSaveNameRef.current = name;
+                setShowRwgpsSaveConfirm(true);
+            }
+            return;
+        }
+
         setIsRwgpsUploading(true);
         try {
             const res = await fetch('/api/export/rwgps', {
@@ -697,6 +748,63 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         }
     };
 
+    // Shared by file import and RWGPS route loading — both produce the same
+    // {coordinates, elevationProfile, totalDistance} shape (RWGPS routes are
+    // parsed via the same GPX pipeline /api/import uses).
+    const applyParsedRoute = useCallback((data: { coordinates: [number, number, number?][]; elevationProfile: any[]; totalDistance: string }) => {
+        const coords = data.coordinates;
+
+        // Build start/end selectedPoints
+        const startId = Math.random().toString(36).substr(2, 9);
+        const endId = Math.random().toString(36).substr(2, 9);
+        const firstCoord = coords[0];
+        const lastCoord = coords[coords.length - 1];
+        const startPt = { lat: firstCoord[1], lon: firstCoord[0], id: startId, status: 'snapped' as const };
+        const endPt   = { lat: lastCoord[1],  lon: lastCoord[0],  id: endId,   status: 'snapped' as const };
+        const newPoints = [startPt, endPt];
+
+        // Downsample to ~150 pts for the hitbox — full coords stay in `route` for display.
+        // A smaller polyline is much faster to hit-test and avoids interactivity issues.
+        const MAX_HITBOX_PTS = 150;
+        const step = Math.max(1, Math.floor(coords.length / MAX_HITBOX_PTS));
+        const sampledCoords: [number, number][] = [];
+        for (let i = 0; i < coords.length; i += step) sampledCoords.push([coords[i][0], coords[i][1]]);
+        const lastOrig = coords[coords.length - 1];
+        const lastSamp = sampledCoords[sampledCoords.length - 1];
+        if (lastSamp[0] !== lastOrig[0] || lastSamp[1] !== lastOrig[1])
+            sampledCoords.push([lastOrig[0], lastOrig[1]]);
+        const newManualRoute = [sampledCoords];
+
+        // Set route as full coordinate array for display, chevrons, eraser
+        const routeCoords: [number, number, number?, number?][] = coords.map(c =>
+            c.length === 3 ? [c[0], c[1], c[2]] : [c[0], c[1]]
+        );
+
+        // Update refs (source of truth for async callbacks)
+        pointsRef.current = newPoints;
+        manualRouteRef.current = newManualRoute;
+        selectionBoxesRef.current = [];
+        preAreaPointCountRef.current = null;
+        historyIndexRef.current = 0;
+        const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], preAreaPointCount: null };
+        historyRef.current = [snapshot];
+
+        // Mark as imported so auto-generation is suppressed
+        isImportedRouteRef.current = true;
+        setIsImportedRoute(true);
+
+        // Update all state
+        setSelectedPoints(newPoints);
+        setManualRoute(newManualRoute);
+        setSelectionBoxes([]);
+        setPreAreaPointCount(null);
+        setRoute(routeCoords);
+        setElevationData(data.elevationProfile);
+        setTotalDistance(data.totalDistance);
+        setHistory([snapshot]);
+        setHistoryIndex(0);
+    }, []);
+
     const handleImportFile = useCallback(async (file: File) => {
         setIsImporting(true);
         setError(null);
@@ -706,64 +814,37 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
             const res = await fetch('/api/import', { method: 'POST', body: form });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Import failed');
-
-            const coords: [number, number, number?][] = data.coordinates;
-
-            // Build start/end selectedPoints
-            const startId = Math.random().toString(36).substr(2, 9);
-            const endId = Math.random().toString(36).substr(2, 9);
-            const firstCoord = coords[0];
-            const lastCoord = coords[coords.length - 1];
-            const startPt = { lat: firstCoord[1], lon: firstCoord[0], id: startId, status: 'snapped' as const };
-            const endPt   = { lat: lastCoord[1],  lon: lastCoord[0],  id: endId,   status: 'snapped' as const };
-            const newPoints = [startPt, endPt];
-
-            // Downsample to ~150 pts for the hitbox — full coords stay in `route` for display.
-            // A smaller polyline is much faster to hit-test and avoids interactivity issues.
-            const MAX_HITBOX_PTS = 150;
-            const step = Math.max(1, Math.floor(coords.length / MAX_HITBOX_PTS));
-            const sampledCoords: [number, number][] = [];
-            for (let i = 0; i < coords.length; i += step) sampledCoords.push([coords[i][0], coords[i][1]]);
-            const lastOrig = coords[coords.length - 1];
-            const lastSamp = sampledCoords[sampledCoords.length - 1];
-            if (lastSamp[0] !== lastOrig[0] || lastSamp[1] !== lastOrig[1])
-                sampledCoords.push([lastOrig[0], lastOrig[1]]);
-            const newManualRoute = [sampledCoords];
-
-            // Set route as full coordinate array for display, chevrons, eraser
-            const routeCoords: [number, number, number?, number?][] = coords.map(c =>
-                c.length === 3 ? [c[0], c[1], c[2]] : [c[0], c[1]]
-            );
-
-            // Update refs (source of truth for async callbacks)
-            pointsRef.current = newPoints;
-            manualRouteRef.current = newManualRoute;
-            selectionBoxesRef.current = [];
-            preAreaPointCountRef.current = null;
-            historyIndexRef.current = 0;
-            const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], preAreaPointCount: null };
-            historyRef.current = [snapshot];
-
-            // Mark as imported so auto-generation is suppressed
-            isImportedRouteRef.current = true;
-            setIsImportedRoute(true);
-
-            // Update all state
-            setSelectedPoints(newPoints);
-            setManualRoute(newManualRoute);
-            setSelectionBoxes([]);
-            setPreAreaPointCount(null);
-            setRoute(routeCoords);
-            setElevationData(data.elevationProfile);
-            setTotalDistance(data.totalDistance);
-            setHistory([snapshot]);
-            setHistoryIndex(0);
+            setRwgpsSourceRouteId(null);
+            applyParsedRoute(data);
         } catch (err: any) {
             setError({ message: `Import failed: ${err.message}` });
         } finally {
             setIsImporting(false);
         }
-    }, []);
+    }, [applyParsedRoute]);
+
+    const handleSelectRwgpsRoute = useCallback(async (routeId: number, routeNameFromLibrary: string) => {
+        if (!rwgpsCredentials?.accessToken) return;
+        setIsLoadingRwgpsRoute(true);
+        setError(null);
+        try {
+            const res = await fetch('/api/rwgps/load-route', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ accessToken: rwgpsCredentials.accessToken, routeId }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Failed to load route from RideWithGPS');
+            applyParsedRoute(data);
+            setRwgpsSourceRouteId(routeId);
+            setRouteName(data.routeName || routeNameFromLibrary);
+            setShowRwgpsLibrary(false);
+        } catch (err: any) {
+            setError({ message: `RideWithGPS load failed: ${err.message}` });
+        } finally {
+            setIsLoadingRwgpsRoute(false);
+        }
+    }, [applyParsedRoute, rwgpsCredentials]);
 
     const isDraggingRef = useRef(false);
 
@@ -1157,6 +1238,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
         setSelectionPolygons([]);
         setPreAreaPointCount(null);
         setActiveSteps(0);
+        setRwgpsSourceRouteId(null);
     }, []);
 
     const applySnapshot = useCallback((snapshot: RouteSnapshot, index: number) => {
@@ -1223,6 +1305,16 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                         isLoading={isRwgpsUploading}
                         onClick={() => setShowRwgpsSettings(true)}
                     />
+
+                    {rwgpsCredentials?.accessToken && (
+                        <button
+                            onClick={() => setShowRwgpsLibrary(true)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm mr-2"
+                            title="Browse your RideWithGPS library"
+                        >
+                            Library
+                        </button>
+                    )}
 
                     {stravaRoads && stravaRoads.length > 0 && (
                         <button
@@ -1490,7 +1582,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                             <button
                                 onClick={sendToRwgps}
                                 disabled={isRwgpsUploading}
-                                title="Send to RideWithGPS"
+                                title={rwgpsSourceRouteId ? 'Update on RideWithGPS' : 'Send to RideWithGPS'}
                                 className="flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-[#FC4C02] text-white rounded-md text-sm font-semibold hover:bg-[#e34402] transition-all shadow-sm disabled:opacity-60"
                             >
                                 {isRwgpsUploading ? (
@@ -1498,7 +1590,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                 ) : (
                                     <span>&rarr;</span>
                                 )}
-                                RWGPS
+                                {rwgpsSourceRouteId ? 'Update RWGPS' : 'RWGPS'}
                             </button>
                         </>
                     )}
@@ -1564,6 +1656,14 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                     >
                                         {rwgpsCredentials?.accessToken ? 'RideWithGPS' : 'Connect RideWithGPS'}
                                     </button>
+                                    {rwgpsCredentials?.accessToken && (
+                                        <button
+                                            onClick={() => { setShowRwgpsLibrary(true); setShowMobileMenu(false); }}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                                        >
+                                            RideWithGPS Library
+                                        </button>
+                                    )}
                                     {stravaRoads && stravaRoads.length > 0 && (
                                         <button
                                             onClick={() => { setShowStats(true); setShowMobileMenu(false); }}
@@ -1682,7 +1782,7 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                                                 disabled={isRwgpsUploading}
                                                 className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
                                             >
-                                                {isRwgpsUploading ? 'Uploading…' : 'Send to RideWithGPS'}
+                                                {isRwgpsUploading ? 'Uploading…' : rwgpsSourceRouteId ? 'Update on RideWithGPS' : 'Send to RideWithGPS'}
                                             </button>
                                         </div>
                                     </>
@@ -1932,6 +2032,22 @@ ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefi
                     isOpen={showRwgpsSettings}
                     onClose={() => setShowRwgpsSettings(false)}
                     isConnected={!!rwgpsCredentials?.accessToken}
+                />
+
+                {rwgpsCredentials?.accessToken && (
+                    <RwgpsLibraryDialog
+                        isOpen={showRwgpsLibrary}
+                        onClose={() => setShowRwgpsLibrary(false)}
+                        accessToken={rwgpsCredentials.accessToken}
+                        isLoadingRoute={isLoadingRwgpsRoute}
+                        onSelectRoute={handleSelectRwgpsRoute}
+                    />
+                )}
+
+                <RwgpsSaveConfirmDialog
+                    isOpen={showRwgpsSaveConfirm}
+                    onClose={() => { setShowRwgpsSaveConfirm(false); pendingRwgpsSaveNameRef.current = null; }}
+                    onContinue={handleRwgpsSaveConfirm}
                 />
 
                 <RouteNameDialog

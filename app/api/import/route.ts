@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { calculateElevationProfile } from '@/lib/elevation';
-
-type Coord = [number, number] | [number, number, number]; // [lon, lat] | [lon, lat, ele]
+import { parseGpxTrack, GpxCoord as Coord } from '@/lib/gpx';
 
 const SEMICIRCLES_TO_DEG = 180 / Math.pow(2, 31);
 
@@ -22,28 +21,6 @@ function parseFit(buffer: Buffer): Coord[] {
             coords.push([lon, lat, r.altitude]);
         } else {
             coords.push([lon, lat]);
-        }
-    }
-    return coords;
-}
-
-function parseGpx(text: string): Coord[] {
-    const coords: Coord[] = [];
-    const trkptRe = /<trkpt\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>([\s\S]*?)<\/trkpt>/g;
-    let m: RegExpExecArray | null;
-    while ((m = trkptRe.exec(text)) !== null) {
-        const lat = parseFloat(m[1]);
-        const lon = parseFloat(m[2]);
-        const eleMatch = /<ele>([^<]+)<\/ele>/.exec(m[3]);
-        coords.push(eleMatch ? [lon, lat, parseFloat(eleMatch[1])] : [lon, lat]);
-    }
-    if (coords.length === 0) {
-        const rteptRe = /<rtept\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>([\s\S]*?)<\/rtept>/g;
-        while ((m = rteptRe.exec(text)) !== null) {
-            const lat = parseFloat(m[1]);
-            const lon = parseFloat(m[2]);
-            const eleMatch = /<ele>([^<]+)<\/ele>/.exec(m[3]);
-            coords.push(eleMatch ? [lon, lat, parseFloat(eleMatch[1])] : [lon, lat]);
         }
     }
     return coords;
@@ -81,7 +58,7 @@ export async function POST(request: Request) {
             const arrayBuffer = await file.arrayBuffer();
             coords = parseFit(Buffer.from(arrayBuffer));
         } else if (name.endsWith('.gpx')) {
-            coords = parseGpx(await file.text());
+            coords = parseGpxTrack(await file.text());
         } else if (name.endsWith('.tcx')) {
             coords = parseTcx(await file.text());
         } else {

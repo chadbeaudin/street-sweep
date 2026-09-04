@@ -521,7 +521,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
             );
         }
         prevRouteRef.current = route;
-    }, [route]);
+    }, [route, isImportedRoute]);
 
     // The selection/lasso overlay is a sibling of the Leaflet map container
     // (positioned on top via z-index, not a DOM descendant), so wheel events

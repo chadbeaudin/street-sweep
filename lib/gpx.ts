@@ -1,3 +1,29 @@
+export type GpxCoord = [number, number] | [number, number, number]; // [lon, lat] | [lon, lat, ele]
+
+// Shared by the file-upload import route and RWGPS route loading (RWGPS
+// serves any route as GPX via GET /routes/{id}.gpx) — one parser either way.
+export function parseGpxTrack(text: string): GpxCoord[] {
+    const coords: GpxCoord[] = [];
+    const trkptRe = /<trkpt\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>([\s\S]*?)<\/trkpt>/g;
+    let m: RegExpExecArray | null;
+    while ((m = trkptRe.exec(text)) !== null) {
+        const lat = parseFloat(m[1]);
+        const lon = parseFloat(m[2]);
+        const eleMatch = /<ele>([^<]+)<\/ele>/.exec(m[3]);
+        coords.push(eleMatch ? [lon, lat, parseFloat(eleMatch[1])] : [lon, lat]);
+    }
+    if (coords.length === 0) {
+        const rteptRe = /<rtept\b[^>]*\blat="([^"]+)"[^>]*\blon="([^"]+)"[^>]*>([\s\S]*?)<\/rtept>/g;
+        while ((m = rteptRe.exec(text)) !== null) {
+            const lat = parseFloat(m[1]);
+            const lon = parseFloat(m[2]);
+            const eleMatch = /<ele>([^<]+)<\/ele>/.exec(m[3]);
+            coords.push(eleMatch ? [lon, lat, parseFloat(eleMatch[1])] : [lon, lat]);
+        }
+    }
+    return coords;
+}
+
 function escapeXml(str: string): string {
     return str
         .replace(/&/g, '&amp;')
