@@ -11,6 +11,13 @@ describe('buildGpxCourse', () => {
         expect(gpx).toContain('<name>My Route</name>');
     });
 
+    it('tags the track as cycling so importers (RWGPS, Garmin) classify it correctly', () => {
+        // Without this, RWGPS in particular has been observed misclassifying
+        // uploaded routes as running instead of cycling.
+        const gpx = buildGpxCourse(sampleRoute, 'My Route');
+        expect(gpx).toContain('<type>cycling</type>');
+    });
+
     it('escapes < and > in route name', () => {
         const gpx = buildGpxCourse(sampleRoute, 'Route <1>');
         expect(gpx).not.toContain('<name>Route <1></name>');

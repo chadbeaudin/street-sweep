@@ -45,6 +45,7 @@ export function buildGpxCourse(
   </metadata>
   <trk>
     <name>${safeName}</name>
+    <type>cycling</type>
     <trkseg>
 ${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefined ? `\n        <ele>${pt[2]}</ele>` : ''}
       </trkpt>`).join('\n')}
