@@ -139,3 +139,14 @@ export function isBikingActivity(type?: string): boolean {
     if (!type) return false; // Must have an explicit biking type
     return BIKING_TYPES.has(type.toLowerCase());
 }
+
+// VirtualRide (Zwift/indoor trainer) is real cycling effort but has no
+// real-world GPS location, so it's deliberately excluded from
+// isBikingActivity — including it there would put fake locations on the
+// ridden-roads map and inflate geographic coverage stats. It should still
+// count toward lifetime activity/elevation totals, which don't need a real
+// location, hence this separate, broader check.
+export function isCyclingActivity(type?: string): boolean {
+    if (!type) return false;
+    return isBikingActivity(type) || type.toLowerCase() === 'virtualride';
+}

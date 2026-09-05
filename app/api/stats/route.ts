@@ -25,7 +25,7 @@ const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 // v5: virtual/indoor and stationary rides excluded from the ridden set.
 // v6: bikingStats levels carry parent chain for hierarchical drill-down.
 // v7: records added (total distance, exploration %, longest ride, climb, active days, per-year).
-const STATS_VERSION = 7;
+const STATS_VERSION = 8; // bumped: totalActivities/totalElevationFeet now include VirtualRide
 
 interface CityStats {
     name: string;
@@ -109,14 +109,18 @@ function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): 
 
 const METERS_TO_FEET = 3.28084;
 
-// Input is already cycling-only (fetchCyclingRiddenRoads is the single filter
-// point), so every activity here counts toward the dashboard.
-async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = []): Promise<StatsPayload> {
+// riddenRoads/activityElevations/etc. are the real-world-trackable subset
+// (used for coverage miles and per-city geocoding, which need an actual GPS
+// track). totalCyclingActivities/totalCyclingElevationGainMeters are broader
+// — they also include VirtualRide (indoor trainer rides have no real-world
+// location, but their elevation/activity count are still real) — so the
+// "Activities" and "Climbed" dashboard totals aren't missing indoor rides.
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = [], totalCyclingActivities: number = riddenRoads.length, totalCyclingElevationGainMeters: number = activityElevations.reduce((sum, m) => sum + (m || 0), 0)): Promise<StatsPayload> {
     console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
     const records = computeRideRecords(activityDistances, activityElevations, activityStartDates);
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
-    const totalElevationFeet = activityElevations.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET;
+    const totalElevationFeet = totalCyclingElevationGainMeters * METERS_TO_FEET;
 
     // Dedupe centroids to ~5km buckets BEFORE hitting Nominatim. With 800+
     // activities concentrated in one metro area this collapses to <20 lookups
@@ -253,7 +257,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
 
     return {
         version: STATS_VERSION,
-        totalActivities: riddenRoads.length,
+        totalActivities: totalCyclingActivities,
         totalUniqueMiles,
         totalElevationFeet,
         totalDistanceMiles: records.totalDistanceMiles,
@@ -302,8 +306,8 @@ async function refreshInBackground(athleteId: string, creds: StravaCredentials) 
         console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
         // Fetch the ride set server-side so the client never has to ship it in
         // the request body (which a reverse proxy would reject as too large).
-        const { riddenRoads, activityElevations, activityDistances, activityStartDates } = await fetchCyclingRiddenRoads(creds);
-        const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates);
+        const { riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds);
+        const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters);
         await persistStats(athleteId, fresh);
         console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
     } catch (e: any) {

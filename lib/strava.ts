@@ -1,5 +1,5 @@
 import polyline from '@mapbox/polyline';
-import { isBikingActivity } from './stats';
+import { isBikingActivity, isCyclingActivity } from './stats';
 import { haversineM } from './geometry';
 import { prisma } from './prisma';
 import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
@@ -40,6 +40,11 @@ export interface RiddenActivities {
     activityTypes: string[];
     activityDistances: number[]; // meters
     activityStartDates: string[]; // ISO
+    // Broader than riddenRoads: also includes VirtualRide (real cycling
+    // effort, no real-world GPS location) for lifetime activity/elevation
+    // totals — see isCyclingActivity.
+    totalCyclingActivities: number;
+    totalCyclingElevationGainMeters: number;
 }
 
 // Single source of truth for what the app treats as "ridden": real-world cycling
@@ -52,12 +57,15 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         .filter(a => isBikingActivity(a.sport_type || a.type))
         .map(a => ({ a, poly: polyline.decode(a.map.summary_polyline) as [number, number][] }))
         .filter(({ poly }) => poly.length >= 2 && trackSpanMeters(poly) >= MIN_TRACK_SPAN_METERS);
+    const allCycling = all.filter(a => isCyclingActivity(a.sport_type || a.type));
     return {
         riddenRoads: real.map(r => r.poly),
         activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),
         activityTypes: real.map(r => r.a.sport_type || r.a.type || ''),
         activityDistances: real.map(r => r.a.distance ?? 0),
         activityStartDates: real.map(r => r.a.start_date ?? ''),
+        totalCyclingActivities: allCycling.length,
+        totalCyclingElevationGainMeters: allCycling.reduce((sum, a) => sum + (a.total_elevation_gain ?? 0), 0),
     };
 }
 
