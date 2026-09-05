@@ -29,6 +29,7 @@ import { ElevationProfile } from '@/components/ElevationProfile';
 import pkg from '@/package.json';
 import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
+import { buildGpxCourse } from '@/lib/gpx';
 import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
 import { calculateElevationGainLoss } from '@/lib/elevation';
 
@@ -576,18 +577,7 @@ export default function Home() {
 
     const downloadGPX = async () => {
         if (!route) return;
-
-        const gpx = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="StreetSweep" xmlns="http://www.topografix.com/GPX/1/1">
-  <trk>
-    <name>${routeName}</name>
-    <trkseg>
-${route.map(pt => `      <trkpt lat="${pt[1]}" lon="${pt[0]}">${pt[2] !== undefined ? `\n        <ele>${pt[2]}</ele>` : ''}
-      </trkpt>`).join('\n')}
-    </trkseg>
-  </trk>
-</gpx>`;
-
+        const gpx = buildGpxCourse(route, routeName);
         await shareOrDownloadGpx(gpx, 'route.gpx');
     };
 
