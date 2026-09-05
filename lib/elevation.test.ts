@@ -1,4 +1,4 @@
-import { fetchElevationData, calculateElevationProfile, calculateElevationGainLoss } from './elevation';
+import { fetchElevationData, calculateElevationProfile, calculateElevationGainLoss, densifyElevationProfile } from './elevation';
 
 describe('calculateElevationGainLoss', () => {
     it('ignores noise below the threshold', () => {
@@ -131,5 +131,54 @@ describe('elevation library robustness', () => {
         expect(profile[0].elevation).toBe(3281); // 1000 * 3.28084 rounded
         expect(profile[1].elevation).toBe(3314); // 1010 * 3.28084 rounded
         expect(profile[1].distance).toBeGreaterThan(0);
+    });
+});
+
+describe('densifyElevationProfile', () => {
+    // A straight line of 11 points, ~11m apart (0.0001 deg lon at the equator).
+    const routeCoords: [number, number][] = Array.from({ length: 11 }, (_, i) => [i * 0.0001, 0]);
+
+    it('produces one point per route coordinate when under the cap', () => {
+        const sparse = calculateElevationProfile([routeCoords[0], routeCoords[5], routeCoords[10]], [100, 200, 100]);
+        const dense = densifyElevationProfile(routeCoords, sparse, 6000);
+        expect(dense.length).toBe(routeCoords.length);
+    });
+
+    it('interpolates elevation linearly between sparse samples', () => {
+        // Sparse samples only at the two ends: 100m -> 200m over the whole route.
+        const sparse = calculateElevationProfile([routeCoords[0], routeCoords[10]], [100, 200]);
+        const dense = densifyElevationProfile(routeCoords, sparse, 6000);
+
+        expect(dense[0].elevation).toBe(sparse[0].elevation);
+        expect(dense[dense.length - 1].elevation).toBe(sparse[1].elevation);
+        // Midpoint should sit roughly halfway between the two sparse elevations.
+        const mid = dense[Math.floor(dense.length / 2)];
+        expect(mid.elevation).toBeGreaterThan(sparse[0].elevation);
+        expect(mid.elevation).toBeLessThan(sparse[1].elevation);
+    });
+
+    it('uses the route real lat/lon at each dense point, not the sparse sample positions', () => {
+        const sparse = calculateElevationProfile([routeCoords[0], routeCoords[10]], [100, 200]);
+        const dense = densifyElevationProfile(routeCoords, sparse, 6000);
+        // A middle point's coordinates should match the actual route geometry,
+        // not just interpolate between the two sparse endpoints' positions.
+        const midRouteCoord = routeCoords[5];
+        expect(dense[5].lon).toBeCloseTo(midRouteCoord[0], 9);
+        expect(dense[5].lat).toBeCloseTo(midRouteCoord[1], 9);
+    });
+
+    it('strides down to stay within maxPoints for a huge route', () => {
+        const bigRoute: [number, number][] = Array.from({ length: 20000 }, (_, i) => [i * 0.0001, 0]);
+        const sparse = calculateElevationProfile([bigRoute[0], bigRoute[bigRoute.length - 1]], [100, 200]);
+        const dense = densifyElevationProfile(bigRoute, sparse, 6000);
+        // Integer-division striding can overshoot the target somewhat; the point is
+        // that it stays in the same ballpark, not thousands of points over.
+        expect(dense.length).toBeLessThanOrEqual(7000);
+        expect(dense.length).toBeGreaterThan(1000);
+    });
+
+    it('falls back to the sparse profile when there is no route geometry', () => {
+        const sparse = calculateElevationProfile([routeCoords[0], routeCoords[10]], [100, 200]);
+        expect(densifyElevationProfile([], sparse)).toBe(sparse);
     });
 });

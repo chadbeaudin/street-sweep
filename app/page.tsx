@@ -31,7 +31,7 @@ import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
 import { buildGpxCourse } from '@/lib/gpx';
 import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
-import { calculateElevationGainLoss } from '@/lib/elevation';
+import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
 
 export default function Home() {
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
@@ -1264,6 +1264,16 @@ export default function Home() {
         return calculateElevationGainLoss(elevationData.map(p => p.elevation), 15).gain;
     }, [elevationData]);
 
+    // The fetched elevation samples are deliberately sparse (bounded external
+    // API cost), which made the elevation-profile hover marker jump in big
+    // steps on the map. Rebuild a much denser profile from the full-res route
+    // geometry already in memory, interpolating elevation — no extra fetches.
+    const denseElevationData = useMemo(() => {
+        if (!elevationData || elevationData.length < 2 || !route || route.length < 2) return elevationData;
+        const routeCoords: [number, number][] = route.map(p => [p[0], p[1]]);
+        return densifyElevationProfile(routeCoords, elevationData);
+    }, [elevationData, route]);
+
     return (
         <main className="flex flex-col h-app bg-gray-50 overflow-hidden">
             <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-[1000]">
@@ -1993,7 +2003,7 @@ export default function Home() {
 
                 {elevationData && (
                     <ElevationProfile
-                        data={elevationData}
+                        data={denseElevationData ?? elevationData}
                         onHover={setHoveredPoint}
                         totalDistance={totalDistance}
                         totalElevationGain={totalElevationGain}

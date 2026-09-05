@@ -213,3 +213,62 @@ export function calculateElevationProfile(coords: [number, number][], elevations
         };
     });
 }
+
+/**
+ * Rebuilds the elevation profile at the route's full point resolution by
+ * linearly interpolating elevation between the sparse fetched samples.
+ *
+ * The sparse profile is deliberately coarse (one elevation lookup per few
+ * dozen/hundred feet, capped independently to bound external elevation-API
+ * cost — see fetchElevationData) — fine for the gain/loss calculation and
+ * the visual chart line, but far too coarse for scrubbing the elevation
+ * profile and watching the corresponding point move on the map: the
+ * highlighted marker would jump directly between samples instead of
+ * tracking the route. This produces a much denser set of hoverable
+ * positions using geometry already in memory, with no extra network calls.
+ */
+export function densifyElevationProfile(
+    routeCoords: [number, number][], // [lon, lat], full resolution
+    sparseProfile: ElevationPoint[], // ascending distance (miles), from calculateElevationProfile
+    maxPoints = 6000
+): ElevationPoint[] {
+    if (routeCoords.length === 0 || sparseProfile.length === 0) return sparseProfile;
+
+    // Stride down if the full-res route has more points than maxPoints, to
+    // bound chart-rendering cost while staying far denser than the sparse
+    // elevation samples.
+    const step = Math.max(1, Math.floor(routeCoords.length / maxPoints));
+    const strided: [number, number][] = [];
+    for (let i = 0; i < routeCoords.length; i += step) strided.push(routeCoords[i]);
+    const lastCoord = routeCoords[routeCoords.length - 1];
+    if (strided[strided.length - 1] !== lastCoord) strided.push(lastCoord);
+
+    let cumulative = 0;
+    let sparseIdx = 0; // two-pointer into sparseProfile, monotonic non-decreasing
+    const dense: ElevationPoint[] = [];
+    for (let i = 0; i < strided.length; i++) {
+        if (i > 0) {
+            cumulative += distance(point(strided[i - 1]), point(strided[i]), { units: 'miles' });
+        }
+        while (sparseIdx < sparseProfile.length - 2 && sparseProfile[sparseIdx + 1].distance <= cumulative) {
+            sparseIdx++;
+        }
+        const a = sparseProfile[sparseIdx];
+        const b = sparseProfile[Math.min(sparseIdx + 1, sparseProfile.length - 1)];
+        const span = b.distance - a.distance;
+        const t = span > 0 ? Math.max(0, Math.min(1, (cumulative - a.distance) / span)) : 0;
+        dense.push({
+            distance: parseFloat(cumulative.toFixed(3)),
+            elevation: Math.round(a.elevation + (b.elevation - a.elevation) * t),
+            lat: strided[i][1],
+            lon: strided[i][0],
+        });
+    }
+    // The route's own cumulative distance can drift slightly from the sparse
+    // profile's independently-summed total (different point spacing), which
+    // would otherwise leave the very last point just short of t=1. Since both
+    // represent the same physical endpoint, snap it to the sparse profile's
+    // exact final elevation.
+    if (dense.length > 0) dense[dense.length - 1].elevation = sparseProfile[sparseProfile.length - 1].elevation;
+    return dense;
+}
