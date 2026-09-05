@@ -50,7 +50,7 @@ export default function Home() {
     const [isStravaLoading, setIsStravaLoading] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
-    const [history, setHistory] = useState<{ points: { lat: number; lon: number; id: string }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[], preAreaPointCount: number | null }[]>([]);
+    const [history, setHistory] = useState<RouteSnapshot[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
     const [routingOptions, setRoutingOptions] = useState({
         avoidGravel: false,
@@ -121,7 +121,7 @@ export default function Home() {
     const roadTileCacheRef = useRef<[number, number][][]>([]);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
-    const historyRef = useRef<{ points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[], route: [number, number][][], selectionBoxes: { north: number; south: number; east: number; west: number }[], preAreaPointCount: number | null }[]>([]);
+    const historyRef = useRef<RouteSnapshot[]>([]);
     const selectionBoxesRef = useRef<{ north: number; south: number; east: number; west: number }[]>([]);
     const selectionPolygonsRef = useRef<[number, number][][]>([]);
     const preAreaPointCountRef = useRef<number | null>(null);
@@ -510,7 +510,7 @@ export default function Home() {
                         const newPoint = { lat, lon, id: Math.random().toString(36).substr(2, 9), status: 'snapped' as const };
                         pointsRef.current = [...pointsRef.current, newPoint];
                         setSelectedPoints([...pointsRef.current]);
-                        const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                        const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
                         const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                         historyRef.current = [...newHistory, snapshot];
                         historyIndexRef.current = historyRef.current.length - 1;
@@ -776,7 +776,7 @@ export default function Home() {
         selectionBoxesRef.current = [];
         preAreaPointCountRef.current = null;
         historyIndexRef.current = 0;
-        const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], preAreaPointCount: null };
+        const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], selectionPolygons: [], preAreaPointCount: null };
         historyRef.current = [snapshot];
 
         // Mark as imported so auto-generation is suppressed
@@ -898,7 +898,7 @@ export default function Home() {
                     // route to this location even without a road-following path segment.
                     pointsRef.current[tempIdx] = { ...newPoint, status: 'snapped' as const };
                     setSelectedPoints([...pointsRef.current]);
-                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
                     historyRef.current = [...historyRef.current.slice(0, historyIndexRef.current + 1), snapshot];
                     historyIndexRef.current = historyRef.current.length - 1;
                     setHistory(historyRef.current);
@@ -921,7 +921,7 @@ export default function Home() {
                 // Update refs (source of truth for subsequent clicks)
                 manualRouteRef.current = currentSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
                 // Truncate history based on current index (for redo safety)
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
@@ -1012,7 +1012,7 @@ export default function Home() {
 
                 manualRouteRef.current = updatedSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -1052,7 +1052,7 @@ export default function Home() {
         setManualRoute([...newRoute]);
 
         const commitSnapshot = () => {
-            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
             const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
             historyRef.current = [...newHistory, snapshot];
             historyIndexRef.current = historyRef.current.length - 1;
@@ -1189,7 +1189,7 @@ export default function Home() {
                 }
 
                 manualRouteRef.current = updatedSegments;
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -1235,12 +1235,14 @@ export default function Home() {
         pointsRef.current = [...snapshot.points];
         manualRouteRef.current = [...snapshot.route];
         selectionBoxesRef.current = [...snapshot.selectionBoxes];
+        selectionPolygonsRef.current = [...(snapshot.selectionPolygons ?? [])];
         preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
         historyIndexRef.current = index;
 
         setSelectedPoints(pointsRef.current);
         setManualRoute(manualRouteRef.current);
         setSelectionBoxes(selectionBoxesRef.current);
+        setSelectionPolygons(selectionPolygonsRef.current);
         setPreAreaPointCount(preAreaPointCountRef.current);
         setHistoryIndex(index);
     }, []);
@@ -1972,7 +1974,7 @@ export default function Home() {
                                 preAreaPointCountRef.current = pointsRef.current.length;
                                 setPreAreaPointCount(pointsRef.current.length);
                             }
-                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes, preAreaPointCount: preAreaPointCountRef.current };
+                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes, selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
                             const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                             historyRef.current = [...newHistory, snapshot];
                             historyIndexRef.current = historyRef.current.length - 1;
@@ -1984,13 +1986,22 @@ export default function Home() {
                     }}
                     onSelectionPolygonChange={(polygon: [number, number][] | null) => {
                         if (polygon) {
-                            const newPolygons = [...selectionPolygons, polygon];
+                            const newPolygons = [...selectionPolygonsRef.current, polygon];
+                            selectionPolygonsRef.current = newPolygons;
                             setSelectionPolygons(newPolygons);
                             // Lock in how many approach points existed when the first polygon was drawn
                             if (preAreaPointCountRef.current === null) {
                                 preAreaPointCountRef.current = pointsRef.current.length;
                                 setPreAreaPointCount(pointsRef.current.length);
                             }
+                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: newPolygons, preAreaPointCount: preAreaPointCountRef.current };
+                            const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+                            historyRef.current = [...newHistory, snapshot];
+                            historyIndexRef.current = historyRef.current.length - 1;
+                            setHistory(historyRef.current);
+                            setHistoryIndex(historyIndexRef.current);
+                        } else {
+                            setSelectionPolygons([]);
                         }
                     }}
                     onSelectionModeChange={setIsSelectionMode}

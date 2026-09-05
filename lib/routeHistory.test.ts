@@ -4,6 +4,7 @@ const snap = (over: Partial<RouteSnapshot> = {}): RouteSnapshot => ({
     points: [],
     route: [],
     selectionBoxes: [],
+    selectionPolygons: [],
     preAreaPointCount: null,
     ...over,
 });
@@ -52,6 +53,36 @@ describe('routeHistory', () => {
         const fwd = redo(history, back.index);       // forward to the area snapshot
         expect(fwd.index).toBe(1);
         expect(fwd.snapshot!.selectionBoxes).toEqual([box]);
+        expect(fwd.snapshot!.preAreaPointCount).toBe(2);
+    });
+
+    // A lasso (selectionPolygons) must be undoable exactly like a box: drawing
+    // one and then undoing should remove it (and the coverage route generated
+    // for it, which regenerates automatically once selectionPolygons reverts).
+    const lasso: [number, number][] = [[39.02, -104.71], [39.03, -104.71], [39.03, -104.7]];
+
+    it('undo after drawing a lasso restores the pre-lasso state (empty polygons)', () => {
+        let { history, index } = pushSnapshot([], -1, snap({ points: [{ lat: 1, lon: 1, id: 'a' }] }));
+        ({ history, index } = pushSnapshot(history, index, snap({
+            points: [{ lat: 1, lon: 1, id: 'a' }],
+            selectionPolygons: [lasso],
+            preAreaPointCount: 1,
+        })));
+
+        const back = undo(history, index);
+        expect(back.index).toBe(0);
+        expect(back.snapshot).not.toBeNull();
+        expect(back.snapshot!.selectionPolygons).toEqual([]);
+        expect(back.snapshot!.preAreaPointCount).toBeNull();
+    });
+
+    it('redo returns the lasso snapshot with its polygon and count', () => {
+        let { history, index } = pushSnapshot([], -1, snap());
+        ({ history, index } = pushSnapshot(history, index, snap({ selectionPolygons: [lasso], preAreaPointCount: 2 })));
+        const back = undo(history, index);
+        const fwd = redo(history, back.index);
+        expect(fwd.index).toBe(1);
+        expect(fwd.snapshot!.selectionPolygons).toEqual([lasso]);
         expect(fwd.snapshot!.preAreaPointCount).toBe(2);
     });
 

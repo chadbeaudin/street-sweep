@@ -6,6 +6,7 @@ export interface RouteSnapshot {
     points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[];
     route: [number, number][][];
     selectionBoxes: { north: number; south: number; east: number; west: number }[];
+    selectionPolygons: [number, number][][];
     preAreaPointCount: number | null;
 }
 
