@@ -1,6 +1,6 @@
 # StreetSweep
 
-**Live app:** [street-sweep.vercel.app](https://street-sweep.vercel.app)
+**Live app:** [streetsweep.fly.dev](https://streetsweep.fly.dev)
 
 **StreetSweep** helps cyclists and runners explore new areas they have not previously ridden.  Connect your Strava account to import all your rides which will be displayed on a single map to highlight areas you have not previously ridden.  StreetSweep  will then help you generate optimized routes, previously untraveled by you, with minimal backtracking.  For the nerds out there, StreetSweep effectively solves the `Chinese Postman Problem` for custom bounding boxes.  
 

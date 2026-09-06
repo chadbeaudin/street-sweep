@@ -378,9 +378,9 @@ export default function Home() {
 
         // Tile the viewport (plus a small buffer) at a coarse grid so panning only
         // fetches the newly-revealed tiles instead of re-downloading the whole
-        // viewport's road geometry every time — this is the single biggest source
-        // of Vercel "Fast Origin Transfer" usage, since /api/roads fires on every
-        // pan/zoom (moveend).
+        // viewport's road geometry every time — /api/roads fires on every
+        // pan/zoom (moveend), so this is the single biggest source of outbound
+        // bandwidth.
         const missing = missingRoadTiles(bbox, fetchedRoadTilesRef.current);
 
         if (missing.length === 0) {
