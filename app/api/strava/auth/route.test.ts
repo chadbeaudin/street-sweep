@@ -88,6 +88,19 @@ describe('GET /api/strava/auth', () => {
         delete process.env.NEXT_PUBLIC_BASE_URL;
     });
 
+    it('regression: derives redirect_uri from the Host header, not req.url, when no NEXT_PUBLIC_BASE_URL is set', async () => {
+        // req.url's host reflects the server's own bind address (e.g. 0.0.0.0:3888)
+        // when running the standalone server behind a reverse proxy (Fly.io, etc.),
+        // not the real incoming request — this broke the redirect_uri in production
+        // after moving off Vercel. The Host header is the real source of truth here.
+        await GET(makeRequest({ host: 'streetsweep.fly.dev' }));
+        const url = getRedirectUrl();
+        const redirectUri = url.searchParams.get('redirect_uri');
+        expect(redirectUri).toContain('streetsweep.fly.dev');
+        expect(redirectUri).not.toContain('0.0.0.0');
+        expect(redirectUri).not.toContain('localhost');
+    });
+
     it('includes correct client_id in authorization URL', async () => {
         await GET(makeRequest());
         const url = getRedirectUrl();

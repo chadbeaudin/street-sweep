@@ -9,8 +9,12 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'RideWithGPS OAuth client ID not configured on server.' }, { status: 500 });
     }
 
+    // req.url's host reflects the server's own bind address (e.g. 0.0.0.0:3888) when
+    // running the standalone server behind a reverse proxy (Fly.io, etc.) rather than
+    // the real incoming request — the Host/X-Forwarded-* headers are the reliable source.
     const proto = req.headers.get('x-forwarded-proto') || new URL(req.url).protocol.replace(':', '');
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${new URL(req.url).host}`;
+    const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || new URL(req.url).host;
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${host}`;
     const redirectUri = `${baseUrl}/rwgps-auth`;
 
     const state = crypto.randomUUID();
