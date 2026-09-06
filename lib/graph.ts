@@ -22,6 +22,7 @@ interface EdgeData {
     isAvoided?: boolean;
     highway?: string;
     hasConstruction?: boolean;
+    hasBikeLane?: boolean;
 }
 
 export interface RoutingOptions {
@@ -358,6 +359,17 @@ export class StreetGraph {
                     way.tags?.['construction:highway'] !== undefined ||
                     highway === 'construction';
 
+                // A dedicated bike lane/track is safer and more pleasant than a shared
+                // lane on the same street class, so it gets a mild preference (not a hard
+                // requirement) when routing between two points with otherwise-comparable
+                // options. Matches any of the common cycleway tagging schemes.
+                const bikeLaneValues = ['lane', 'track', 'shared_lane', 'share_busway', 'opposite_lane', 'opposite_track'];
+                const hasBikeLane = highway === 'cycleway' ||
+                    bikeLaneValues.includes(way.tags?.cycleway || '') ||
+                    bikeLaneValues.includes(way.tags?.['cycleway:left'] || '') ||
+                    bikeLaneValues.includes(way.tags?.['cycleway:right'] || '') ||
+                    bikeLaneValues.includes(way.tags?.['cycleway:both'] || '');
+
                 for (let i = 0; i < way.nodes.length - 1; i++) {
                     const uId = way.nodes[i];
                     const vId = way.nodes[i + 1];
@@ -397,6 +409,12 @@ export class StreetGraph {
                         } else if (isAvoided) {
                             dist *= 50;
                         }
+                        // Mild preference, not a routing override: a real detour still wins
+                        // on distance, but a bike lane breaks ties with an otherwise-equal
+                        // alternative and nudges a close call its way.
+                        if (hasBikeLane) {
+                            dist *= 0.9;
+                        }
                         const isRidden = this.checkIfRidden(uCoord, vCoord, riddenRoads);
 
                         this.graph.addLink(uIdStr, vIdStr, {
@@ -406,7 +424,8 @@ export class StreetGraph {
                             highway: highway, // Store highway type for debugging/filtering
                             isRidden,
                             isAvoided,
-                            hasConstruction
+                            hasConstruction,
+                            hasBikeLane
                         });
                         this.graph.addLink(vIdStr, uIdStr, {
                             id: way.id.toString(),
@@ -415,7 +434,8 @@ export class StreetGraph {
                             highway: highway,
                             isRidden,
                             isAvoided,
-                            hasConstruction
+                            hasConstruction,
+                            hasBikeLane
                         });
                     }
                 }
@@ -824,10 +844,45 @@ export class StreetGraph {
         return results;
     }
 
+    /**
+     * Like findClosestTarget, but caps how far ridden/backtrack penalties (penalizedLinks)
+     * are allowed to detour the result. Point-to-point mode has no bounded area to fall back
+     * on the way the CPP solver does, so a heavily-penalized route can wander several blocks
+     * out of its way just to dodge one already-ridden segment — technically "preferring fresh
+     * streets" but not what placing two waypoints on the same street means to the user. If the
+     * penalized route's actual (unpenalized) distance exceeds capRatio times the real shortest
+     * path between the same two nodes, the real shortest path is returned instead.
+     */
+    public findClosestTargetCapped(
+        fromId: string,
+        targetIds: Set<string>,
+        penalizedLinks: Map<string, number> | undefined,
+        capRatio: number = 1.3
+    ): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
+        const penalizedResult = this.findClosestTarget(fromId, targetIds, undefined, penalizedLinks);
+        if (!penalizedResult || !penalizedLinks) return penalizedResult;
+
+        const rawResult = this.findClosestTarget(fromId, new Set([penalizedResult.targetId]), undefined, undefined);
+        if (!rawResult) return penalizedResult;
+
+        const realDistance = (path: { id: string, idNext: string }[]) => path.reduce((sum, seg) => {
+            const link = this.graph.getLink(seg.id, seg.idNext);
+            return sum + (link ? link.data.weight : 0);
+        }, 0);
+
+        const penalizedRealDistance = realDistance(penalizedResult.path);
+        const rawDistance = realDistance(rawResult.path);
+
+        if (rawDistance > 0 && penalizedRealDistance > rawDistance * capRatio) {
+            return rawResult;
+        }
+        return penalizedResult;
+    }
+
     public findClosestTarget(
-        fromId: string, 
-        targetIds: Set<string>, 
-        allowedLinks?: Set<string>, 
+        fromId: string,
+        targetIds: Set<string>,
+        allowedLinks?: Set<string>,
         penalizedLinks?: Map<string, number>
     ): { path: { id: string, idNext: string, weight: number }[], targetId: string } | null {
         const distances = new Map<string, number>();
@@ -1512,6 +1567,18 @@ export class StreetGraph {
 
         const edgeKey = (a: string, b: string) => a < b ? `${a}|${b}` : `${b}|${a}`;
 
+        // The exact graph node the manual route's own first/last coordinate snaps to
+        // in THIS graph build. Captured here (rather than re-snapping startPoint/endPoint
+        // independently below) because a separately-built graph for this /api/generate
+        // call can pick a different nearest node for the "same" click coordinate than the
+        // one baked into the manual route's required-edge parity (dMap below) — e.g. near
+        // a dense intersection with several nodes a couple meters apart. That mismatch left
+        // the manual route's true odd endpoint un-toggled while flipping parity on a nearby
+        // node instead, so a plain two-click route with no unridden streets in between could
+        // still get "matched" into an unnecessary out-and-back detour.
+        let manualRouteStartNode: string | null = null;
+        let manualRouteEndNode: string | null = null;
+
         if (manualRoute && manualRoute.length > 1) {
             console.log(`${ts()} Identifying mandatory segments from ${manualRoute.length} manual points.`);
 
@@ -1537,6 +1604,9 @@ export class StreetGraph {
                 const u = this.findClosestNode(p1[1], p1[0]);
                 const v = this.findClosestNode(p2[1], p2[0]);
 
+                if (i === 0 && u) manualRouteStartNode = u;
+                if (i === manualRoute.length - 2 && v) manualRouteEndNode = v;
+
                 if (u && v && u !== v) {
                     const directLink = this.graph.getLink(u, v);
                     if (directLink) {
@@ -1557,6 +1627,24 @@ export class StreetGraph {
                     // the snapped click points would otherwise be skipped, so
                     // the CPP solver never visits that street.
                     //
+                    // But when the shared node IS itself the actual intersection —
+                    // i.e. p1/p2 aren't really "a bit short of it" but sit right on
+                    // top of it (the common case at the very start/end of a manual
+                    // route, where the click IS the intersection) — there's no real
+                    // half-edge to rescue. findClosestPointOnEdge is ambiguous right
+                    // at a node with several edges meeting it, and can lock onto the
+                    // wrong one (e.g. a crossing street continuing past the
+                    // intersection instead of the direction actually travelled),
+                    // wrongly marking that street mandatory. Skip in that case.
+                    const nodeCoord = this.graph.getNode(u)?.data;
+                    const ON_NODE_THRESHOLD_M = 5;
+                    const p1OnNode = nodeCoord && this.haversine(p1[1], p1[0], nodeCoord.lat, nodeCoord.lon) < ON_NODE_THRESHOLD_M;
+                    const p2OnNode = nodeCoord && this.haversine(p2[1], p2[0], nodeCoord.lat, nodeCoord.lon) < ON_NODE_THRESHOLD_M;
+
+                    if (p1OnNode && p2OnNode) {
+                        continue;
+                    }
+
                     // Identify the edge each endpoint actually lies on, then
                     // mark it mandatory only when both agree. Falling back to
                     // the midpoint (as a previous version did) can snap to a
@@ -1823,8 +1911,13 @@ export class StreetGraph {
         // that's handled by trimBridgeOverlap in the mixed-mode branch, which trims
         // the bridge's redundant overlap with this solve's actual start, so the net
         // effect is fewer forced-parity detours with no new backtrack. See #64.
-        const startNode = startPoint ? findEndpointNode(startPoint, preferNaturalEndpoint) : null;
-        const endNode = endPoint ? findEndpointNode(endPoint, preferNaturalEndpoint) : null;
+        // Prefer the node the manual route's own endpoint already snapped to (see
+        // manualRouteStartNode/manualRouteEndNode above) over an independent re-snap of
+        // startPoint/endPoint, so the parity toggle below always cancels the manual
+        // route's actual odd endpoint instead of a nearby node that happens to be
+        // literal-nearest to the raw click coordinate.
+        const startNode = manualRouteStartNode ?? (startPoint ? findEndpointNode(startPoint, preferNaturalEndpoint) : null);
+        const endNode = manualRouteEndNode ?? (endPoint ? findEndpointNode(endPoint, preferNaturalEndpoint) : null);
 
         if (startNode && endNode && startNode !== endNode) {
             if (nodesToFlip.has(startNode)) nodesToFlip.delete(startNode); else nodesToFlip.add(startNode);

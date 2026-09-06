@@ -101,6 +101,84 @@ describe('StreetGraph', () => {
         expect(result[result.length - 1].lon).toBeCloseTo(0.002);
     });
 
+    describe('findClosestTargetCapped', () => {
+        // Real-world bug: a direct route between two points on the same street got
+        // penalized (ridden-roads avoidance) so heavily that pathfinding preferred a
+        // multi-block detour via a parallel street instead — technically "avoiding the
+        // ridden segment" but a huge, unwanted detour for what the user intended as a
+        // direct point-to-point hop. findClosestTargetCapped should refuse a penalized
+        // detour that isn't actually worth it distance-wise.
+        //
+        // Grid: direct route 1-2-3-4 is 300m (ridden, penalized). Detour 1-5-6-3 is
+        // 300m + 3x200m = a much longer physical route with no penalty.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0, lon: 0.003 },
+                { type: 'node', id: 5, lat: 0.002, lon: 0 },
+                { type: 'node', id: 6, lat: 0.002, lon: 0.003 },
+                { type: 'way', id: 100, nodes: [1, 2, 3, 4], tags: { highway: 'residential' } },
+                { type: 'way', id: 101, nodes: [1, 5], tags: { highway: 'residential' } },
+                { type: 'way', id: 102, nodes: [5, 6], tags: { highway: 'residential' } },
+                { type: 'way', id: 103, nodes: [6, 4], tags: { highway: 'residential' } },
+            ]
+        };
+
+        // Builds a penalty map covering BOTH directions of the given node pairs — a
+        // multigraph link has a separate link object (and id) per direction, so
+        // penalizing only one direction (as the real buildRiddenPenaltyMap /
+        // getTraversalPenalties never do, since they iterate forEachLink) lets Dijkstra
+        // dodge the penalty entirely via the unpenalized reverse-direction link.
+        function penalizeBothDirections(graph: StreetGraph, pairs: [string, string][], multiplier: number): Map<string, number> {
+            const penalizedLinks = new Map<string, number>();
+            for (const [a, b] of pairs) {
+                const l1 = graph.graph.getLink(a, b);
+                const l2 = graph.graph.getLink(b, a);
+                if (l1) penalizedLinks.set(l1.id, multiplier);
+                if (l2) penalizedLinks.set(l2.id, multiplier);
+            }
+            return penalizedLinks;
+        }
+
+        it('ignores the penalty and takes the direct route when the penalized detour is far longer', () => {
+            graph.buildFromOSM(mockData);
+            // Penalize the direct route (1-2, 2-3) heavily, as ridden-roads avoidance would.
+            const penalizedLinks = penalizeBothDirections(graph, [['1', '2'], ['2', '3']], 10);
+
+            const result = graph.findClosestTargetCapped('1', new Set(['4']), penalizedLinks);
+            expect(result).not.toBeNull();
+            // Direct route visits node 2 and 3; the detour visits node 5 and 6 instead.
+            const visitedIds = new Set(result!.path.flatMap(s => [s.id, s.idNext]));
+            expect(visitedIds.has('2')).toBe(true);
+            expect(visitedIds.has('5')).toBe(false);
+        });
+
+        it('still takes the penalized detour when it is a comparably short alternative', () => {
+            // Shrink the detour so it's only slightly longer than the direct route.
+            const short: OverpassResponse = {
+                ...mockData,
+                elements: mockData.elements.map(el => {
+                    if (el.type === 'node' && (el.id === 5 || el.id === 6)) {
+                        return { ...el, lat: 0.0002 };
+                    }
+                    return el;
+                })
+            };
+            graph.buildFromOSM(short);
+            const penalizedLinks = penalizeBothDirections(graph, [['1', '2'], ['2', '3']], 10);
+
+            const result = graph.findClosestTargetCapped('1', new Set(['4']), penalizedLinks);
+            expect(result).not.toBeNull();
+            const visitedIds = new Set(result!.path.flatMap(s => [s.id, s.idNext]));
+            expect(visitedIds.has('5')).toBe(true);
+        });
+    });
+
     test('solves RPP constrained by manualRoute', () => {
         // Grid:
         // 1 - 2 - 3
@@ -183,6 +261,93 @@ describe('StreetGraph', () => {
         expect(result[0].lat).toBe(0);
         expect(result[0].lon).toBe(0);
         expect(result[result.length - 1].lon).toBe(0.002);
+    });
+
+    test('regression: does not insert a phantom backtrack when the raw endpoint click re-snaps to a different node than the manual route\'s own end', () => {
+        // Straight line 1-2-3-4-5. Node 1 and node 5 are the natural odd-degree
+        // ends; the manual route walks the whole line, so requiredEdges' own
+        // parity already has exactly these two nodes odd — no matching should
+        // be needed at all, just the direct path.
+        //
+        // Previously, solveCPP re-snapped the raw startPoint/endPoint click
+        // coordinates independently (via findEndpointNode), which could land on
+        // a DIFFERENT node than the one the manual route itself actually ends
+        // at (e.g. node 4, if the click is a bit short of the true end). That
+        // flipped parity on the wrong (even-degree) node instead of cancelling
+        // the manual route's true odd endpoint, forcing an unnecessary matching
+        // edge between the two nearby nodes — an out-and-back detour on a
+        // street with nothing unridden to justify it.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0, lon: 0.003 },
+                { type: 'node', id: 5, lat: 0, lon: 0.004 },
+                { type: 'way', id: 100, nodes: [1, 2, 3, 4, 5], tags: { highway: 'residential' } }
+            ]
+        };
+        graph.buildFromOSM(mockData);
+
+        const manualRoute: [number, number][] = [
+            [0, 0], [0.001, 0], [0.002, 0], [0.003, 0], [0.004, 0]
+        ];
+        const startPoint = { lat: 0, lon: 0 }; // node 1, exact
+        // Deliberately closer to node 4 (lon 0.003) than the true end, node 5
+        // (lon 0.004) — simulates the raw click re-snapping to a neighboring node.
+        const endPoint = { lat: 0, lon: 0.0031 };
+
+        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute);
+
+        // No backtrack: just the 5 manual-route points, not a detour doubling
+        // back over the node4-node5 edge to "fix" a phantom parity mismatch.
+        expect(circuit.length).toBe(5);
+        // Ends at the endpoint's own mid-edge click position (existing
+        // endpoint-truncation behavior), not doubled back past it to node 5.
+        expect(circuit[circuit.length - 1].lon).toBeCloseTo(0.0031, 9);
+    });
+
+    test('regression: does not mark a crossing street mandatory when a manual route starts exactly at an intersection', () => {
+        // Real-world bug (16th & Maple in Spokane): the route's first two
+        // manualRoute points (the raw click's snap, then the first real path
+        // node) both landed essentially ON the intersection node itself, not
+        // mid-edge. That triggered the "same node" fallback below, which uses
+        // findClosestPointOnEdge to guess which edge the waypoints actually lie
+        // on — but AT a node with several edges meeting it, that guess is
+        // ambiguous and can lock onto a completely different street (here, the
+        // crossing street continuing north) instead of the one actually
+        // travelled (east), wrongly marking it mandatory and forcing a
+        // multi-block out-and-back "matching" detour to cover it.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0.002, lon: 0 },   // N: crossing street, north of the intersection
+                { type: 'node', id: 2, lat: 0, lon: 0 },       // A: the intersection (route start)
+                { type: 'node', id: 3, lat: 0, lon: 0.001 },   // B
+                { type: 'node', id: 4, lat: 0, lon: 0.002 },   // C: route end
+                { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'residential' } }, // crossing street (not travelled)
+                { type: 'way', id: 11, nodes: [2, 3, 4], tags: { highway: 'residential' } }, // street actually travelled
+            ]
+        };
+        graph.buildFromOSM(mockData);
+
+        // First two points both land on node A (the intersection) — the raw
+        // click's snap and the first real path node are the same coordinate to
+        // within a meter, exactly as /api/step produces at a route's start.
+        const manualRoute: [number, number][] = [
+            [0, 0], [0, 0.0000001], [0.001, 0], [0.002, 0]
+        ];
+
+        const circuit = graph.solveCPP(undefined, undefined, manualRoute);
+
+        // The crossing street (node N, lat 0.002/lon 0) must never be visited.
+        const visitsCrossingStreet = circuit.some(p => Math.abs(p.lat - 0.002) < 1e-9 && Math.abs(p.lon) < 1e-9);
+        expect(visitsCrossingStreet).toBe(false);
     });
 
     test('marks the correct edge mandatory when two manualRoute waypoints snap mid-edge to the same intersection', () => {

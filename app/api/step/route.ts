@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
                 let usedStartId: string | null = null;
 
                 for (const sid of startOptions) {
-                    const r = graph.findClosestTarget(sid, endTargets, undefined, penalizedLinks);
+                    const r = graph.findClosestTargetCapped(sid, endTargets, penalizedLinks);
                     if (r) { pathResult = r; usedStartId = sid; break; }
                 }
 
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
                 if (!pathResult) {
                     const broadTargets = graph.findNodeIdsNearPoint(point.lat, point.lon, 10);
                     for (const sid of startOptions) {
-                        const r = graph.findClosestTarget(sid, broadTargets, undefined, penalizedLinks);
+                        const r = graph.findClosestTargetCapped(sid, broadTargets, penalizedLinks);
                         if (r) { pathResult = r; usedStartId = sid; break; }
                     }
                 }
