@@ -1088,9 +1088,13 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
             <style jsx global>{`
                 @keyframes pulse {
-                    0% { transform: scale(1); opacity: 1; }
-                    50% { transform: scale(1.3); opacity: 0.8; }
-                    100% { transform: scale(1); opacity: 1; }
+                    /* Must include the marker's own translate(-50%, -50%) centering —
+                       a CSS animation replaces the whole transform for its duration,
+                       so omitting it here made the pending marker's box corner (not
+                       center) sit at the click point, visibly offset down-right. */
+                    0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+                    50% { transform: translate(-50%, -50%) scale(1.3); opacity: 0.8; }
+                    100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
                 }
                 .leaflet-container {
                     cursor: grab !important;
