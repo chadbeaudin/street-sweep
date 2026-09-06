@@ -98,8 +98,13 @@ function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => 
             });
         };
 
-        // Initial fetch
-        handleMove();
+        // No synchronous initial call here: at mount the map sits at its neutral
+        // placeholder view (a world-scale zoom, deliberately not a real address — see
+        // MapContainer's center/zoom above), and reporting that bbox once fed a tile grid
+        // sized for a city-scale viewport (lib/roadTiles.ts), producing a tile count in the
+        // billions and crashing with "Invalid array length". Geolocation (or its saved-
+        // start-point fallback) always resolves to a real, local view shortly after mount,
+        // which fires its own moveend — that's what should trigger the first real fetch.
 
         const handleClick = (e: L.LeafletMouseEvent) => onMapClick(e.latlng);
 

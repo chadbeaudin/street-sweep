@@ -38,6 +38,14 @@ describe('roadTiles', () => {
         expect(missing.length).toBeLessThan(tilesForBBox(panned).length);
     });
 
+    it('regression: returns no tiles for a world-scale bbox instead of crashing', () => {
+        // A map briefly at a neutral placeholder view (zoom 2, near-global bounds) fed
+        // this straight into the tile grid math, producing a tile count in the billions
+        // and throwing "RangeError: Invalid array length".
+        const worldBbox = { south: -60, west: -170, north: 80, east: 170 };
+        expect(tilesForBBox(worldBbox)).toEqual([]);
+    });
+
     it('bboxForTiles returns the bounding box of the given tiles', () => {
         const tiles = [{ ty: 1, tx: 2 }, { ty: 3, tx: 4 }];
         expect(bboxForTiles(tiles)).toEqual({
