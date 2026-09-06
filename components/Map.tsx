@@ -774,7 +774,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         }}
                     />
                 )}
-                <GeolocateOnMount />
+                {/* Only auto-geolocate when there's no persistent start point (#30) saved —
+                    otherwise this unconditionally overrode the user's saved home address on
+                    every load: the map would briefly paint the saved start's area (and its
+                    ridden-roads data) before the browser's geolocation result flew it away to
+                    wherever the user actually is right now. */}
+                {!startPoint && <GeolocateOnMount />}
                 <InvalidateSizeOnRoute route={route} />
                 <MapRefCapture mapRef={mapRef} onZoomChange={setZoom} />
 
