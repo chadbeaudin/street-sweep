@@ -128,8 +128,8 @@ function InvalidateSizeOnRoute({ route }: { route: [number, number, number?, num
 
 import { useGeolocateOnMount } from '../lib/useGeolocate';
 
-function GeolocateOnMount() {
-    useGeolocateOnMount();
+function GeolocateOnMount({ fallback }: { fallback?: { lat: number; lon: number } | null }) {
+    useGeolocateOnMount(fallback);
     return null;
 }
 
@@ -733,8 +733,11 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
-                center={[39.02, -104.7]}
-                zoom={13}
+                // Neutral placeholder for the split-second before geolocation (or its
+                // saved-start-point fallback) resolves — never a real, specific address,
+                // so there's nothing wrong-looking to flash on screen.
+                center={[20, 0]}
+                zoom={2}
                 zoomSnap={1}
                 zoomDelta={1}
                 wheelPxPerZoomLevel={120}
@@ -774,12 +777,11 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         }}
                     />
                 )}
-                {/* Only auto-geolocate when there's no persistent start point (#30) saved —
-                    otherwise this unconditionally overrode the user's saved home address on
-                    every load: the map would briefly paint the saved start's area (and its
-                    ridden-roads data) before the browser's geolocation result flew it away to
-                    wherever the user actually is right now. */}
-                {!startPoint && <GeolocateOnMount />}
+                {/* Geolocation always takes priority over a saved persistent start point
+                    (#30) — a stale saved address (e.g. from before a move) should never be
+                    what the user sees, even briefly. Only falls back to the saved start
+                    point if geolocation is denied/unavailable. */}
+                <GeolocateOnMount fallback={startPoint} />
                 <InvalidateSizeOnRoute route={route} />
                 <MapRefCapture mapRef={mapRef} onZoomChange={setZoom} />
 

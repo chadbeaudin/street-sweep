@@ -148,7 +148,11 @@ export default function Home() {
         selectionPolygonsRef.current = selectionPolygons;
     }, [selectionPolygons]);
 
-    // Persistent start point (#30): load once, keep a ref in sync.
+    // Persistent start point (#30): load once, keep a ref in sync. Deliberately does NOT
+    // set bbox here — geolocation (see GeolocateOnMount in Map.tsx) is the initial-view
+    // source of truth and always takes priority, falling back to this saved point only if
+    // geolocation itself fails. Setting bbox here too would race geolocation and briefly
+    // paint (and fetch ridden-roads data for) the saved point's area regardless.
     useEffect(() => {
         try {
             const saved = localStorage.getItem('streetsweep_start');
@@ -156,7 +160,6 @@ export default function Home() {
                 const p = JSON.parse(saved);
                 if (typeof p?.lat === 'number' && typeof p?.lon === 'number') {
                     setStartPoint(p);
-                    setBbox({ south: p.lat - 0.008, north: p.lat + 0.008, west: p.lon - 0.008, east: p.lon + 0.008 });
                 }
             }
         } catch { /* ignore malformed storage */ }
