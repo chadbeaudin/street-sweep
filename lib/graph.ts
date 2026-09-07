@@ -133,6 +133,35 @@ export function pointNearOrInAnyPolygon(point: [number, number], polygons: [numb
     return polygons.some(polygon => pointNearOrInPolygon(point, polygon, bufferMeters));
 }
 
+// riddenRoads sent from the client is the rider's entire ride history (raw
+// Strava polylines plus the precomputed dataset -- see app/page.tsx's
+// stravaRoadsRef), not scoped to the current request's area. Passed through
+// unfiltered, buildRiddenIndex's 12m interpolation runs over every point the
+// rider has ever logged on every /api/generate or /api/step call, regardless
+// of route size -- for an account with years of history this OOM'd the
+// server building the ridden index, before CPP solving even started. Only
+// activities whose bounding box comes within checkIfRidden's 50m match
+// threshold of the request bbox can ever match an edge in it, so drop the
+// rest wholesale; keep matching activities whole (not per-point trimmed) so
+// buildRiddenIndex's interpolation between consecutive points stays correct.
+export function filterRiddenRoadsToBbox(
+    riddenRoads: [number, number][][] | null | undefined,
+    bbox: { north: number, south: number, east: number, west: number },
+    paddingMeters: number = 50
+): [number, number][][] | null {
+    if (!riddenRoads || riddenRoads.length === 0) return riddenRoads ?? null;
+    const padLat = paddingMeters / 111320;
+    const cosLat = Math.cos(((bbox.north + bbox.south) / 2) * Math.PI / 180);
+    const padLon = paddingMeters / (111320 * Math.max(cosLat, 0.01));
+    const minLat = bbox.south - padLat;
+    const maxLat = bbox.north + padLat;
+    const minLon = bbox.west - padLon;
+    const maxLon = bbox.east + padLon;
+    return riddenRoads.filter(activity => activity.some(([lat, lon]) =>
+        lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon
+    ));
+}
+
 // Projects a mid-edge endpoint click onto its closest edge and trims/extends
 // the trail's coords so the route ends exactly at that point.
 //
@@ -1890,36 +1919,17 @@ export class StreetGraph {
         const reachableNodes = new Set(components[0]);
         const riddenPenaltyMap = this.buildRiddenPenaltyMap(riddenPenalty);
 
-        // Links that represent a real, unridden, road-class street (no cycleways/tracks,
-        // no already-ridden segments). Used below to tell a truly isolated unridden pocket
-        // (only reachable by detouring through already-ridden roads) apart from an island
-        // that just happens to have a fresh road-class connection the required-edge BFS
-        // didn't see (it only walks required edges — see #41).
-        const freshRoadClassLinkIds = new Set<string>();
-        this.graph.forEachLink((link: any) => {
-            if (link.data.isRidden || link.data.isAvoided) return;
-            if (link.data.highway === 'cycleway' || link.data.highway === 'track') return;
-            freshRoadClassLinkIds.add(link.id);
-        });
-        // An isolated pocket is skipped (left uncovered this trip) rather than force-bridged
-        // when detouring in and back out via ridden roads would cost several times more than
-        // the pocket itself is worth in fresh mileage.
-        const SKIP_DETOUR_MULTIPLIER = 3;
-
+        // Every required edge is already unridden (the box/polygon filters above never
+        // add an isRidden road to requiredEdges), so an "isolated pocket" — a required
+        // component only reachable by detouring through already-ridden roads — is
+        // always fresh mileage the user deliberately selected. It's bridged in
+        // regardless of detour cost rather than silently dropped: a lasso is an
+        // explicit request to cover everything inside it, and a street vanishing from
+        // the route with no visible indication (previously logged as "skipping" and
+        // otherwise unmentioned) was worse than an occasional longer detour.
         for (let i = 1; i < components.length; i++) {
             const island = components[i];
             const islandSet = new Set(island);
-
-            const hasFreshRoadConnection = this.findClosestTargetMultiSource(islandSet, reachableNodes, freshRoadClassLinkIds, undefined) !== null;
-            if (!hasFreshRoadConnection) {
-                const islandLength = requiredEdges.reduce((sum, re) => (islandSet.has(re.u) && islandSet.has(re.v)) ? sum + re.link.data.weight : sum, 0);
-                const detour = this.findClosestTargetMultiSource(islandSet, reachableNodes, undefined, undefined);
-                const roundTripDetourCost = detour ? detour.path.reduce((s, p) => s + p.weight, 0) * 2 : Infinity;
-                if (roundTripDetourCost > islandLength * SKIP_DETOUR_MULTIPLIER) {
-                    console.log(`${ts()} Skipping isolated pocket (${island.length} nodes, ${islandLength.toFixed(0)}m required) — only reachable via a ~${roundTripDetourCost.toFixed(0)}m round-trip detour through already-ridden roads.`);
-                    continue;
-                }
-            }
 
             // Single multi-source Dijkstra from every island node finds the closest
             // (island, reachable) pair in one pass. When connecting islands we allow

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
-import { StreetGraph } from '@/lib/graph';
+import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 
 export async function POST(req: NextRequest) {
     try {
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 
         // Use the cached graph for speed. We now apply penalties dynamically
         // during pathfinding instead of mutating the graph weights.
-        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads || null, routingOptions);
+        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads, bufferedBbox), routingOptions);
 
         // Get link IDs that should be penalized: already traversed in the current
         // session (avoid backtracking) and already ridden per Strava (prefer new

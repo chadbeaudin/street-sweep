@@ -1,4 +1,4 @@
-import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap } from './graph';
+import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap, filterRiddenRoadsToBbox } from './graph';
 import { OverpassResponse } from './types';
 
 describe('StreetGraph', () => {
@@ -1376,6 +1376,85 @@ describe('Point-in-Polygon Functions', () => {
                 [[4, 4], [6, 4], [6, 6], [4, 6]]
             ];
             expect(pointInAnyPolygon([5, 5], polygons)).toBe(true);
+        });
+    });
+
+    describe('filterRiddenRoadsToBbox', () => {
+        const bbox = { north: 1, south: 0, east: 1, west: 0 };
+
+        test('keeps an activity with a point inside the bbox', () => {
+            const roads: [number, number][][] = [[[0.5, 0.5], [0.6, 0.6]]];
+            expect(filterRiddenRoadsToBbox(roads, bbox)).toEqual(roads);
+        });
+
+        test('keeps an activity within the padding threshold outside the bbox', () => {
+            const roads: [number, number][][] = [[[1.0001, 0.5]]];
+            expect(filterRiddenRoadsToBbox(roads, bbox, 50)).toEqual(roads);
+        });
+
+        test('drops an activity entirely outside the bbox and padding', () => {
+            const roads: [number, number][][] = [[[10, 10], [11, 11]]];
+            expect(filterRiddenRoadsToBbox(roads, bbox, 50)).toEqual([]);
+        });
+
+        test('keeps a whole activity, unmodified, when any point matches', () => {
+            const roads: [number, number][][] = [[[10, 10], [0.5, 0.5], [20, 20]]];
+            expect(filterRiddenRoadsToBbox(roads, bbox)).toEqual(roads);
+        });
+
+        test('passes through null/empty input', () => {
+            expect(filterRiddenRoadsToBbox(null, bbox)).toBeNull();
+            expect(filterRiddenRoadsToBbox(undefined, bbox)).toBeNull();
+            expect(filterRiddenRoadsToBbox([], bbox)).toEqual([]);
+        });
+    });
+
+    describe('isolated unridden pockets', () => {
+        // Regression coverage for a real report: a lasso drawn around a neighborhood
+        // included a genuinely-unridden block whose only connections back to the rest
+        // of the selection were via already-ridden streets. solveCPP used to silently
+        // drop any such "pocket" whenever the round-trip detour cost more than 3x the
+        // pocket's own unridden length (see the removed SKIP_DETOUR_MULTIPLIER logic)
+        // -- so that block vanished from the generated route with only a console log,
+        // despite sitting inside the user's own lasso. Every required edge is already
+        // unridden by construction (the box/polygon filters exclude isRidden roads
+        // before adding to requiredEdges), so an isolated pocket is always real,
+        // deliberately-selected fresh mileage -- it should always be bridged in.
+        test('a short unridden pocket reachable only via a much longer ridden detour is still included', () => {
+            const mockData: OverpassResponse = {
+                version: 0.6,
+                generator: 'test',
+                osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    // Main unridden loop.
+                    { type: 'node', id: 1, lat: 0, lon: 0 },
+                    { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                    { type: 'node', id: 3, lat: 0.001, lon: 0.001 },
+                    { type: 'node', id: 4, lat: 0.001, lon: 0 },
+                    { type: 'way', id: 100, nodes: [1, 2, 3, 4, 1], tags: { highway: 'residential' } },
+                    // Long already-ridden bridge (~2226m) — far more than 3x the pocket's
+                    // own length, which is exactly what the old skip heuristic dropped.
+                    { type: 'node', id: 5, lat: 0.001, lon: 0.02 },
+                    { type: 'way', id: 200, nodes: [4, 5], tags: { highway: 'residential' } },
+                    // Short unridden pocket (~22m), only reachable via the ridden bridge.
+                    { type: 'node', id: 6, lat: 0.0012, lon: 0.02 },
+                    { type: 'way', id: 300, nodes: [5, 6], tags: { highway: 'residential' } },
+                ]
+            };
+            const riddenRoads: [number, number][][] = [[[0.001, 0], [0.001, 0.02]]];
+
+            const graph = new StreetGraph();
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('4', '5')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('5', '6')!.data.isRidden).toBe(false);
+
+            const selectionBoxes = [{ north: 0.002, south: -0.001, east: 0.021, west: -0.001 }];
+            const circuit = graph.solveCPP(undefined, undefined, undefined, selectionBoxes);
+
+            const visits = (lat: number, lon: number) =>
+                circuit.some(p => Math.abs(p.lat - lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9);
+            expect(visits(0.001, 0.02)).toBe(true);  // node 5
+            expect(visits(0.0012, 0.02)).toBe(true); // node 6
         });
     });
 });

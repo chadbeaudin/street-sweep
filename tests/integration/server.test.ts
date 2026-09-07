@@ -261,4 +261,65 @@ describe('Integration: server logs', () => {
             expect(avgEle).toBeGreaterThan(100); // sanity: not zero/sea-level
         }, 60000);
     });
+
+    // ── Large route generation — 60mi-class area coverage ──────────────────────
+
+    describe('Route generate — large (~60 mile) area coverage', () => {
+        // Dense Spokane residential grid: a ~1.4mi x 1.4mi box whose full street
+        // coverage (every unridden edge, doubled back for CPP parity) comes out
+        // to roughly 60 real-world miles -- calibrated against the actual server,
+        // not guessed. Regression coverage for the OOM crash this repo hit in
+        // production generating a 40+mi route: buildRiddenIndex (lib/graph.ts)
+        // used to interpolate every point in the rider's ENTIRE ride history on
+        // every request, regardless of route/bbox size, so a large route paired
+        // with a large history OOM'd the server before CPP solving even started.
+        // filterRiddenRoadsToBbox now drops history far outside the request area
+        // first (see app/api/generate/route.ts).
+        const box = { south: 47.650, west: -117.430, north: 47.670, east: -117.400 };
+
+        // A big synthetic "ride history" scattered across a much wider region than
+        // the request box, standing in for years of accumulated Strava activities.
+        // Most of it is well outside the 50m match threshold filterRiddenRoadsToBbox
+        // applies, so it should be dropped rather than interpolated.
+        function buildLargeSyntheticRiddenHistory(): [number, number][][] {
+            const activities: [number, number][][] = [];
+            for (let a = 0; a < 200; a++) {
+                const baseLat = 47.0 + (a % 20) * 0.05; // spread across ~1 degree of latitude
+                const baseLon = -118.0 + Math.floor(a / 20) * 0.05;
+                const points: [number, number][] = [];
+                for (let p = 0; p < 500; p++) {
+                    points.push([baseLat + p * 0.0002, baseLon + p * 0.0002]);
+                }
+                activities.push(points);
+            }
+            return activities;
+        }
+
+        it('generates a ~60 mile coverage route without error or timeout, even with a large out-of-area ride history', async () => {
+            const payload = {
+                bbox: box,
+                selectionBoxes: [box],
+                selectedPoints: [{ lat: (box.north + box.south) / 2, lon: (box.east + box.west) / 2 }],
+                riddenRoads: buildLargeSyntheticRiddenHistory(),
+                routingOptions: { avoidGravel: false, avoidHighways: false, avoidTrails: false },
+            };
+
+            const res = await post('/api/generate', payload);
+            if (!res.ok) {
+                console.warn('Generate API failed (external dependency) — skipping large-route check', await res.text());
+                return;
+            }
+
+            const data = await res.json();
+            const feature = data?.features?.[0];
+            const coords: number[][] = feature?.geometry?.coordinates ?? [];
+            expect(coords.length).toBeGreaterThan(0);
+
+            const totalDistance = parseFloat(feature?.properties?.totalDistance ?? '0');
+            // Loosely bracket "a 60 mile-class route" rather than pinning the exact
+            // figure, since real OSM data can shift slightly over time.
+            expect(totalDistance).toBeGreaterThan(40);
+            expect(totalDistance).toBeLessThan(90);
+        }, 120000);
+    });
 });

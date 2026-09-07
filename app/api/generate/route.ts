@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
-import { StreetGraph } from '@/lib/graph';
+import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -126,7 +126,7 @@ export async function POST(request: Request) {
             return NextResponse.json({ error: 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 503 });
         }
 
-        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, riddenRoads, routingOptions);
+        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads, bufferedBbox), routingOptions);
 
         console.log(`${ts()} Solving Routing Problem...`);
         // Prefer an explicit clicked start; otherwise use the persistent start

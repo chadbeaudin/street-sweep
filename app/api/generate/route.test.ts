@@ -7,7 +7,10 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
 jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn() }));
-jest.mock('@/lib/graph', () => ({ StreetGraph: { getCachedGraph: jest.fn() } }));
+jest.mock('@/lib/graph', () => ({
+    StreetGraph: { getCachedGraph: jest.fn() },
+    filterRiddenRoadsToBbox: jest.fn((riddenRoads: any) => riddenRoads ?? null),
+}));
 jest.mock('@/lib/elevation', () => ({
     fetchElevationData: jest.fn(),
     calculateElevationProfile: jest.fn(),

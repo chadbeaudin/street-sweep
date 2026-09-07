@@ -19,6 +19,7 @@ import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from '@/lib/routeHistory';
+import { filterRiddenRoadsToBbox } from '@/lib/riddenRoads';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -480,9 +481,37 @@ export default function Home() {
 
         try {
             const currentPoints = pointsRef.current;
+            const flatManualRoute = manualRouteRef.current.flat();
+
+            // The server's own bbox for this request (app/api/generate/route.ts) is
+            // currentBbox unioned with every selected point, manual-route point,
+            // selection box, and polygon -- not just the viewport. Filtering
+            // riddenRoads by currentBbox alone would drop ridden data for a
+            // selection/route that extends beyond what's currently panned into
+            // view, wrongly re-marking already-ridden streets as required. Mirror
+            // that same union here before filtering.
+            let riddenFilterBbox = { ...currentBbox };
+            const expandRiddenBbox = (lat: number, lon: number) => {
+                riddenFilterBbox = {
+                    south: Math.min(riddenFilterBbox.south, lat),
+                    north: Math.max(riddenFilterBbox.north, lat),
+                    west: Math.min(riddenFilterBbox.west, lon),
+                    east: Math.max(riddenFilterBbox.east, lon),
+                };
+            };
+            currentPoints.forEach(p => expandRiddenBbox(p.lat, p.lon));
+            flatManualRoute.forEach(([lon, lat]) => expandRiddenBbox(lat, lon));
+            (selectionBoxesRef.current || []).forEach(box => {
+                expandRiddenBbox(box.south, box.west);
+                expandRiddenBbox(box.north, box.east);
+            });
+            (selectionPolygonsRef.current || []).forEach(polygon => {
+                polygon.forEach(([lat, lon]) => expandRiddenBbox(lat, lon));
+            });
+
             const payload = {
                 bbox: currentBbox,
-                riddenRoads: stravaRoadsRef.current,
+                riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, riddenFilterBbox),
                 selectedPoints: currentPoints,
                 startPoint: startPointRef.current,
                 selectionBoxes: selectionBoxesRef.current,
@@ -490,7 +519,7 @@ export default function Home() {
                 routingOptions: routingOptionsRef.current,
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
-                manualRoute: (currentPoints.length >= 2) ? manualRouteRef.current.flat() : [],
+                manualRoute: (currentPoints.length >= 2) ? flatManualRoute : [],
                 preAreaPointCount: preAreaPointCountRef.current,
                 // Road segments between post-area points (C→D, D→E, ...) so the exit bridge
                 // honours all intermediate post-area waypoints, not just the final one.
@@ -916,7 +945,7 @@ export default function Home() {
                         bbox: currentBbox,
                         // Pass context so the step pathfinder avoids already-traversed streets
                         manualRoute: manualRouteRef.current,
-                        riddenRoads: stravaRoadsRef.current,
+                        riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                         routingOptions: routingOptionsRef.current
                     })
                 });
@@ -1000,7 +1029,7 @@ export default function Home() {
                     body: JSON.stringify({
                         point: newLatLng,
                         bbox: currentBbox,
-                        riddenRoads: stravaRoadsRef.current,
+                        riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                         routingOptions: routingOptionsRef.current
                     })
                 });
@@ -1031,7 +1060,7 @@ export default function Home() {
                             bbox: currentBbox,
                             // When moving a point, only penalize segments that aren't being recalculated
                             manualRoute: updatedSegments.filter((_, i) => !affectedIndices.includes(i)),
-                            riddenRoads: stravaRoadsRef.current,
+                            riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                             routingOptions: routingOptionsRef.current
                         })
                     });
@@ -1109,7 +1138,7 @@ export default function Home() {
                         lastPoint: p1,
                         bbox: currentBbox,
                         manualRoute: newRoute.filter((_, i) => i !== segmentToRoute),
-                        riddenRoads: stravaRoadsRef.current,
+                        riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                         routingOptions: routingOptionsRef.current
                     })
                 });
@@ -1162,7 +1191,7 @@ export default function Home() {
                     body: JSON.stringify({
                         point: rawPoint,
                         bbox: currentBbox,
-                        riddenRoads: stravaRoadsRef.current,
+                        riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                         routingOptions: routingOptionsRef.current,
                     }),
                 });
@@ -1192,7 +1221,7 @@ export default function Home() {
                             lastPoint: pBefore,
                             bbox: currentBbox,
                             manualRoute: excludeForPenalty,
-                            riddenRoads: stravaRoadsRef.current,
+                            riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                             routingOptions: routingOptionsRef.current,
                         }),
                     });
@@ -1211,7 +1240,7 @@ export default function Home() {
                             lastPoint: snappedPoint,
                             bbox: currentBbox,
                             manualRoute: excludeForPenalty,
-                            riddenRoads: stravaRoadsRef.current,
+                            riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
                             routingOptions: routingOptionsRef.current,
                         }),
                     });
