@@ -60,6 +60,21 @@ export default function Home() {
         boxElasticity: 0,
         pointRoutePenalty: 4
     });
+    // Persist routing options (avoid gravel/highways/trails, penalties) across
+    // reloads -- these previously silently reset to defaults on every page load
+    // (this component server-renders once, so localStorage can't be read in the
+    // initial useState — read it here, client-only, after mount instead), so a
+    // toggle a user believed was still on (e.g. "avoid gravel") could silently be
+    // off for a later route generation without any indication.
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem('streetsweep_routing_options');
+            if (saved) setRoutingOptions(prev => ({ ...prev, ...JSON.parse(saved) }));
+        } catch { /* ignore malformed storage */ }
+    }, []);
+    useEffect(() => {
+        try { localStorage.setItem('streetsweep_routing_options', JSON.stringify(routingOptions)); } catch { /* ignore */ }
+    }, [routingOptions]);
     const [showOptions, setShowOptions] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [showMobileExport, setShowMobileExport] = useState(false);
