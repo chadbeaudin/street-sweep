@@ -6,10 +6,46 @@
 // `riddenRoads` and `roads` are arrays of [lat, lon] polylines.
 
 const M_PER_DEG_LAT = 111320;
-const TOLERANCE_M = 20;      // how close a GPS point must be to a segment
+// Matches checkIfRidden's threshold in lib/graph.ts, bumped there from 25m for the
+// same reason: real GPS traces corner-cut intersections (the recorded path chords
+// the turn instead of hugging the actual road geometry) and drift under tree/building
+// cover well past 20m. At 20m, two ridden ways meeting at a corner each lost their
+// last few meters of coverage near the shared node -- visually a gap where activities
+// should connect. This file and checkIfRidden answer the same "was this ridden"
+// question from the same GPS data, so they should agree on how much slop counts.
+const TOLERANCE_M = 50;      // how close a GPS point must be to a segment
 const MIN_COVERED_M = 11;    // min traversed length for a segment to count (kills intersection spurs)
 const STEP_M = 12;           // densify stride so sparse GPS points don't skip segments
 const GRID = 0.005;          // ~500m spatial cells
+
+// riddenRoads/precomputedRidden held client-side is the rider's entire ride
+// history (see app/page.tsx's stravaRoadsRef), not scoped to what's on screen.
+// Sending it whole in every /api/step or /api/generate request body means
+// JSON.stringify -- synchronous, on the main thread -- serializes years of GPS
+// points on every map click, which is what froze the tab ("Page Unresponsive")
+// well before the request even reached the network. Only history within the
+// request's bbox (plus enough padding to match the server's own 50m proximity
+// check in lib/graph.ts's checkIfRidden) can ever affect the result, so filter
+// down to that before the click handler serializes anything. Mirrors
+// filterRiddenRoadsToBbox in lib/graph.ts (kept separate so this file, used by
+// the client bundle, doesn't pull in graph.ts's ngraph dependency).
+export function filterRiddenRoadsToBbox(
+    riddenRoads: [number, number][][] | null | undefined,
+    bbox: { north: number, south: number, east: number, west: number },
+    paddingMeters: number = 50
+): [number, number][][] | null {
+    if (!riddenRoads || riddenRoads.length === 0) return riddenRoads ?? null;
+    const padLat = paddingMeters / M_PER_DEG_LAT;
+    const cosLat = Math.cos(((bbox.north + bbox.south) / 2) * Math.PI / 180);
+    const padLon = paddingMeters / (M_PER_DEG_LAT * Math.max(cosLat, 0.01));
+    const minLat = bbox.south - padLat;
+    const maxLat = bbox.north + padLat;
+    const minLon = bbox.west - padLon;
+    const maxLon = bbox.east + padLon;
+    return riddenRoads.filter(activity => activity.some(([lat, lon]) =>
+        lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon
+    ));
+}
 
 export function dedupeRiddenRoads(
     riddenRoads: [number, number][][],
@@ -86,20 +122,63 @@ export function dedupeRiddenRoads(
         return span * c.lenM >= MIN_COVERED_M || span >= 0.6;
     };
 
+    // Each OSM way is matched against GPS data independently (it's its own `road`
+    // entry), and ways are typically split at every intersection -- so a ridden run
+    // reaching *almost* to a way's own endpoint, but not quite, leaves a visible gap
+    // right where it should connect to the next street's own (independently matched)
+    // run. Raising TOLERANCE_M helps GPS points that drift/corner-cut match a road at
+    // all, but doesn't help a way whose covered run simply stops a bit short of its
+    // terminal node for lack of any nearby GPS sample there. Snap a run to a way's own
+    // start/end once it's covered up to within GAP_BRIDGE_M of it -- almost certainly
+    // the same street continuing, not a genuine gap in what was ridden. The same
+    // reasoning applies to a short uncovered stretch *between* two covered runs on the
+    // same way (a brief GPS dropout mid-street, not two separate rides that happen to
+    // stop short of each other) -- bridge those too, not just the way's outer ends.
+    const GAP_BRIDGE_M = 20;
+
     const out: [number, number][][] = [];
     for (let r = 0; r < roads.length; r++) {
         const road = roads[r];
-        let run: [number, number][] | null = null;
+        const cum = [0];
+        for (let s = 0; s < road.length - 1; s++) {
+            const [la1, lo1] = road[s], [la2, lo2] = road[s + 1];
+            const mLon = M_PER_DEG_LAT * Math.cos(la1 * Math.PI / 180);
+            cum.push(cum[s] + Math.hypot((la2 - la1) * M_PER_DEG_LAT, (lo2 - lo1) * mLon));
+        }
+        const totalLen = cum[cum.length - 1];
+
+        const runs: [number, number][] = []; // [startVertexIdx, endVertexIdx]
+        let startIdx: number | null = null;
         for (let s = 0; s < road.length - 1; s++) {
             if (isRidden(`${r}:${s}`)) {
-                if (!run) run = [road[s]];
-                run.push(road[s + 1]);
-            } else if (run) {
-                out.push(run);
-                run = null;
+                if (startIdx === null) startIdx = s;
+            } else if (startIdx !== null) {
+                runs.push([startIdx, s]);
+                startIdx = null;
             }
         }
-        if (run) out.push(run);
+        if (startIdx !== null) runs.push([startIdx, road.length - 1]);
+
+        // Bridge short gaps between adjacent runs first, then snap the (now possibly
+        // merged) outer runs to the way's own start/end.
+        const bridged: [number, number][] = [];
+        for (const run of runs) {
+            const prev = bridged[bridged.length - 1];
+            if (prev && cum[run[0]] - cum[prev[1]] <= GAP_BRIDGE_M) {
+                prev[1] = run[1];
+            } else {
+                bridged.push(run);
+            }
+        }
+
+        for (const run of bridged) {
+            if (cum[run[0]] <= GAP_BRIDGE_M) run[0] = 0;
+            if (totalLen - cum[run[1]] <= GAP_BRIDGE_M) run[1] = road.length - 1;
+        }
+
+        for (const [startVertex, endVertex] of bridged) {
+            out.push(road.slice(startVertex, endVertex + 1));
+        }
     }
     return out;
 }

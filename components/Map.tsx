@@ -738,6 +738,15 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     return (
         <div className="flex-1 relative min-h-0">
             <MapContainer
+                // precomputedRidden renders the rider's entire history as individual
+                // Polyline elements, viewport-independent -- tens of thousands of them
+                // for an established rider (see snappedStravaRoads below). Leaflet's
+                // default SVG renderer draws each as its own <path>; at this scale some
+                // segments silently failed to paint (a real street with confirmed ridden
+                // data in the backing dataset just never showed as ridden on the map).
+                // Canvas rendering draws them onto one bitmap instead of thousands of
+                // DOM nodes, which scales far better.
+                preferCanvas={true}
                 // Neutral placeholder for the split-second before geolocation (or its
                 // saved-start-point fallback) resolves — never a real, specific address,
                 // so there's nothing wrong-looking to flash on screen.
