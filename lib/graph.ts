@@ -471,7 +471,15 @@ export class StreetGraph {
         // compute the perpendicular distance to the segment u→v rather than checking
         // fixed sample positions. This handles sparse summary_polylines correctly — a
         // GPS point 100m along a 200m edge will be caught regardless of where u/v fall.
-        const thresholdMeters = 25;
+        //
+        // 25m was too tight for real-world GPS accuracy: a live diagnostic against a
+        // production dataset showed a large cluster of genuinely-ridden edges whose
+        // closest matching point was 26-52m away (urban tree cover / building canyons
+        // degrade phone GPS well beyond open-sky accuracy), so they were silently
+        // treated as never-ridden. 50m catches that whole cluster while staying well
+        // under the ~60-100m typical spacing between parallel residential streets in a
+        // dense grid, so it shouldn't start crediting the wrong street.
+        const thresholdMeters = 50;
 
         // Collect all grid cells that overlap the edge bounding box + threshold
         const minLat = Math.min(u.lat, v.lat);
@@ -492,18 +500,31 @@ export class StreetGraph {
         const dx = vX - uX, dy = vY - uY;
         const lenSq = dx * dx + dy * dy;
 
+        // The endpoint exclusion below was a *fraction* of this edge's own length (5%),
+        // which starves short edges — most urban block-to-block edges are only 30-100m,
+        // so the "safe middle zone" a real GPS point needs to land in shrinks to a few
+        // meters (or the exclusion swallows the whole edge), especially with Strava's
+        // coarser summary-polyline sampling. Genuinely-ridden short residential blocks
+        // then almost never matched, so isRidden stayed false and they got required
+        // again by area/lasso coverage despite being visibly ridden. Use a fixed
+        // absolute distance instead (roughly an intersection's radius) so short edges
+        // aren't disproportionately excluded, capped so it can never eat the whole edge.
+        const edgeLengthMeters = Math.sqrt(lenSq) * 111320;
+        const ENDPOINT_EXCLUSION_METERS = 10;
+        const tExclusion = edgeLengthMeters > 0 ? Math.min(0.4, ENDPOINT_EXCLUSION_METERS / edgeLengthMeters) : 0;
+
         for (let cLat = cellMinLat; cLat <= cellMaxLat; cLat++) {
             for (let cLon = cellMinLon; cLon <= cellMaxLon; cLon++) {
                 const bucket = this.riddenIndex.get(`${cLat}:${cLon}`);
                 if (!bucket) continue;
                 for (const point of bucket) {
                     // Project point onto segment, clamp to [0,1], measure distance.
-                    // Skip endpoint hits (t < 0.05 or t > 0.95): a GPS point at an
-                    // intersection is shared by all roads meeting there, so it cannot
-                    // prove the rider actually traveled *this* segment.
+                    // Skip endpoint hits (within tExclusion of either end): a GPS point
+                    // at an intersection is shared by all roads meeting there, so it
+                    // cannot prove the rider actually traveled *this* segment.
                     const pX = point[1] * cosLat, pY = point[0];
                     const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((pX - uX) * dx + (pY - uY) * dy) / lenSq));
-                    if (t < 0.05 || t > 0.95) continue;
+                    if (t < tExclusion || t > 1 - tExclusion) continue;
                     const closestLat = uY + t * dy;
                     const closestLon = (uX + t * dx) / cosLat;
                     if (this.haversine(point[0], point[1], closestLat, closestLon) < thresholdMeters) return true;

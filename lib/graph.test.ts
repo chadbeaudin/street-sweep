@@ -1003,6 +1003,98 @@ describe('StreetGraph', () => {
         const usedRamp = result.some(p => graph.graph.getLink(p.id, p.idNext)?.data.highway === 'trunk_link');
         expect(usedRamp).toBe(true);
     });
+
+    describe('ridden-road matching (checkIfRidden)', () => {
+        // Real-world bug: a lasso covering an area the user had actually ridden almost
+        // entirely still generated a route covering nearly every street, because
+        // isRidden was failing to match far more often than it should. Two compounding
+        // causes, both covered below: (1) the old-vs-new-node endpoint exclusion was a
+        // *percentage* of a short edge's own length in a way that interacted badly with
+        // real GPS point spacing, and (2) the 25m match threshold was tighter than
+        // typical real-world GPS accuracy (urban tree/building cover), confirmed via a
+        // live diagnostic showing genuinely-ridden edges whose closest matching point
+        // was routinely 26-52m away.
+
+        test('a dense GPS trace right along a short (~50m) edge marks it ridden', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4193 }, // ~54m east at this latitude
+                    { type: 'way', id: 100, nodes: [1, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            const riddenRoads: [number, number][][] = [[
+                [47.65, -117.4204], [47.65, -117.4202], [47.65, -117.4200],
+                [47.65, -117.4198], [47.65, -117.4196], [47.65, -117.4194],
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+        });
+
+        test('regression: matches a genuinely-ridden edge whose GPS trace drifts ~40m off the road (realistic urban GPS noise)', () => {
+            const graph = new StreetGraph();
+            // Edge running east-west along lat 47.65, ~110m long.
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },
+                    { type: 'way', id: 200, nodes: [1, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            // GPS trace parallel to the road but offset ~0.00036 deg north (~40m at this
+            // latitude) -- realistic drift from tree/building cover, not a parallel street.
+            const riddenRoads: [number, number][][] = [[
+                [47.6504, -117.4197], [47.6504, -117.4195], [47.6504, -117.4193],
+                [47.6504, -117.4191], [47.6504, -117.4189],
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+        });
+
+        test('does not mark an edge ridden from a trace on a genuinely different, parallel street', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },
+                    { type: 'way', id: 300, nodes: [1, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            // A parallel street ~100m north -- well beyond real GPS drift, should not match.
+            const riddenRoads: [number, number][][] = [[
+                [47.6509, -117.4197], [47.6509, -117.4193], [47.6509, -117.4189],
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(false);
+        });
+
+        test('does not credit a street from a GPS point only near the shared intersection with a different street', () => {
+            // Y-junction: node 1 is the shared intersection. Way A (1-2) is genuinely
+            // ridden; way B (1-3) is a different street that just happens to share that
+            // intersection -- a GPS point sitting right at node 1 must not credit B too.
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },   // A: east
+                    { type: 'node', id: 3, lat: 47.6509, lon: -117.42 },   // B: north
+                    { type: 'way', id: 400, nodes: [1, 2], tags: { highway: 'residential' } },
+                    { type: 'way', id: 401, nodes: [1, 3], tags: { highway: 'residential' } },
+                ]
+            };
+            const riddenRoads: [number, number][][] = [[
+                [47.65, -117.4198], [47.65, -117.4195], [47.65, -117.4193], // partway along A, toward node 2
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('1', '3')!.data.isRidden).toBe(false);
+        });
+    });
 });
 
 describe('Point-in-Polygon Functions', () => {
