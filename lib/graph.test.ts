@@ -874,6 +874,35 @@ describe('StreetGraph', () => {
         expect(result[result.length - 1].lon).toBe(0.1);
     });
 
+    test('regression: avoidGravel marks an untagged park path/footway as avoided, not just untagged track', () => {
+        // Real-world bug: a lasso drawn near a small park whose paths are tagged
+        // highway=path/footway with no surface tag slipped through avoidGravel
+        // entirely (only highway=track was covered for the no-surface-tag case),
+        // so those paths became the ONLY unavoided, unridden "required" edges for
+        // the area -- ignoring real streets nearby that the user actually wanted.
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 0, lon: 0 },
+                { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                { type: 'node', id: 3, lat: 0, lon: 0.002 },
+                { type: 'node', id: 4, lat: 0, lon: 0.003 },
+                { type: 'way', id: 500, nodes: [1, 2], tags: { highway: 'path' } },
+                { type: 'way', id: 501, nodes: [2, 3], tags: { highway: 'footway' } },
+                { type: 'way', id: 502, nodes: [3, 4], tags: { highway: 'track' } },
+            ]
+        };
+
+        const graph = new StreetGraph();
+        graph.buildFromOSM(mockData, null, { avoidGravel: true });
+
+        expect(graph.graph.getLink('1', '2')!.data.isAvoided).toBe(true);
+        expect(graph.graph.getLink('2', '3')!.data.isAvoided).toBe(true);
+        expect(graph.graph.getLink('3', '4')!.data.isAvoided).toBe(true);
+    });
+
     test('trunk penalty is 12x with avoidHighways on, 2x with it off', () => {
         const mockData: OverpassResponse = {
             version: 0.6,

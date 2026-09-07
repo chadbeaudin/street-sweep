@@ -348,7 +348,14 @@ export class StreetGraph {
                     const gravelSurfaces = ['gravel', 'dirt', 'unpaved', 'sand', 'compacted', 'fine_gravel', 'earth', 'ground', 'woodchips', 'grass', 'mud'];
                     if (surface && gravelSurfaces.includes(surface)) {
                         isAvoided = true;
-                    } else if (highway === 'track' && !surface) {
+                    } else if (!surface && ['track', 'path', 'footway', 'bridleway'].includes(highway || '')) {
+                        // These trail-like classes are almost always unpaved in practice (a
+                        // park path, a dirt trail) but routinely lack an explicit surface tag
+                        // in OSM. Only 'track' was covered here before, which let footway/path
+                        // trails (e.g. informal park paths) slip through unmarked -- so a lasso
+                        // drawn over a small area with only such a path nearby ended up with
+                        // the gravel path as its only unavoided, unridden "required" edge,
+                        // instead of the real streets the user actually wanted covered.
                         isAvoided = true;
                     }
                 }
