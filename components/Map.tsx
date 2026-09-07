@@ -277,7 +277,7 @@ function HoverMarker({ point }: { point: { lat: number; lon: number } | null }) 
             border: 3px solid white; 
             border-radius: 50%; 
             box-shadow: 0 0 10px rgba(0,0,0,0.5);
-            animation: pulse 1s infinite;
+            animation: pulseHover 1s infinite;
         "></div>`,
         iconSize: [20, 20],
         iconAnchor: [10, 10],
@@ -1107,6 +1107,15 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
                     50% { transform: translate(-50%, -50%) scale(1.3); opacity: 0.8; }
                     100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+                }
+                /* HoverMarker's div isn't itself translate(-50%,-50%)-centered (it
+                   relies on Leaflet's iconAnchor instead), so it needs its own
+                   pulse without that translate baked in — reusing pulse here
+                   double-offsets it by half its own size. */
+                @keyframes pulseHover {
+                    0% { transform: scale(1); opacity: 1; }
+                    50% { transform: scale(1.3); opacity: 0.8; }
+                    100% { transform: scale(1); opacity: 1; }
                 }
                 .leaflet-container {
                     cursor: grab !important;

@@ -269,7 +269,23 @@ export class StreetGraph {
 
     public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions): StreetGraph {
         const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}`;
+        // riddenRoads affects which edges get marked isRidden during buildFromOSM,
+        // so it must be part of the cache key — otherwise a graph built for this
+        // bbox with different (or no) ridden data gets silently reused for up to
+        // an hour, and required-edge selection for area boxes never reflects the
+        // rider's actual ridden roads.
+        let riddenKey = 0;
+        let riddenPointCount = 0;
+        if (riddenRoads) {
+            for (const activity of riddenRoads) {
+                riddenPointCount += activity.length;
+                if (activity.length > 0) {
+                    const [lat, lon] = activity[0];
+                    riddenKey = (riddenKey * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
+                }
+            }
+        }
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}|R${riddenPointCount}:${riddenKey}`;
         const now = Date.now();
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {
@@ -452,14 +468,36 @@ export class StreetGraph {
 
     private buildRiddenIndex(riddenRoads: [number, number][][]): void {
         this.riddenIndex = new Map();
+        // Real GPS traces (especially Strava's summary_polyline) can have consecutive
+        // points 50-100m+ apart -- far enough that many short OSM edges between them
+        // never get a nearby candidate point at all. The client's own ridden overlay
+        // (lib/riddenRoads.ts, dedupeRiddenRoads) already solves this by interpolating
+        // extra points every ~12m along each GPS segment before matching, which is why
+        // it can look fully covered while this index, built from the raw points alone,
+        // left most edges with zero candidates nearby. Mirror that here.
+        const STEP_M = 12;
+        const addPoint = (lat: number, lon: number) => {
+            const cellLat = Math.floor(lat / GRID_DEG);
+            const cellLon = Math.floor(lon / GRID_DEG);
+            const key = `${cellLat}:${cellLon}`;
+            let bucket = this.riddenIndex!.get(key);
+            if (!bucket) { bucket = []; this.riddenIndex!.set(key, bucket); }
+            bucket.push([lat, lon]);
+        };
         for (const activity of riddenRoads) {
-            for (const point of activity) {
-                const cellLat = Math.floor(point[0] / GRID_DEG);
-                const cellLon = Math.floor(point[1] / GRID_DEG);
-                const key = `${cellLat}:${cellLon}`;
-                let bucket = this.riddenIndex.get(key);
-                if (!bucket) { bucket = []; this.riddenIndex.set(key, bucket); }
-                bucket.push(point);
+            for (let i = 0; i < activity.length; i++) {
+                const [lat1, lon1] = activity[i];
+                addPoint(lat1, lon1);
+                if (i + 1 < activity.length) {
+                    const [lat2, lon2] = activity[i + 1];
+                    const mPerDegLon = 111320 * Math.cos(lat1 * Math.PI / 180);
+                    const distM = Math.hypot((lat2 - lat1) * 111320, (lon2 - lon1) * mPerDegLon);
+                    const steps = Math.floor(distM / STEP_M);
+                    for (let k = 1; k < steps; k++) {
+                        const t = k / steps;
+                        addPoint(lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t);
+                    }
+                }
             }
         }
     }
@@ -481,20 +519,28 @@ export class StreetGraph {
         // dense grid, so it shouldn't start crediting the wrong street.
         const thresholdMeters = 50;
 
-        // Collect all grid cells that overlap the edge bounding box + threshold
+        // Collect all grid cells that overlap the edge bounding box + threshold.
+        // Longitude degrees are shorter than latitude degrees in real distance away
+        // from the equator (scaled by cos(latitude) -- at Spokane's ~47.65°N, about
+        // 33% shorter), so converting the threshold to a single flat degrees-per-meter
+        // figure and applying it to both axes under-sized the east-west search
+        // window: real ridden points within the threshold, offset mostly east-west,
+        // sat just outside the (too-narrow) longitude cell range and were never even
+        // considered, let alone measured. Pad lat/lon separately.
+        const cosLat = Math.cos(((u.lat + v.lat) / 2) * Math.PI / 180);
         const minLat = Math.min(u.lat, v.lat);
         const maxLat = Math.max(u.lat, v.lat);
         const minLon = Math.min(u.lon, v.lon);
         const maxLon = Math.max(u.lon, v.lon);
-        const pad = thresholdMeters / 111320; // approx degrees per meter
+        const padLat = thresholdMeters / 111320;
+        const padLon = thresholdMeters / (111320 * cosLat);
 
-        const cellMinLat = Math.floor((minLat - pad) / GRID_DEG);
-        const cellMaxLat = Math.floor((maxLat + pad) / GRID_DEG);
-        const cellMinLon = Math.floor((minLon - pad) / GRID_DEG);
-        const cellMaxLon = Math.floor((maxLon + pad) / GRID_DEG);
+        const cellMinLat = Math.floor((minLat - padLat) / GRID_DEG);
+        const cellMaxLat = Math.floor((maxLat + padLat) / GRID_DEG);
+        const cellMinLon = Math.floor((minLon - padLon) / GRID_DEG);
+        const cellMaxLon = Math.floor((maxLon + padLon) / GRID_DEG);
 
         // Pre-compute segment in flat (meter-like) coords for projection
-        const cosLat = Math.cos(((u.lat + v.lat) / 2) * Math.PI / 180);
         const uX = u.lon * cosLat, uY = u.lat;
         const vX = v.lon * cosLat, vY = v.lat;
         const dx = vX - uX, dy = vY - uY;
