@@ -151,9 +151,22 @@ export default function Home() {
         bboxRef.current = bbox;
     }, [bbox]);
 
+    // stravaRoadsRef feeds every server request's "riddenRoads" -- the raw
+    // per-activity polylines the server matches against street edges at request
+    // time (checkIfRidden). The map's own visual "ridden" overlay is actually a
+    // combination of that same raw data AND precomputedRidden, a server-side,
+    // already-snapped-to-street-graph dataset that's more accurate (it's matched
+    // once, server-side, against the full graph, not per-request against
+    // whatever's in the current viewport's bbox). Without precomputedRidden here
+    // too, a street the overlay correctly shows as ridden could still fail the
+    // request-time proximity check and get treated as unridden -- routing (and
+    // required-edge selection for a lasso/box) would then cover streets the user
+    // has actually already ridden.
     useEffect(() => {
-        stravaRoadsRef.current = stravaRoads;
-    }, [stravaRoads]);
+        stravaRoadsRef.current = precomputedRidden && precomputedRidden.length > 0
+            ? [...(stravaRoads ?? []), ...precomputedRidden]
+            : stravaRoads;
+    }, [stravaRoads, precomputedRidden]);
 
     useEffect(() => {
         selectionBoxesRef.current = selectionBoxes;
