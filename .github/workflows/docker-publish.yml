@@ -48,6 +48,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -106,3 +108,22 @@ jobs:
 
       - name: Image info
         run: docker manifest inspect docker.io/bigtimber/street-sweep:latest || true
+
+  deploy-fly:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        # Reuses the image build-and-push already built and pushed above (same
+        # commit, already tested/linted/built by the `test` job) instead of
+        # triggering a second build on Fly's own builder.
+        run: flyctl deploy --app streetsweep --image docker.io/bigtimber/street-sweep:v${{ needs.build-and-push.outputs.version }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
