@@ -96,7 +96,10 @@ function parseOSMXML(xml: string): OverpassResponse {
     while ((t = tagRe.exec(body)) !== null) tags[t[1]] = t[2];
 
     if (!isRoutableHighway(tags['highway'], tags)) continue;
-    if (tags['access'] === 'private' || tags['access'] === 'no') continue;
+    // access=private (gated communities, HOA streets) is still a real street the
+    // rider may have ridden through with permission — only access=no (genuinely
+    // closed) is excluded.
+    if (tags['access'] === 'no') continue;
 
     const nodes: number[] = [];
     const ndRe = /<nd\b[^>]*\bref="(\d+)"/g;
@@ -344,7 +347,9 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   // Tile coords are already multiples of TILE_DEG; format to fixed precision for a stable key.
   const k = (n: number) => n.toFixed(4);
   // v4: fine-grained tile-aligned cache keys (0.005° tiles, ~500m). Old v3 entries ignored.
-  const cacheKey = `v7_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
+  // v8: access=private ways (gated communities/HOA streets) are no longer
+  // excluded — bump so previously-cached tiles (fetched without them) refetch.
+  const cacheKey = `v8_${k(bbox.south)},${k(bbox.west)},${k(bbox.north)},${k(bbox.east)}`;
   const now = Date.now();
 
   // For medium/large areas, reject cached responses that are clearly incomplete.
@@ -409,14 +414,14 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
       [out:json][timeout:90];
       (
         way["highway"~"motorway|trunk|primary|secondary|tertiary|unclassified|residential|living_street|motorway_link|trunk_link|primary_link|secondary_link|tertiary_link|track|cycleway|path|bridleway"]
-           ["access"!~"private|no"]
+           ["access"!~"no"]
            (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
         way["highway"="footway"]["footway"!~"sidewalk|crossing"]["bicycle"!~"no|private"]
-           ["access"!~"private|no"]
+           ["access"!~"no"]
            (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
         way["highway"="service"]["service"!~"alley|driveway|parking_aisle|emergency_access|drive-through"]
            ["surface"~"unpaved|compacted|gravel|fine_gravel|dirt|ground|grass|earth|woodchips|pebblestone"]
-           ["access"!~"private|no"]
+           ["access"!~"no"]
            (${bbox.south},${bbox.west},${bbox.north},${bbox.east});
       );
       out geom;
