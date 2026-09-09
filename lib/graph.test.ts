@@ -1,4 +1,5 @@
 import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap, filterRiddenRoadsToBbox } from './graph';
+import { isRoutableHighway } from './highwayFilter';
 import { OverpassResponse } from './types';
 
 describe('StreetGraph', () => {
@@ -1093,6 +1094,64 @@ describe('StreetGraph', () => {
             graph.buildFromOSM(mockData, riddenRoads);
             expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
             expect(graph.graph.getLink('1', '3')!.data.isRidden).toBe(false);
+        });
+    });
+
+    describe('gated-community / HOA streets (access=private)', () => {
+        test('is still added as a graph edge (so ridden activity there still shows), but heavily avoided for routing', () => {
+            const graph = new StreetGraph();
+            const plainData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4193 },
+                    { type: 'way', id: 700, nodes: [1, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            const plainGraph = new StreetGraph();
+            plainGraph.buildFromOSM(plainData, null);
+            const plainWeight = plainGraph.graph.getLink('1', '2')!.data.weight;
+
+            const privateData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4193 },
+                    { type: 'way', id: 701, nodes: [1, 2], tags: { highway: 'residential', access: 'private' } },
+                ]
+            };
+            graph.buildFromOSM(privateData, null);
+            const link = graph.graph.getLink('1', '2')!;
+            expect(link).toBeDefined();
+            expect(link.data.isAvoided).toBe(true);
+            expect(link.data.weight).toBeCloseTo(plainWeight * 50, 5);
+        });
+
+        test('a genuinely closed road (access=no) is filtered upstream and never reaches buildFromOSM as routable', () => {
+            // access=no exclusion happens in the Overpass query/XML parser (lib/overpass.ts),
+            // not here -- isRoutableHighway has no access-tag awareness, so this documents the
+            // boundary: buildFromOSM alone can't tell access=no from a normal way.
+            expect(isRoutableHighway('residential', { access: 'no' })).toBe(true);
+        });
+
+        test('still marks a ridden access=private edge isRidden, independent of the routing avoidance', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4193 },
+                    { type: 'way', id: 702, nodes: [1, 2], tags: { highway: 'residential', access: 'private' } },
+                ]
+            };
+            const riddenRoads: [number, number][][] = [[
+                [47.65, -117.4204], [47.65, -117.4202], [47.65, -117.4200],
+                [47.65, -117.4198], [47.65, -117.4196], [47.65, -117.4194],
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            const link = graph.graph.getLink('1', '2')!;
+            expect(link.data.isRidden).toBe(true);
+            expect(link.data.isAvoided).toBe(true);
         });
     });
 

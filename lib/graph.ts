@@ -418,7 +418,12 @@ export class StreetGraph {
                 // trunk/motorway_link/trunk_link are kept in the graph for crossing connectivity
                 // but treated as always-avoided so CPP never targets them for coverage and the
                 // snap function skips them (they're not displayed on the map).
-                let isAvoided = highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link';
+                // access=private (gated communities/HOA streets, #82-adjacent): fetched and kept
+                // in the graph so a rider's actual ridden activity there still shows on the map
+                // (see e3ab828), but there's no guarantee any *other* user can get in, so a newly
+                // generated coverage route should never be routed through one on spec.
+                const isPrivateAccess = way.tags?.access === 'private';
+                let isAvoided = highway === 'trunk' || highway === 'motorway_link' || highway === 'trunk_link' || isPrivateAccess;
 
                 // Determine if this way should be avoided
                 const majorHighways = ['motorway', 'trunk', 'primary', 'secondary', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link'];
