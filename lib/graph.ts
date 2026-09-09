@@ -361,7 +361,17 @@ export class StreetGraph {
     }
 
     public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions) {
-        console.log(`${ts()} Building graph with options:`, options);
+        // Log a summary, not the raw options object: avoidedRoads can hold hundreds of
+        // coordinate pairs, and serializing/printing that on every cache-miss graph
+        // build (frequent during interactive point-by-point routing, where the bbox
+        // -- part of the cache key -- differs almost every click) measurably slowed
+        // down every request, not just ones that touch avoided roads.
+        console.log(`${ts()} Building graph with options:`, {
+            ...options,
+            avoidedRoads: options?.avoidedRoads
+                ? `${options.avoidedRoads.length} road(s), ${options.avoidedRoads.reduce((n, r) => n + r.length, 0)} pts`
+                : options?.avoidedRoads,
+        });
         // Any prior spatial indices are stale.
         this.nodeIndex = null;
         this.edgeIndex = null;
