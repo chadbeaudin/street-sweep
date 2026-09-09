@@ -1396,16 +1396,35 @@ export default function Home() {
         setHistoryIndex(index);
     }, []);
 
+    // Undo/redo while drawing an avoid segment (#45) must act on that in-progress
+    // draft, not the main route history underneath it -- otherwise undoing here
+    // silently discarded a point from whatever route the user was building before
+    // switching into Avoid mode.
+    const handleUndoAvoidPoint = useCallback(() => {
+        if (avoidDraftPathRef.current.length > 0) {
+            avoidDraftPathRef.current = avoidDraftPathRef.current.slice(0, -1);
+            setAvoidDraftPath(avoidDraftPathRef.current);
+        }
+        setAvoidDraftPoints(prev => {
+            if (prev.length === 0) return prev;
+            const next = prev.slice(0, -1);
+            avoidLastPointRef.current = next.length > 0 ? next[next.length - 1] : null;
+            return next;
+        });
+    }, []);
+
     const handleUndo = useCallback(() => {
+        if (isAvoidMode) { handleUndoAvoidPoint(); return; }
         const { snapshot, index } = undo(historyRef.current, historyIndexRef.current);
         if (snapshot) applySnapshot(snapshot, index);
         else if (historyIndexRef.current === 0) clearPoints();
-    }, [clearPoints, applySnapshot]);
+    }, [clearPoints, applySnapshot, isAvoidMode, handleUndoAvoidPoint]);
 
     const handleRedo = useCallback(() => {
+        if (isAvoidMode) return; // no redo stack for the avoid draft
         const { snapshot, index } = redo(historyRef.current, historyIndexRef.current);
         if (snapshot) applySnapshot(snapshot, index);
-    }, [applySnapshot]);
+    }, [applySnapshot, isAvoidMode]);
 
     const totalElevationGain = useMemo(() => {
         if (!elevationData || elevationData.length < 2) return 0;
@@ -1676,15 +1695,15 @@ export default function Home() {
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <button
                             onClick={handleUndo}
-                            disabled={historyIndex < 0}
+                            disabled={isAvoidMode ? avoidDraftPoints.length === 0 : historyIndex < 0}
                             className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md disabled:text-gray-200 transition-colors"
-                            title="Undo last point"
+                            title={isAvoidMode ? 'Undo last avoid point' : 'Undo last point'}
                         >
                             <Undo2 className="w-5 h-5" />
                         </button>
                         <button
                             onClick={handleRedo}
-                            disabled={historyIndex >= history.length - 1}
+                            disabled={isAvoidMode ? true : historyIndex >= history.length - 1}
                             className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md disabled:text-gray-200 transition-colors"
                             title="Redo point"
                         >
