@@ -20,6 +20,7 @@ interface EdgeData {
     isVirtual?: boolean;
     isRidden?: boolean;
     isAvoided?: boolean;
+    isUserAvoided?: boolean;
     highway?: string;
     hasConstruction?: boolean;
     hasBikeLane?: boolean;
@@ -30,7 +31,18 @@ export interface RoutingOptions {
     avoidHighways?: boolean;
     avoidTrails?: boolean;
     riddenPenalty?: number;
+    // User-marked "avoid" roads (issue #45), stored per-browser as raw coordinate
+    // polylines (same shape as riddenRoads) rather than OSM way ids, since the
+    // client never receives way ids for rendered roads. Matched onto graph edges
+    // the same way ridden roads are: proximity to these traces, not id equality.
+    avoidedRoads?: [number, number][][];
 }
+
+// Heavy soft penalty for user-marked avoided roads: much larger than the
+// isAvoided category penalty (50x) so a manually-marked street is a last
+// resort, but still not a hard exclude -- a route that has no other way in
+// can still use it.
+const USER_AVOIDED_PENALTY = 100;
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
@@ -295,6 +307,7 @@ export class StreetGraph {
     private nodeIndex: Map<string, string[]> | null = null;
     private edgeIndex: Map<string, any[]> | null = null;
     private riddenIndex: Map<string, [number, number][]> | null = null;
+    private avoidedIndex: Map<string, [number, number][]> | null = null;
 
     public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions): StreetGraph {
         const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
@@ -314,7 +327,20 @@ export class StreetGraph {
                 }
             }
         }
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}|R${riddenPointCount}:${riddenKey}`;
+        // avoidedRoads (issue #45) affects isUserAvoided/weight the same way riddenRoads
+        // affects isRidden, so it must also be part of the cache key.
+        let avoidedKey = 0;
+        let avoidedPointCount = 0;
+        if (options?.avoidedRoads) {
+            for (const road of options.avoidedRoads) {
+                avoidedPointCount += road.length;
+                if (road.length > 0) {
+                    const [lat, lon] = road[0];
+                    avoidedKey = (avoidedKey * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
+                }
+            }
+        }
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}|R${riddenPointCount}:${riddenKey}|A${avoidedPointCount}:${avoidedKey}`;
         const now = Date.now();
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {
@@ -340,6 +366,7 @@ export class StreetGraph {
         this.nodeIndex = null;
         this.edgeIndex = null;
         this.riddenIndex = null;
+        this.avoidedIndex = null;
         const nodesMap = new Map<number, { lat: number, lon: number }>();
 
         // Debug: log first few nodes to verify coordinate parsing
@@ -349,6 +376,8 @@ export class StreetGraph {
         }
 
         if (riddenRoads && riddenRoads.length > 0) this.buildRiddenIndex(riddenRoads);
+        const avoidedRoads = options?.avoidedRoads;
+        if (avoidedRoads && avoidedRoads.length > 0) this.avoidedIndex = this.buildProximityIndex(avoidedRoads);
 
         // 1. First pass: Collect any top-level node elements (for backward compatibility/tests)
         for (const elem of data.elements) {
@@ -454,7 +483,15 @@ export class StreetGraph {
                         // so a route doesn't wander onto one for no reason, but only 5x with
                         // "Avoid Highways" off so a route that actually needs the ramp (e.g. to
                         // reach a trunk road pins were dropped on) can still take it.
-                        if (highway === 'trunk') {
+                        // User-marked avoided roads (issue #45): matched by proximity to the
+                        // client's persisted avoid-list, same as isRidden below. Checked before
+                        // the category multipliers so a manually-avoided trunk road, say, still
+                        // gets the heavier user penalty rather than the smaller category one.
+                        const isUserAvoided = this.checkIfUserAvoided(uCoord, vCoord);
+                        if (isUserAvoided) {
+                            dist *= USER_AVOIDED_PENALTY;
+                            isAvoided = true;
+                        } else if (highway === 'trunk') {
                             dist *= options?.avoidHighways ? 12 : 2;
                         } else if (highway === 'motorway_link' || highway === 'trunk_link') {
                             dist *= options?.avoidHighways ? 30 : 5;
@@ -476,6 +513,7 @@ export class StreetGraph {
                             highway: highway, // Store highway type for debugging/filtering
                             isRidden,
                             isAvoided,
+                            isUserAvoided,
                             hasConstruction,
                             hasBikeLane
                         });
@@ -486,6 +524,7 @@ export class StreetGraph {
                             highway: highway,
                             isRidden,
                             isAvoided,
+                            isUserAvoided,
                             hasConstruction,
                             hasBikeLane
                         });
@@ -496,7 +535,12 @@ export class StreetGraph {
     }
 
     private buildRiddenIndex(riddenRoads: [number, number][][]): void {
-        this.riddenIndex = new Map();
+        this.riddenIndex = this.buildProximityIndex(riddenRoads);
+    }
+
+    /** Builds a spatial index of interpolated points along a set of GPS/road traces, for proximity matching against graph edges. */
+    private buildProximityIndex(roads: [number, number][][]): Map<string, [number, number][]> {
+        const index = new Map<string, [number, number][]>();
         // Real GPS traces (especially Strava's summary_polyline) can have consecutive
         // points 50-100m+ apart -- far enough that many short OSM edges between them
         // never get a nearby candidate point at all. The client's own ridden overlay
@@ -509,11 +553,11 @@ export class StreetGraph {
             const cellLat = Math.floor(lat / GRID_DEG);
             const cellLon = Math.floor(lon / GRID_DEG);
             const key = `${cellLat}:${cellLon}`;
-            let bucket = this.riddenIndex!.get(key);
-            if (!bucket) { bucket = []; this.riddenIndex!.set(key, bucket); }
+            let bucket = index.get(key);
+            if (!bucket) { bucket = []; index.set(key, bucket); }
             bucket.push([lat, lon]);
         };
-        for (const activity of riddenRoads) {
+        for (const activity of roads) {
             for (let i = 0; i < activity.length; i++) {
                 const [lat1, lon1] = activity[i];
                 addPoint(lat1, lon1);
@@ -529,10 +573,20 @@ export class StreetGraph {
                 }
             }
         }
+        return index;
     }
 
     private checkIfRidden(u: { lat: number, lon: number }, v: { lat: number, lon: number }, riddenRoads: [number, number][][] | null): boolean {
         if (!riddenRoads || riddenRoads.length === 0 || !this.riddenIndex) return false;
+        return this.checkProximity(u, v, this.riddenIndex);
+    }
+
+    private checkIfUserAvoided(u: { lat: number, lon: number }, v: { lat: number, lon: number }): boolean {
+        if (!this.avoidedIndex) return false;
+        return this.checkProximity(u, v, this.avoidedIndex);
+    }
+
+    private checkProximity(u: { lat: number, lon: number }, v: { lat: number, lon: number }, index: Map<string, [number, number][]>): boolean {
 
         // Use segment-to-point distance: for each Strava GPS point near this edge,
         // compute the perpendicular distance to the segment u→v rather than checking
@@ -590,7 +644,7 @@ export class StreetGraph {
 
         for (let cLat = cellMinLat; cLat <= cellMaxLat; cLat++) {
             for (let cLon = cellMinLon; cLon <= cellMaxLon; cLon++) {
-                const bucket = this.riddenIndex.get(`${cLat}:${cLon}`);
+                const bucket = index.get(`${cLat}:${cLon}`);
                 if (!bucket) continue;
                 for (const point of bucket) {
                     // Project point onto segment, clamp to [0,1], measure distance.

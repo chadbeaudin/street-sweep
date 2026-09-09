@@ -82,6 +82,12 @@ interface MapProps {
     preAreaPointCount?: number | null;
     isImportedRoute?: boolean;
     onRouteHover?: (point: { lat: number; lon: number } | null) => void;
+    // User-marked "avoid" roads (#45)
+    isAvoidMode?: boolean;
+    onAvoidPointAdd?: (point: { lat: number; lon: number }) => void;
+    avoidedRoads?: [number, number][][];
+    avoidDraftPath?: [number, number][][];
+    avoidDraftPoints?: { lat: number; lon: number }[];
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -471,7 +477,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -679,9 +685,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isPickingStart) { onStartPick?.(latlng.lat, latlng.lng); return; }
+        if (isAvoidMode) { onAvoidPointAdd?.({ lat: latlng.lat, lon: latlng.lng }); return; }
         if (isSelectionMode || isLassoMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
-    }, [onPointAdd, isSelectionMode, isLassoMode, isEraserMode, isPickingStart, onStartPick]);
+    }, [onPointAdd, onAvoidPointAdd, isSelectionMode, isLassoMode, isEraserMode, isAvoidMode, isPickingStart, onStartPick]);
 
     // Split route into normal and construction segments
     const { normalSegments, constructionSegments, hasConstruction } = React.useMemo(() => {
@@ -876,6 +883,46 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 ))}
 
+                {/* User-marked "avoid" roads (#45) */}
+                {avoidedRoads && avoidedRoads.map((road, idx) => (
+                    <Polyline
+                        key={`avoided-${idx}`}
+                        positions={road as [number, number][]}
+                        color="#DC2626"
+                        weight={4}
+                        opacity={0.85}
+                        interactive={false}
+                    />
+                ))}
+
+                {/* In-progress avoid-segment draft (#45) — dashed until the user toggles Avoid mode off */}
+                {avoidDraftPath && avoidDraftPath.map((segment, idx) => (
+                    <Polyline
+                        key={`avoided-draft-${idx}`}
+                        positions={segment as [number, number][]}
+                        color="#DC2626"
+                        weight={4}
+                        opacity={0.7}
+                        dashArray="6, 6"
+                        interactive={false}
+                    />
+                ))}
+
+                {/* Immediate per-click feedback for the avoid draft, independent of the async snap */}
+                {avoidDraftPoints && avoidDraftPoints.map((p, idx) => (
+                    <Marker
+                        key={`avoided-draft-point-${idx}`}
+                        position={[p.lat, p.lon]}
+                        interactive={false}
+                        icon={L.divIcon({
+                            className: '',
+                            html: '<div style="width:12px;height:12px;background:#DC2626;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.4)"></div>',
+                            iconSize: [12, 12],
+                            iconAnchor: [6, 6],
+                        })}
+                    />
+                ))}
+
                 {/* Strava roads - snapped to OSM geometry */}
                 {/* Activities snapped to road network, so overlapping rides follow exact same path */}
                 {snappedStravaRoads.map((road, idx) => (
@@ -945,6 +992,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         className="road-hitbox"
                         eventHandlers={{
                             click: isEraserMode ? undefined : (e) => {
+                                if (isAvoidMode) { onAvoidPointAdd?.({ lat: e.latlng.lat, lon: e.latlng.lng }); return; }
                                 if (isPickingStart) { onStartPick?.(e.latlng.lat, e.latlng.lng); return; }
                                 onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng });
                             },

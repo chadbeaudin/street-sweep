@@ -1095,6 +1095,53 @@ describe('StreetGraph', () => {
             expect(graph.graph.getLink('1', '3')!.data.isRidden).toBe(false);
         });
     });
+
+    describe('user-marked avoided roads (issue #45)', () => {
+        test('marks a matching edge isUserAvoided and heavily penalizes its weight, without hard-excluding it', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4193 }, // ~54m east at this latitude
+                    { type: 'way', id: 500, nodes: [1, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            const avoidedRoads: [number, number][][] = [[
+                [47.65, -117.4204], [47.65, -117.4202], [47.65, -117.4200],
+                [47.65, -117.4198], [47.65, -117.4196], [47.65, -117.4194],
+            ]];
+            const plainGraph = new StreetGraph();
+            plainGraph.buildFromOSM(mockData, null);
+            const plainWeight = plainGraph.graph.getLink('1', '2')!.data.weight;
+
+            graph.buildFromOSM(mockData, null, { avoidedRoads });
+            const link = graph.graph.getLink('1', '2')!;
+            expect(link.data.isUserAvoided).toBe(true);
+            expect(link.data.isAvoided).toBe(true);
+            expect(link.data.weight).toBeCloseTo(plainWeight * 100, 5);
+        });
+
+        test('leaves unrelated edges untouched when avoidedRoads is set', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },
+                    { type: 'way', id: 600, nodes: [1, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            // A parallel street ~100m north -- well beyond match threshold.
+            const avoidedRoads: [number, number][][] = [[
+                [47.6509, -117.4197], [47.6509, -117.4193], [47.6509, -117.4189],
+            ]];
+            graph.buildFromOSM(mockData, null, { avoidedRoads });
+            const link = graph.graph.getLink('1', '2')!;
+            expect(link.data.isUserAvoided).toBe(false);
+            expect(link.data.isAvoided).toBe(false);
+        });
+    });
 });
 
 describe('Point-in-Polygon Functions', () => {

@@ -53,13 +53,25 @@ export default function Home() {
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
     const [history, setHistory] = useState<RouteSnapshot[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
-    const [routingOptions, setRoutingOptions] = useState({
+    const [routingOptions, setRoutingOptions] = useState<{
+        avoidGravel: boolean;
+        avoidHighways: boolean;
+        avoidTrails: boolean;
+        riddenPenalty: number;
+        boxElasticity: number;
+        pointRoutePenalty: number;
+        avoidedRoads: [number, number][][];
+    }>({
         avoidGravel: false,
         avoidHighways: false,
         avoidTrails: false,
         riddenPenalty: 15,
         boxElasticity: 0,
-        pointRoutePenalty: 4
+        pointRoutePenalty: 4,
+        // User-marked "avoid" roads (#45): raw coordinate polylines of roads the
+        // user has clicked to mark, persisted per-browser and sent alongside the
+        // other routing options so the server can heavily penalize them.
+        avoidedRoads: []
     });
     // Persist routing options (avoid gravel/highways/trails, penalties) across
     // reloads -- these previously silently reset to defaults on every page load
@@ -67,6 +79,15 @@ export default function Home() {
     // initial useState — read it here, client-only, after mount instead), so a
     // toggle a user believed was still on (e.g. "avoid gravel") could silently be
     // off for a later route generation without any indication.
+    // Guards a real bug (not just a StrictMode artifact): on mount, this effect
+    // and the load effect below both fire in the same pass, but this one runs
+    // with the *default* state (the load effect's setState hasn't landed yet),
+    // so without this guard it immediately overwrites localStorage with defaults
+    // -- clobbering anything genuinely persisted (e.g. avoidedRoads) a split
+    // second before the load effect could apply it. Skip exactly the first run;
+    // the load effect's setState (if any) triggers the next run, which then
+    // saves the correct merged value.
+    const routingOptionsFirstSaveRef = useRef(true);
     useEffect(() => {
         try {
             const saved = localStorage.getItem('streetsweep_routing_options');
@@ -74,6 +95,7 @@ export default function Home() {
         } catch { /* ignore malformed storage */ }
     }, []);
     useEffect(() => {
+        if (routingOptionsFirstSaveRef.current) { routingOptionsFirstSaveRef.current = false; return; }
         try { localStorage.setItem('streetsweep_routing_options', JSON.stringify(routingOptions)); } catch { /* ignore */ }
     }, [routingOptions]);
     const [showOptions, setShowOptions] = useState(false);
@@ -102,6 +124,7 @@ export default function Home() {
         try { localStorage.setItem('streetsweep_seen_tutorial', '1'); } catch { /* ignore */ }
     }, []);
     const [isEraserMode, setIsEraserMode] = useState(false);
+    const [isAvoidMode, setIsAvoidMode] = useState(false);
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
@@ -904,6 +927,63 @@ export default function Home() {
         const reset = () => { if (isDraggingRef.current) setTimeout(() => { isDraggingRef.current = false; }, 500); };
         document.addEventListener('pointerup', reset);
         return () => document.removeEventListener('pointerup', reset);
+    }, []);
+
+    // Mark-as-avoided drawing (#45): while isAvoidMode is on, each click drops a
+    // point and (from the second point on) snaps a path along the street network
+    // from the previous point, mirroring how normal Point mode builds manualRoute
+    // via /api/step. The accumulated path is a *draft* until the user toggles
+    // Avoid mode back off, at which point it's committed as one entry in
+    // routingOptions.avoidedRoads.
+    const avoidDraftPathRef = useRef<[number, number][][]>([]);
+    const avoidLastPointRef = useRef<{ lat: number; lon: number } | null>(null);
+    const [avoidDraftPath, setAvoidDraftPath] = useState<[number, number][][]>([]);
+    // Dropped immediately per click, independent of the async /api/step snap, so
+    // a click always gives instant visual feedback even before (or if) the snap
+    // request resolves.
+    const [avoidDraftPoints, setAvoidDraftPoints] = useState<{ lat: number; lon: number }[]>([]);
+
+    const handleAvoidPointAdd = useCallback((point: { lat: number; lon: number }) => {
+        setAvoidDraftPoints(prev => [...prev, point]);
+        const currentBbox = bboxRef.current;
+        const lastPoint = avoidLastPointRef.current;
+        avoidLastPointRef.current = point;
+        if (!currentBbox || !lastPoint) return; // first click just anchors the start
+
+        (async () => {
+            try {
+                const stepRes = await fetch('/api/step', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ point, lastPoint, bbox: currentBbox, routingOptions: routingOptionsRef.current })
+                });
+                const stepData = await stepRes.json();
+                // stepData.path comes back as [lon, lat] pairs (same as manualRoute) — swap to [lat, lon].
+                const segment: [number, number][] = (stepData.path && stepData.path.length > 0)
+                    ? stepData.path.map((p: [number, number]) => [p[1], p[0]] as [number, number])
+                    : [[lastPoint.lat, lastPoint.lon], [point.lat, point.lon]];
+                avoidDraftPathRef.current = [...avoidDraftPathRef.current, segment];
+                setAvoidDraftPath(avoidDraftPathRef.current);
+            } catch (err) {
+                console.error('Failed to snap avoid segment:', err);
+            }
+        })();
+    }, []);
+
+    const toggleAvoidMode = useCallback(() => {
+        setIsAvoidMode(prev => {
+            const next = !prev;
+            if (!next && avoidDraftPathRef.current.length > 0) {
+                // Finishing: commit the drawn draft as one avoided-road entry.
+                const combined = avoidDraftPathRef.current.flat() as [number, number][];
+                setRoutingOptions(ro => ({ ...ro, avoidedRoads: [...ro.avoidedRoads, combined] }));
+            }
+            avoidDraftPathRef.current = [];
+            setAvoidDraftPath([]);
+            setAvoidDraftPoints([]);
+            avoidLastPointRef.current = null;
+            return next;
+        });
     }, []);
 
     const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
@@ -1986,7 +2066,28 @@ export default function Home() {
                             </svg>
                             Lasso
                         </button>
+                        <button
+                            onClick={toggleAvoidMode}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isAvoidMode ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            title="Click roads to mark them as avoided"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 105.636 5.636a9 9 0 0012.728 12.728zM5.636 5.636l12.728 12.728" />
+                            </svg>
+                            Avoid
+                        </button>
                     </div>
+                    {routingOptions.avoidedRoads.length > 0 && (
+                        <button
+                            onClick={() => setRoutingOptions(prev => ({ ...prev, avoidedRoads: [] }))}
+                            className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors shadow-md"
+                            title="Clear avoided roads"
+                        >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    )}
                     {(selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
                         <button
                             onClick={() => { setSelectionBoxes([]); setSelectionPolygons([]); }}
@@ -2067,6 +2168,11 @@ export default function Home() {
                     onSelectionModeChange={setIsSelectionMode}
                     onLassoModeChange={setIsLassoMode}
                     isEraserMode={isEraserMode}
+                    isAvoidMode={isAvoidMode}
+                    onAvoidPointAdd={handleAvoidPointAdd}
+                    avoidedRoads={routingOptions.avoidedRoads}
+                    avoidDraftPath={avoidDraftPath}
+                    avoidDraftPoints={avoidDraftPoints}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
                     onRouteHover={setRouteHoverPoint}
