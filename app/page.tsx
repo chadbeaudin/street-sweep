@@ -49,6 +49,11 @@ export default function Home() {
     const [stravaElevations, setStravaElevations] = useState<number[]>([]);
     const [stravaTypes, setStravaTypes] = useState<string[]>([]);
     const [isStravaLoading, setIsStravaLoading] = useState(false);
+    // Tracks the *separate*, slower server-side "ridden roads" precomputation
+    // (below) that actually draws the ridden-road overlay -- distinct from
+    // isStravaLoading, which only covers the quick raw-activity-list fetch and
+    // clears well before this finishes on a first connect with real history.
+    const [isRiddenComputing, setIsRiddenComputing] = useState(false);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
     const [history, setHistory] = useState<RouteSnapshot[]>([]);
@@ -377,7 +382,7 @@ export default function Home() {
     // cached client-side (IndexedDB) the same way /api/strava/activities
     // already is, instead of re-fetching the full payload on every page load.
     useEffect(() => {
-        if (!stravaCredentials?.refreshToken) { setPrecomputedRidden(null); return; }
+        if (!stravaCredentials?.refreshToken) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
         const credentialsKey = JSON.stringify(stravaCredentials);
@@ -391,16 +396,19 @@ export default function Home() {
                     body: JSON.stringify({ stravaCredentials })
                 });
                 const data = await res.json();
-                if (cancelled || data.error) return;
+                if (cancelled || data.error) { setIsRiddenComputing(false); return; }
                 if (Array.isArray(data.roads) && data.roads.length > 0) {
                     setPrecomputedRidden(data.roads);
                     setCachedPrecomputedRoads(data.roads, data.refreshedAt ?? null, credentialsKey);
                 }
-                if ((data.computing || data.refreshing) && !cancelled) timer = setTimeout(fetchFresh, 8000);
-            } catch { /* leave client fallback in place */ }
+                const stillComputing = !!(data.computing || data.refreshing);
+                setIsRiddenComputing(stillComputing);
+                if (stillComputing && !cancelled) timer = setTimeout(fetchFresh, 8000);
+            } catch { if (!cancelled) setIsRiddenComputing(false); }
         };
 
         if (skipCache) {
+            setIsRiddenComputing(true);
             fetchFresh();
         } else {
             getCachedPrecomputedRoads(credentialsKey).then(cachedRoads => {
@@ -408,6 +416,7 @@ export default function Home() {
                 if (cachedRoads) {
                     setPrecomputedRidden(cachedRoads);
                 } else {
+                    setIsRiddenComputing(true);
                     fetchFresh();
                 }
             });
@@ -1956,8 +1965,30 @@ export default function Home() {
                         </span>
                     </div>
                 )}
-                {/* First-Time User Welcome: prompt to connect Strava */}
-                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && (
+                {/* Ridden-Roads Sync Pill: non-blocking, unlike the Strava Loading Overlay
+                    below -- the map and routing already work while this runs. Without it, a
+                    first-time connect (isStravaLoading clears once the raw activity list is
+                    fetched) landed the user on what looked like a plain, empty map for up to
+                    a minute while the server-side ridden-road overlay was still computing. */}
+                {isRiddenComputing && !isStravaLoading && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
+                        <div className="relative flex items-center justify-center">
+                            <div className="w-3 h-3 bg-[#FC4C02] rounded-full animate-ping absolute"></div>
+                            <Loader2 className="w-4 h-4 animate-spin text-[#FC4C02] relative z-10" />
+                        </div>
+                        <span className="text-sm font-bold text-gray-900 tracking-tight">
+                            Syncing your ride history... this can take a minute the first time
+                        </span>
+                    </div>
+                )}
+                {/* First-Time User Welcome: prompt to connect Strava.
+                    Suppressed while the walkthrough is open -- it renders behind the tour's
+                    dim/spotlight overlay at a lower z-index, so a first-time visitor saw the
+                    tour's spotlighted buttons sitting on top of this gate's own opaque
+                    backdrop-blur instead of the live map. Showing the tour first (it already
+                    auto-opens for first-time visitors) means it closes into this gate, not
+                    the other way around. */}
+                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && !showHowTo && (
                     <div className="absolute inset-0 z-[1100] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg text-center border border-gray-100 animate-in fade-in zoom-in duration-300 relative">
                             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100 mx-auto mb-6">
@@ -2037,6 +2068,7 @@ export default function Home() {
                 <div className="absolute top-4 right-4 z-[1000] flex items-center gap-1">
                     <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium bg-white shadow-md">
                         <button
+                            data-tour="mode-point"
                             onClick={() => { setIsSelectionMode(false); setIsLassoMode(false); }}
                             className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] transition-colors ${!isSelectionMode && !isLassoMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Point Mode (P)"
@@ -2046,27 +2078,30 @@ export default function Home() {
                             </svg>
                             Point
                         </button>
+                        <div data-tour="mode-area-lasso" className="flex">
+                            <button
+                                onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); }}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                title="Area Selection (A)"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                                </svg>
+                                Area
+                            </button>
+                            <button
+                                onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); }}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                                title="Lasso Selection (L)"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                                Lasso
+                            </button>
+                        </div>
                         <button
-                            onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                            title="Area Selection (A)"
-                        >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
-                            </svg>
-                            Area
-                        </button>
-                        <button
-                            onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                            title="Lasso Selection (L)"
-                        >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                            </svg>
-                            Lasso
-                        </button>
-                        <button
+                            data-tour="mode-avoid"
                             onClick={toggleAvoidMode}
                             className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isAvoidMode ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Click roads to mark them as avoided"
