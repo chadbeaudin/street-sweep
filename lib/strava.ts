@@ -242,8 +242,9 @@ async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSec
 
 // Bypasses the cache TTL check so the UI's "Sync" button can force a fresh pull.
 export async function forceSyncStravaActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<void> {
-    const athleteId = await resolveAthleteId(creds);
     const accessToken = await getStravaAccessToken(creds);
+    const athleteId = await getStravaAthleteId(accessToken);
+    if (creds?.refreshToken) ATHLETE_ID_CACHE.set(creds.refreshToken, athleteId);
     const activities = await fetchAllStravaActivitiesWithToken(accessToken);
     await prisma.stravaActivityCache.upsert({
         where: { athleteId },

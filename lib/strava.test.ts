@@ -7,7 +7,7 @@ jest.mock('./prisma', () => ({
     },
 }));
 
-import { fetchCyclingRiddenRoads } from './strava';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from './strava';
 import { prisma } from './prisma';
 
 const creds = { clientId: 'id', clientSecret: 'secret', refreshToken: 'refresh' };
@@ -84,5 +84,41 @@ describe('fetchCyclingRiddenRoads', () => {
 
         expect(result.totalCyclingActivities).toBe(1);
         expect(result.totalCyclingElevationGainMeters).toBe(100);
+    });
+
+    it('forceSync followed by fetchCyclingRiddenRoads refreshes the token once and fetches activities once (no duplicate full-history pull)', async () => {
+        const activities = [mockActivity({ id: 1 })];
+        let tokenCalls = 0;
+        let activitiesCalls = 0;
+        (global.fetch as jest.Mock).mockImplementation((url: string) => {
+            if (url.includes('oauth/token')) {
+                tokenCalls++;
+                return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+            }
+            if (url.includes('/athlete') && !url.includes('activities')) {
+                return Promise.resolve({ ok: true, json: async () => ({ id: 12345 }) });
+            }
+            if (url.includes('/activities')) {
+                activitiesCalls++;
+                const isPage1 = url.includes('page=1&');
+                return Promise.resolve({ ok: true, json: async () => (isPage1 ? activities : []) });
+            }
+            throw new Error('unexpected fetch: ' + url);
+        });
+
+        // Simulate the /api/strava/activities route: forceSync writes a fresh
+        // Postgres cache row, then fetchCyclingRiddenRoads should read that
+        // row back instead of re-hitting Strava.
+        const now = new Date();
+        (prisma.stravaActivityCache.upsert as jest.Mock).mockImplementation(async ({ create }: any) => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: create.athleteId, activities: create.activities, syncedAt: now });
+            return {};
+        });
+
+        await forceSyncStravaActivities({ ...creds, refreshToken: 'force-sync-refresh' });
+        await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'force-sync-refresh' });
+
+        expect(tokenCalls).toBe(1);
+        expect(activitiesCalls).toBe(2); // one full pagination sweep (page 1 + empty page 2), not two
     });
 });
