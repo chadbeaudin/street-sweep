@@ -496,6 +496,17 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return { lat: route[route.length - 1][1], lon: route[route.length - 1][0] };
     }, [route, selectedPoints]);
 
+    // dedupeRiddenRoads below is expensive (GPS-trace densification + spatial
+    // matching over every loaded road segment) and allRoads grows/changes on
+    // every tile fetch while panning/zooming — recomputing synchronously on
+    // each change froze the map mid-interaction. Debounce so it only reruns
+    // once tile fetching settles, not on every incremental batch.
+    const [debouncedAllRoads, setDebouncedAllRoads] = React.useState(allRoads);
+    React.useEffect(() => {
+        const timer = setTimeout(() => setDebouncedAllRoads(allRoads), 400);
+        return () => clearTimeout(timer);
+    }, [allRoads]);
+
     // The ridden overlay: the server-precomputed deduped roads (instant,
     // viewport-independent) plus a fresh viewport-local dedupe of stravaRoads.
     // precomputedRidden is only refreshed on a ~24h timer with no invalidation
@@ -503,11 +514,11 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     // few hours ago that the client already knows about — unioning both means
     // the overlay only ever gains coverage as fresher data arrives, never loses it.
     const snappedStravaRoads = React.useMemo(() => {
-        const fresh = (stravaRoads && stravaRoads.length > 0 && allRoads && allRoads.length > 0)
-            ? dedupeRiddenRoads(stravaRoads, allRoads)
+        const fresh = (stravaRoads && stravaRoads.length > 0 && debouncedAllRoads && debouncedAllRoads.length > 0)
+            ? dedupeRiddenRoads(stravaRoads, debouncedAllRoads)
             : [];
         return combineRiddenOverlay(precomputedRidden, fresh);
-    }, [precomputedRidden, stravaRoads, allRoads]);
+    }, [precomputedRidden, stravaRoads, debouncedAllRoads]);
 
     // Fit map whenever an imported route first appears. Only imports — the
     // user hasn't positioned the map for that route's location yet, unlike
