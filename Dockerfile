@@ -33,6 +33,12 @@ COPY --from=builder /app/public ./public
 RUN mkdir .next
 RUN chown nextjs:nodejs .next
 
+# lib/osmDiskCache.ts writes to $OSM_CACHE_DIR (defaults to ./.cache/osm) as a
+# local tier that avoids repeat DB egress within a machine's lifetime -- /app
+# itself is root-owned, so without this the nextjs user's mkdir fails (EACCES)
+# on every request and that tier silently never works.
+RUN mkdir -p .cache && chown nextjs:nodejs .cache
+
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
