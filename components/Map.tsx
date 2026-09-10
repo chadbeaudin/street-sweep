@@ -6,7 +6,7 @@ import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectan
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
-import { dedupeRiddenRoads, combineRiddenOverlay } from '@/lib/riddenRoads';
+import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox } from '@/lib/riddenRoads';
 import { bboxFromLatLngs } from '@/lib/selectionBox';
 import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 
@@ -513,18 +513,70 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return () => clearTimeout(timer);
     }, [allRoads]);
 
+    // Bounds of the already-debounced road tiles, used below to scope
+    // stravaRoads. Deliberately derived from debouncedAllRoads rather than the
+    // live bbox prop -- bbox updates on every single moveend (every pan/zoom
+    // gesture, not just ones that fetch new tiles), and putting it directly in
+    // the memo below defeated the debounce entirely, making the recompute run
+    // on every pan instead of only once tile fetching settles (worse than the
+    // original bug, not better). Tying it to debouncedAllRoads keeps it on the
+    // same 400ms-settled cadence.
+    const debouncedAllRoadsBounds = React.useMemo(() => {
+        if (!debouncedAllRoads || debouncedAllRoads.length === 0) return null;
+        let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
+        for (const road of debouncedAllRoads) {
+            for (const [lat, lon] of road) {
+                if (lat < minLat) minLat = lat;
+                if (lat > maxLat) maxLat = lat;
+                if (lon < minLon) minLon = lon;
+                if (lon > maxLon) maxLon = lon;
+            }
+        }
+        return { south: minLat, north: maxLat, west: minLon, east: maxLon };
+    }, [debouncedAllRoads]);
+
     // The ridden overlay: the server-precomputed deduped roads (instant,
-    // viewport-independent) plus a fresh viewport-local dedupe of stravaRoads.
-    // precomputedRidden is only refreshed on a ~24h timer with no invalidation
-    // hook when new activities sync, so on its own it can hide a ride from a
-    // few hours ago that the client already knows about — unioning both means
-    // the overlay only ever gains coverage as fresher data arrives, never loses it.
+    // viewport-independent), with a client-side fresh dedupe of stravaRoads
+    // used only as a *fallback* -- not a routine top-up. Even scoped to the
+    // viewport, filterRiddenRoadsToBbox still does one full pass over an
+    // established rider's *entire* history (it has to, to decide what's in
+    // bounds), and that pass re-runs on every tile-settle. During a hard
+    // refresh's burst of tile fetches, that meant several multi-second main-
+    // thread freezes in a row -- worse than a stale overlay. precomputedRidden
+    // is already kept fresh by the polling sync in app/page.tsx (recomputed
+    // server-side on each Strava sync, not just a 24h timer), so once it has
+    // data at all, prefer it outright and skip the expensive client recompute.
+    // Only fall back to computing live when there's no precomputed data yet
+    // (e.g. the very first load before that sync has ever completed).
     const snappedStravaRoads = React.useMemo(() => {
-        const fresh = (stravaRoads && stravaRoads.length > 0 && debouncedAllRoads && debouncedAllRoads.length > 0)
-            ? dedupeRiddenRoads(stravaRoads, debouncedAllRoads)
+        if (precomputedRidden && precomputedRidden.length > 0) return precomputedRidden;
+        const scopedStravaRoads = (stravaRoads && debouncedAllRoadsBounds) ? filterRiddenRoadsToBbox(stravaRoads, debouncedAllRoadsBounds, 600) : stravaRoads;
+        const fresh = (scopedStravaRoads && scopedStravaRoads.length > 0 && debouncedAllRoads && debouncedAllRoads.length > 0)
+            ? dedupeRiddenRoads(scopedStravaRoads, debouncedAllRoads)
             : [];
         return combineRiddenOverlay(precomputedRidden, fresh);
-    }, [precomputedRidden, stravaRoads, debouncedAllRoads]);
+    }, [precomputedRidden, stravaRoads, debouncedAllRoads, debouncedAllRoadsBounds]);
+
+    // What actually gets drawn: precomputedRidden is viewport-independent by
+    // design (so it's instant on load, no per-pan fetch), but an established
+    // rider's full history can be tens of thousands of segments / hundreds of
+    // thousands of points (a real case: 28k segments, 520k+ points, ~13MB).
+    // Canvas rendering (preferCanvas above) avoids one-DOM-node-per-segment,
+    // but Leaflet's canvas layer still re-projects and redraws every point of
+    // every segment on every pan/zoom frame regardless of whether it's on
+    // screen -- with that much data, that alone was enough to freeze the tab.
+    // Cull to what's actually near the viewport before handing it to Leaflet;
+    // this is a cheap bounding-box check (unlike the GPS-matching dedupe
+    // above), so it's fine to run on every bbox change, not just debounced
+    // settles -- it should track panning immediately.
+    const visibleStravaRoads = React.useMemo(() => {
+        // Before the first real bbox arrives (map starts at a neutral world-view
+        // placeholder until geolocation/saved-start-point resolves, see below),
+        // there's nothing meaningful to scope to -- render nothing rather than
+        // the entire uncalled dataset for that one frame.
+        if (!bbox) return [];
+        return filterRiddenRoadsToBbox(snappedStravaRoads, bbox, 1000) ?? [];
+    }, [snappedStravaRoads, bbox]);
 
     // Fit map whenever an imported route first appears. Only imports — the
     // user hasn't positioned the map for that route's location yet, unlike
@@ -925,7 +977,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
                 {/* Strava roads - snapped to OSM geometry */}
                 {/* Activities snapped to road network, so overlapping rides follow exact same path */}
-                {snappedStravaRoads.map((road, idx) => (
+                {visibleStravaRoads.map((road, idx) => (
                     <Polyline
                         key={`strava-${idx}`}
                         positions={road as [number, number][]}
