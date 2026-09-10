@@ -16,6 +16,12 @@ const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 const MAX_TILES = Number(process.env.RIDDEN_MAX_TILES ?? 5000);
 
 interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
+type ActivityMode = 'cycling' | 'running';
+
+// Cycling stays on the bare athleteId key so existing cached rows keep
+// matching (no DB migration needed); running gets a distinct suffixed key so
+// switching modes never mixes the two activity sets in the same cache row.
+const cacheKey = (athleteId: string, mode: ActivityMode) => mode === 'running' ? `${athleteId}__running` : athleteId;
 
 const REFRESHING = new Set<string>();
 
@@ -55,48 +61,51 @@ async function compute(riddenRoads: [number, number][][]): Promise<[number, numb
     return dedupeRiddenRoads(riddenRoads, roads);
 }
 
-async function refreshInBackground(athleteId: string, creds: Creds) {
-    if (REFRESHING.has(athleteId)) return;
-    REFRESHING.add(athleteId);
+async function refreshInBackground(athleteId: string, creds: Creds, mode: ActivityMode) {
+    const key = cacheKey(athleteId, mode);
+    if (REFRESHING.has(key)) return;
+    REFRESHING.add(key);
     try {
-        console.log(`${ts()} RiddenRoads: refresh starting for ${athleteId}`);
-        const { riddenRoads } = await fetchCyclingRiddenRoads(creds);
+        console.log(`${ts()} RiddenRoads: refresh starting for ${key}`);
+        const { riddenRoads } = await fetchCyclingRiddenRoads(creds, mode);
         const roads = await compute(riddenRoads);
         await prisma.riddenRoadsCache.upsert({
-            where: { athleteId },
-            create: { athleteId, roads: roads as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
+            where: { athleteId: key },
+            create: { athleteId: key, roads: roads as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
             update: { roads: roads as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
         });
-        console.log(`${ts()} RiddenRoads: cached ${roads.length} segments for ${athleteId}`);
+        console.log(`${ts()} RiddenRoads: cached ${roads.length} segments for ${key}`);
     } catch (e: any) {
-        console.warn(`${ts()} RiddenRoads refresh failed for ${athleteId}: ${e.message}`);
+        console.warn(`${ts()} RiddenRoads refresh failed for ${key}: ${e.message}`);
     } finally {
-        REFRESHING.delete(athleteId);
+        REFRESHING.delete(key);
     }
 }
 
 export async function POST(request: Request) {
     try {
-        const { stravaCredentials } = await request.json() as { stravaCredentials?: Creds };
+        const { stravaCredentials, activityMode } = await request.json() as { stravaCredentials?: Creds; activityMode?: string };
         if (!stravaCredentials?.refreshToken) {
             return NextResponse.json({ error: 'stravaCredentials.refreshToken required' }, { status: 400 });
         }
+        const mode: ActivityMode = activityMode === 'running' ? 'running' : 'cycling';
         const athleteId = await resolveAthleteId(stravaCredentials);
-        const cached = await prisma.riddenRoadsCache.findUnique({ where: { athleteId } });
+        const key = cacheKey(athleteId, mode);
+        const cached = await prisma.riddenRoadsCache.findUnique({ where: { athleteId: key } });
 
         if (cached) {
             const stale = Date.now() - cached.refreshedAt.getTime() > FRESH_TTL_MS;
             const outdated = (cached.version ?? 1) < RIDDEN_VERSION;
-            if (stale || outdated) refreshInBackground(athleteId, stravaCredentials);
+            if (stale || outdated) refreshInBackground(athleteId, stravaCredentials, mode);
             return NextResponse.json({
                 roads: cached.roads,
                 refreshedAt: cached.refreshedAt.toISOString(),
-                refreshing: REFRESHING.has(athleteId),
+                refreshing: REFRESHING.has(key),
                 computing: false,
             });
         }
 
-        refreshInBackground(athleteId, stravaCredentials);
+        refreshInBackground(athleteId, stravaCredentials, mode);
         return NextResponse.json({ roads: [], refreshedAt: null, refreshing: true, computing: true });
     } catch (e: any) {
         console.error('RiddenRoads route error:', e);

@@ -194,4 +194,50 @@ describe('fetchCyclingRiddenRoads', () => {
         expect(result.riddenRoads[0]).not.toEqual(summaryDecoded);
         expect(prisma.stravaActivityDetail.upsert).not.toHaveBeenCalled(); // already cached -- no backfill needed
     });
+
+    it('running mode keeps only Run/TrailRun activities and excludes rides', async () => {
+        const activities = [
+            mockActivity({ id: 1, type: 'Ride', total_elevation_gain: 100 }),
+            mockActivity({ id: 2, type: 'Run', total_elevation_gain: 50 }),
+            mockActivity({ id: 3, type: 'TrailRun', total_elevation_gain: 75 }),
+        ];
+        (global.fetch as jest.Mock).mockImplementation((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+            if (isDetailUrl(url)) return Promise.resolve({ ok: true, json: async () => ({ map: {} }) });
+            if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 999 }) });
+            if (url.includes('/activities')) {
+                const isPage1 = url.includes('page=1&');
+                return Promise.resolve({ ok: true, json: async () => (isPage1 ? activities : []) });
+            }
+            throw new Error('unexpected fetch: ' + url);
+        });
+
+        const result = await fetchCyclingRiddenRoads(creds, 'running');
+
+        expect(result.riddenRoads.length).toBe(2); // Run + TrailRun, Ride excluded
+        expect(result.totalCyclingActivities).toBe(2);
+        expect(result.totalCyclingElevationGainMeters).toBe(125); // 50 + 75
+    });
+
+    it('cycling mode (default) excludes running activities', async () => {
+        const activities = [
+            mockActivity({ id: 1, type: 'Ride', total_elevation_gain: 100 }),
+            mockActivity({ id: 2, type: 'Run', total_elevation_gain: 50 }),
+        ];
+        (global.fetch as jest.Mock).mockImplementation((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+            if (isDetailUrl(url)) return Promise.resolve({ ok: true, json: async () => ({ map: {} }) });
+            if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 999 }) });
+            if (url.includes('/activities')) {
+                const isPage1 = url.includes('page=1&');
+                return Promise.resolve({ ok: true, json: async () => (isPage1 ? activities : []) });
+            }
+            throw new Error('unexpected fetch: ' + url);
+        });
+
+        const result = await fetchCyclingRiddenRoads(creds);
+
+        expect(result.riddenRoads.length).toBe(1);
+        expect(result.totalCyclingActivities).toBe(1);
+    });
 });

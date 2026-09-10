@@ -38,6 +38,7 @@ interface StatsDialogProps {
     activityElevations: number[];
     activityTypes: string[];
     stravaCredentials: any;
+    activityMode: 'cycling' | 'running';
 }
 
 interface StateItem { name: string; country: string }
@@ -105,7 +106,7 @@ function formatAge(refreshedAt?: string): string | null {
     return `${days}d ago`;
 }
 
-export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials }: StatsDialogProps) {
+export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials, activityMode }: StatsDialogProps) {
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -132,7 +133,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                 const res = await fetch('/api/stats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stravaCredentials })
+                    body: JSON.stringify({ stravaCredentials, activityMode })
                 });
                 const data = await res.json();
                 if (cancelled) return;
@@ -160,7 +161,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, riddenRoads, stravaCredentials]);
+    }, [isOpen, riddenRoads, stravaCredentials, activityMode]);
 
     const [ftpReadings, setFtpReadings] = useState<FtpReading[] | null>(null);
     const [showFtpDetail, setShowFtpDetail] = useState(false);
