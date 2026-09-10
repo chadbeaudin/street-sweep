@@ -81,6 +81,24 @@ model StravaActivityCache {
   @@map("strava_activity_cache")
 }
 
+// Full-resolution polyline per activity, backfilled gradually and cached
+// permanently (a completed ride's GPS trace never changes, so this never
+// expires). Fixes ridden-road matching against Strava's summary_polyline,
+// which is decimated for map thumbnails and can flatten out tight loops/
+// curves entirely -- see the gated-community/#82-adjacent routing work.
+// athleteId is indexed (not the key) so a rider's rows can be looked up/
+// purged by identity even though activityId alone already uniquely
+// determines the owner on Strava's side.
+model StravaActivityDetail {
+  activityId String   @id
+  athleteId  String
+  polyline   String
+  fetchedAt  DateTime @default(now())
+
+  @@index([athleteId])
+  @@map("strava_activity_detail")
+}
+
 model FtpReadingCache {
   athleteId   String   @id
   readings    Json

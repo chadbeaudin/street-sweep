@@ -52,11 +52,34 @@ export interface RiddenActivities {
 // moves (stationary/indoor trainers) are dropped here so they never reach the
 // map overlay, coverage stats, or the routing ridden-penalty.
 export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<RiddenActivities> {
+    const athleteId = await resolveAthleteId(creds);
     const all = await getCachedOrFetchActivities(creds);
-    const real = all
-        .filter(a => isBikingActivity(a.sport_type || a.type))
-        .map(a => ({ a, poly: polyline.decode(a.map.summary_polyline) as [number, number][] }))
+    const realCandidates = all.filter(a => isBikingActivity(a.sport_type || a.type));
+
+    // Prefer the full-resolution polyline (StravaActivityDetail) when it's been
+    // backfilled -- Strava's summary_polyline is decimated for map thumbnails
+    // and can flatten a tight loop or curve down to almost nothing, which made
+    // ridden-road matching miss streets a rider had genuinely covered.
+    const detailRows = await prisma.stravaActivityDetail.findMany({
+        where: { activityId: { in: realCandidates.map(a => a.id.toString()) } },
+    }).catch(() => [] as { activityId: string; polyline: string }[]);
+    const detailByActivity = new Map(detailRows.map(d => [d.activityId, d.polyline]));
+
+    const real = realCandidates
+        .map(a => ({ a, poly: polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][] }))
         .filter(({ poly }) => poly.length >= 2 && trackSpanMeters(poly) >= MIN_TRACK_SPAN_METERS);
+
+    // Gradually backfill detail for real rides not yet cached, bounded per call so
+    // a rider with a long backlog catches up over several syncs instead of one
+    // sync hitting Strava's shared rate limit (#61) all at once. Permanent cache:
+    // a completed ride's GPS trace never changes, so this is a one-time cost per
+    // activity across the whole app's lifetime, not per sync.
+    try {
+        await backfillActivityDetails(athleteId, real.map(r => r.a), creds);
+    } catch (e: any) {
+        console.warn(`[Strava] Detail backfill skipped: ${e.message}`);
+    }
+
     const allCycling = all.filter(a => isCyclingActivity(a.sport_type || a.type));
     return {
         riddenRoads: real.map(r => r.poly),
@@ -238,6 +261,47 @@ async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSec
     }).catch(e => console.warn(`[Strava] Failed to persist activity cache for ${athleteId}: ${e.message}`));
 
     return activities;
+}
+
+// Cap per call so a rider with a large backlog of un-backfilled rides doesn't
+// spend a whole sync's rate-limit budget on detail fetches -- the remainder
+// simply gets picked up on the next sync (see fetchCyclingRiddenRoads).
+const DETAIL_BACKFILL_BATCH_SIZE = 8;
+
+async function backfillActivityDetails(
+    athleteId: string,
+    activities: { id: number }[],
+    creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }
+): Promise<void> {
+    if (activities.length === 0) return;
+    const ids = activities.map(a => a.id.toString());
+    const existing = await prisma.stravaActivityDetail.findMany({
+        where: { activityId: { in: ids } },
+        select: { activityId: true },
+    }).catch(() => [] as { activityId: string }[]);
+    const have = new Set(existing.map(e => e.activityId));
+    const missing = activities.filter(a => !have.has(a.id.toString())).slice(0, DETAIL_BACKFILL_BATCH_SIZE);
+    if (missing.length === 0) return; // steady state: no Strava calls at all
+
+    const accessToken = await getStravaAccessToken(creds);
+    for (const activity of missing) {
+        try {
+            const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}`, {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (res.status === 429) break; // rate-limited -- stop, the rest pick up next sync
+            if (!res.ok) continue;
+            const detail = await res.json() as { map?: { polyline?: string } };
+            if (!detail.map?.polyline) continue; // no full-res track (e.g. manual entry) -- keep using summary
+            await prisma.stravaActivityDetail.upsert({
+                where: { activityId: activity.id.toString() },
+                create: { activityId: activity.id.toString(), athleteId, polyline: detail.map.polyline },
+                update: { athleteId, polyline: detail.map.polyline },
+            });
+        } catch (e: any) {
+            console.warn(`[Strava] Detail backfill failed for activity ${activity.id}: ${e.message}`);
+        }
+    }
 }
 
 // Bypasses the cache TTL check so the UI's "Sync" button can force a fresh pull.
