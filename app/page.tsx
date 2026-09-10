@@ -1888,7 +1888,7 @@ export default function Home() {
 
             <div className="flex-1 flex flex-col relative min-h-0">
                 {/* Mobile bottom action bar (Task D1: Option 2) */}
-                <div className="md:hidden absolute inset-x-0 bottom-0 z-[1000] flex items-center gap-2 px-3 pt-2 pb-2 safe-b bg-white/92 backdrop-blur border-t border-gray-200">
+                <div className="md:hidden absolute inset-x-0 bottom-0 z-[1010] flex items-center gap-2 px-3 pt-2 pb-2 safe-b bg-white/92 backdrop-blur border-t border-gray-200">
                     <button
                         onClick={() => handleGenerate()}
                         disabled={loading}
