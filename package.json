@@ -1,6 +1,6 @@
 {
   "name": "street-sweep",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3888",
@@ -12,6 +12,7 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@auth/prisma-adapter": "^2.11.3",
     "@garmin/fitsdk": "^21.202.0",
     "@mapbox/polyline": "^1.2.1",
     "@neondatabase/serverless": "^1.1.0",
@@ -25,6 +26,7 @@
     "leaflet": "^1.9.4",
     "lucide-react": "^0.300.0",
     "next": "^14.2.3",
+    "next-auth": "^4.24.15",
     "ngraph.graph": "^20.0.1",
     "ngraph.path": "^1.4.0",
     "pg": "^8.22.0",
