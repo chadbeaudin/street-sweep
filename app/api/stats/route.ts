@@ -71,6 +71,13 @@ interface StravaCredentials {
     refreshToken?: string;
 }
 
+type ActivityMode = 'cycling' | 'running';
+
+// Cycling stays on the bare athleteId key so existing cached rows keep
+// matching (no DB migration needed); running gets a distinct suffixed key so
+// switching modes never mixes the two activity sets in the same cache row.
+const cacheKey = (athleteId: string, mode: ActivityMode) => mode === 'running' ? `${athleteId}__running` : athleteId;
+
 function networkPolylinesFromOSM(data: { elements: any[] }): [number, number][][] {
     const nodeMap = new Map<number, { lat: number; lon: number }>();
     for (const el of data.elements) {
@@ -299,34 +306,37 @@ async function persistStats(athleteId: string, stats: StatsPayload): Promise<voi
     }), 'persist');
 }
 
-async function refreshInBackground(athleteId: string, creds: StravaCredentials) {
-    if (REFRESHING.has(athleteId)) return;
-    REFRESHING.add(athleteId);
+async function refreshInBackground(athleteId: string, creds: StravaCredentials, mode: ActivityMode) {
+    const key = cacheKey(athleteId, mode);
+    if (REFRESHING.has(key)) return;
+    REFRESHING.add(key);
     try {
-        console.log(`${ts()} Stats: background refresh starting for athlete ${athleteId}`);
+        console.log(`${ts()} Stats: background refresh starting for ${key}`);
         // Fetch the ride set server-side so the client never has to ship it in
         // the request body (which a reverse proxy would reject as too large).
-        const { riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds);
+        const { riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds, mode);
         const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters);
-        await persistStats(athleteId, fresh);
-        console.log(`${ts()} Stats: background refresh complete for athlete ${athleteId}`);
+        await persistStats(key, fresh);
+        console.log(`${ts()} Stats: background refresh complete for ${key}`);
     } catch (e: any) {
-        console.warn(`${ts()} Stats: background refresh failed for ${athleteId}:`, e?.message || e);
+        console.warn(`${ts()} Stats: background refresh failed for ${key}:`, e?.message || e);
     } finally {
-        REFRESHING.delete(athleteId);
+        REFRESHING.delete(key);
     }
 }
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json() as { stravaCredentials?: StravaCredentials };
-        const { stravaCredentials } = body;
+        const body = await request.json() as { stravaCredentials?: StravaCredentials; activityMode?: string };
+        const { stravaCredentials, activityMode } = body;
         if (!stravaCredentials?.refreshToken) {
             return NextResponse.json({ error: 'stravaCredentials.refreshToken required to identify athlete' }, { status: 400 });
         }
+        const mode: ActivityMode = activityMode === 'running' ? 'running' : 'cycling';
 
         const athleteId = await resolveAthleteId(stravaCredentials);
-        const cached = await withDbRetry(() => prisma.statsCache.findUnique({ where: { athleteId } }), 'read cache');
+        const key = cacheKey(athleteId, mode);
+        const cached = await withDbRetry(() => prisma.statsCache.findUnique({ where: { athleteId: key } }), 'read cache');
 
         if (cached) {
             const ageMs = Date.now() - cached.refreshedAt.getTime();
@@ -335,14 +345,14 @@ export async function POST(request: Request) {
             const outdatedSchema = cachedVersion < STATS_VERSION;
 
             if (stale || outdatedSchema) {
-                refreshInBackground(athleteId, stravaCredentials);
+                refreshInBackground(athleteId, stravaCredentials, mode);
             }
             const payload = cached.stats as unknown as StatsPayload;
             const response: StatsResponse = {
                 ...payload,
                 refreshedAt: cached.refreshedAt.toISOString(),
                 stale,
-                refreshing: REFRESHING.has(athleteId),
+                refreshing: REFRESHING.has(key),
                 computing: false
             };
             return NextResponse.json(response);
@@ -351,8 +361,8 @@ export async function POST(request: Request) {
         // No cache — kick off the computation in the background and return
         // immediately. The client polls /api/stats until cached data appears
         // so the dialog never blocks on a multi-minute cold compute.
-        console.log(`${ts()} Stats: cold compute kicked off for athlete ${athleteId}`);
-        refreshInBackground(athleteId, stravaCredentials);
+        console.log(`${ts()} Stats: cold compute kicked off for ${key}`);
+        refreshInBackground(athleteId, stravaCredentials, mode);
         const response: StatsResponse = {
             refreshedAt: null,
             stale: false,

@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, computeRideRecords } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -107,6 +107,56 @@ describe('stats.isCyclingActivity', () => {
     it('rejects undefined / empty', () => {
         expect(isCyclingActivity(undefined)).toBe(false);
         expect(isCyclingActivity('')).toBe(false);
+    });
+});
+
+describe('stats.isRunningActivity', () => {
+    it('accepts known run sport types (case-insensitive)', () => {
+        expect(isRunningActivity('Run')).toBe(true);
+        expect(isRunningActivity('run')).toBe(true);
+        expect(isRunningActivity('TrailRun')).toBe(true);
+    });
+
+    it('rejects non-running activity types, including cycling', () => {
+        expect(isRunningActivity('Ride')).toBe(false);
+        expect(isRunningActivity('Walk')).toBe(false);
+        expect(isRunningActivity('Hike')).toBe(false);
+    });
+
+    it('rejects virtual/treadmill runs (no real-world GPS)', () => {
+        expect(isRunningActivity('VirtualRun')).toBe(false);
+    });
+
+    it('rejects undefined / empty', () => {
+        expect(isRunningActivity(undefined)).toBe(false);
+        expect(isRunningActivity('')).toBe(false);
+    });
+});
+
+describe('stats.isRunningActivityBroad', () => {
+    it('also accepts VirtualRun unlike isRunningActivity', () => {
+        expect(isRunningActivityBroad('VirtualRun')).toBe(true);
+        expect(isRunningActivityBroad('Run')).toBe(true);
+        expect(isRunningActivity('VirtualRun')).toBe(false);
+    });
+});
+
+describe('stats.isModeActivity / isModeActivityBroad', () => {
+    it('cycling mode matches only bike types', () => {
+        expect(isModeActivity('Ride', 'cycling')).toBe(true);
+        expect(isModeActivity('Run', 'cycling')).toBe(false);
+    });
+
+    it('running mode matches only run types', () => {
+        expect(isModeActivity('Run', 'running')).toBe(true);
+        expect(isModeActivity('Ride', 'running')).toBe(false);
+    });
+
+    it('broad variants include the virtual counterpart for each mode', () => {
+        expect(isModeActivityBroad('VirtualRide', 'cycling')).toBe(true);
+        expect(isModeActivityBroad('VirtualRun', 'running')).toBe(true);
+        expect(isModeActivityBroad('VirtualRun', 'cycling')).toBe(false);
+        expect(isModeActivityBroad('VirtualRide', 'running')).toBe(false);
     });
 });
 

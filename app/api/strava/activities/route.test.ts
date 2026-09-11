@@ -56,4 +56,24 @@ describe('POST /api/strava/activities', () => {
         expect(data.error).toBe('Token expired');
         expect(Object.keys(data)).toEqual(['error']);
     });
+
+    it('defaults to cycling mode when activityMode is omitted', async () => {
+        mockedFetch.mockResolvedValueOnce({
+            riddenRoads: [], activityElevations: [], activityTypes: [],
+            activityDistances: [], activityStartDates: [],
+            totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
+        });
+        await POST(makeRequest({}));
+        expect(mockedFetch).toHaveBeenCalledWith(undefined, 'cycling');
+    });
+
+    it('passes activityMode: "running" through to fetchCyclingRiddenRoads', async () => {
+        mockedFetch.mockResolvedValueOnce({
+            riddenRoads: [], activityElevations: [], activityTypes: [],
+            activityDistances: [], activityStartDates: [],
+            totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
+        });
+        await POST(makeRequest({ activityMode: 'running' }));
+        expect(mockedFetch).toHaveBeenCalledWith(undefined, 'running');
+    });
 });

@@ -1,5 +1,5 @@
 import polyline from '@mapbox/polyline';
-import { isBikingActivity, isCyclingActivity } from './stats';
+import { isModeActivity, isModeActivityBroad, ActivityMode } from './stats';
 import { haversineM } from './geometry';
 import { prisma } from './prisma';
 import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
@@ -47,14 +47,15 @@ export interface RiddenActivities {
     totalCyclingElevationGainMeters: number;
 }
 
-// Single source of truth for what the app treats as "ridden": real-world cycling
-// only. Non-cycling activities (walks/hikes/runs) and rides whose track barely
-// moves (stationary/indoor trainers) are dropped here so they never reach the
-// map overlay, coverage stats, or the routing ridden-penalty.
-export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<RiddenActivities> {
+// Single source of truth for what the app treats as "ridden": real-world
+// activity of the selected mode (cycling or running) only. Everything else
+// (the other mode, walks/hikes) and tracks that barely move (stationary/
+// indoor trainers) are dropped here so they never reach the map overlay,
+// coverage stats, or the routing ridden-penalty.
+export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }, mode: ActivityMode = 'cycling'): Promise<RiddenActivities> {
     const athleteId = await resolveAthleteId(creds);
     const all = await getCachedOrFetchActivities(creds);
-    const realCandidates = all.filter(a => isBikingActivity(a.sport_type || a.type));
+    const realCandidates = all.filter(a => isModeActivity(a.sport_type || a.type, mode));
 
     // Prefer the full-resolution polyline (StravaActivityDetail) when it's been
     // backfilled -- Strava's summary_polyline is decimated for map thumbnails
@@ -80,7 +81,7 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         console.warn(`[Strava] Detail backfill skipped: ${e.message}`);
     }
 
-    const allCycling = all.filter(a => isCyclingActivity(a.sport_type || a.type));
+    const allCycling = all.filter(a => isModeActivityBroad(a.sport_type || a.type, mode));
     return {
         riddenRoads: real.map(r => r.poly),
         activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),

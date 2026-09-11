@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Bike, Footprints } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { StatsDialog } from '@/components/StatsDialog';
@@ -130,6 +130,30 @@ export default function Home() {
     }, []);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [isAvoidMode, setIsAvoidMode] = useState(false);
+
+    // Cycling vs running (#88): filters which Strava activity types count as
+    // "ridden" everywhere (map overlay, coverage stats, routing penalty).
+    // Prompted once on first run, then persisted; changeable later from
+    // Routing Preferences.
+    const ACTIVITY_MODE_KEY = 'activity_mode';
+    const [activityMode, setActivityMode] = useState<'cycling' | 'running'>('cycling');
+    const [showActivityModePrompt, setShowActivityModePrompt] = useState(false);
+    useEffect(() => {
+        try {
+            const saved = localStorage.getItem(ACTIVITY_MODE_KEY);
+            if (saved === 'cycling' || saved === 'running') {
+                setActivityMode(saved);
+            } else {
+                setShowActivityModePrompt(true);
+            }
+        } catch { /* ignore */ }
+    }, []);
+    const chooseActivityMode = useCallback((mode: 'cycling' | 'running') => {
+        setActivityMode(mode);
+        setShowActivityModePrompt(false);
+        try { localStorage.setItem(ACTIVITY_MODE_KEY, mode); } catch { /* ignore */ }
+    }, []);
+
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     const [stravaError, setStravaError] = useState<string | null>(null);
@@ -325,7 +349,7 @@ export default function Home() {
             return;
         }
 
-        const credentialsKey = JSON.stringify(stravaCredentials);
+        const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
 
         setStravaError(null);
         setIsStravaLoading(true);
@@ -344,7 +368,7 @@ export default function Home() {
             fetch('/api/strava/activities', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ stravaCredentials, forceSync: skipCache })
+                body: JSON.stringify({ stravaCredentials, forceSync: skipCache, activityMode })
             })
                 .then(res => res.json())
                 .then(data => {
@@ -373,7 +397,7 @@ export default function Home() {
                     setIsStravaLoading(false);
                 });
         });
-    }, [stravaCredentials, stravaRefreshKey]);
+    }, [stravaCredentials, stravaRefreshKey, activityMode]);
 
     // Fetch the server-precomputed, deduped ridden-road overlay. It's
     // viewport-independent, so the map draws it instantly with no per-pan wait.
@@ -385,7 +409,7 @@ export default function Home() {
         if (!stravaCredentials?.refreshToken) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
-        const credentialsKey = JSON.stringify(stravaCredentials);
+        const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
         const skipCache = stravaRefreshKey > 0;
 
         const fetchFresh = async () => {
@@ -393,7 +417,7 @@ export default function Home() {
                 const res = await fetch('/api/ridden-roads', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stravaCredentials })
+                    body: JSON.stringify({ stravaCredentials, activityMode })
                 });
                 const data = await res.json();
                 if (cancelled || data.error) { setIsRiddenComputing(false); return; }
@@ -422,7 +446,7 @@ export default function Home() {
             });
         }
         return () => { cancelled = true; if (timer) clearTimeout(timer); };
-    }, [stravaCredentials, stravaRefreshKey]);
+    }, [stravaCredentials, stravaRefreshKey, activityMode]);
 
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
         setBbox(prev => {
@@ -1690,6 +1714,26 @@ export default function Home() {
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Activity Type
+                                                </label>
+                                                <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium bg-white">
+                                                    <button
+                                                        onClick={() => chooseActivityMode('cycling')}
+                                                        className={`flex-1 px-3 py-1.5 transition-colors ${activityMode === 'cycling' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                    >
+                                                        Cycling
+                                                    </button>
+                                                    <button
+                                                        onClick={() => chooseActivityMode('running')}
+                                                        className={`flex-1 px-3 py-1.5 transition-colors border-l border-gray-300 ${activityMode === 'running' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                    >
+                                                        Running
+                                                    </button>
+                                                </div>
+                                                <p className="text-xs text-gray-500 mt-2">Filters which Strava activities count as ridden roads and coverage</p>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
                                                     Point Route Detour Preference: {routingOptions.pointRoutePenalty}x
                                                 </label>
                                                 <input
@@ -2340,6 +2384,7 @@ export default function Home() {
                     activityElevations={stravaElevations}
                     activityTypes={stravaTypes}
                     stravaCredentials={stravaCredentials}
+                    activityMode={activityMode}
                 />
 
                 {error && (
@@ -2351,6 +2396,31 @@ export default function Home() {
                 )}
 
                 <HowToDialog isOpen={showHowTo} onClose={closeHowTo} />
+
+                {showActivityModePrompt && (
+                    <div className="fixed inset-0 z-[2100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center">
+                            <h2 className="text-lg font-bold text-gray-900 mb-2">What are you using StreetSweep for?</h2>
+                            <p className="text-sm text-gray-500 mb-5">This decides which Strava activities count as roads you&apos;ve covered. You can change it later in Routing Preferences.</p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => chooseActivityMode('cycling')}
+                                    className="flex-1 flex flex-col items-center gap-1.5 px-4 py-3 rounded-lg border border-gray-300 text-sm font-semibold text-gray-800 hover:bg-indigo-50 hover:border-indigo-300"
+                                >
+                                    <Bike className="w-5 h-5" />
+                                    Cycling
+                                </button>
+                                <button
+                                    onClick={() => chooseActivityMode('running')}
+                                    className="flex-1 flex flex-col items-center gap-1.5 px-4 py-3 rounded-lg border border-gray-300 text-sm font-semibold text-gray-800 hover:bg-indigo-50 hover:border-indigo-300"
+                                >
+                                    <Footprints className="w-5 h-5" />
+                                    Running
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <button
                     onClick={() => setShowHowTo(true)}
                     title="How to use StreetSweep"

@@ -150,3 +150,34 @@ export function isCyclingActivity(type?: string): boolean {
     if (!type) return false;
     return isBikingActivity(type) || type.toLowerCase() === 'virtualride';
 }
+
+// Outdoor running types only, mirroring BIKING_TYPES above. 'virtualrun'
+// (treadmill) is deliberately excluded for the same reason 'virtualride' is:
+// no real-world GPS location.
+const RUNNING_TYPES = new Set([
+    'run',
+    'trailrun',
+]);
+
+export function isRunningActivity(type?: string): boolean {
+    if (!type) return false;
+    return RUNNING_TYPES.has(type.toLowerCase());
+}
+
+// Mirrors isCyclingActivity's broader "counts toward lifetime totals" check.
+export function isRunningActivityBroad(type?: string): boolean {
+    if (!type) return false;
+    return isRunningActivity(type) || type.toLowerCase() === 'virtualrun';
+}
+
+export type ActivityMode = 'cycling' | 'running';
+
+// Real-world-GPS check (map overlay / ridden roads) for the given mode.
+export function isModeActivity(type: string | undefined, mode: ActivityMode): boolean {
+    return mode === 'cycling' ? isBikingActivity(type) : isRunningActivity(type);
+}
+
+// Broader "counts toward lifetime totals" check for the given mode.
+export function isModeActivityBroad(type: string | undefined, mode: ActivityMode): boolean {
+    return mode === 'cycling' ? isCyclingActivity(type) : isRunningActivityBroad(type);
+}

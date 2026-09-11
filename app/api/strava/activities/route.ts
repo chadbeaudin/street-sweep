@@ -4,7 +4,8 @@ import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        const { stravaCredentials, forceSync } = body;
+        const { stravaCredentials, forceSync, activityMode } = body;
+        const mode: 'cycling' | 'running' = activityMode === 'running' ? 'running' : 'cycling';
 
         if (stravaCredentials) {
             console.log(`[API/Strava] Received credentials in request. Keys: ${Object.keys(stravaCredentials).join(', ')}`);
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
         }
 
         if (forceSync) await forceSyncStravaActivities(stravaCredentials);
-        const { riddenRoads, activityElevations, activityTypes } = await fetchCyclingRiddenRoads(stravaCredentials);
+        const { riddenRoads, activityElevations, activityTypes } = await fetchCyclingRiddenRoads(stravaCredentials, mode);
 
         return NextResponse.json({ riddenRoads, activityElevations, activityTypes });
     } catch (error: any) {
