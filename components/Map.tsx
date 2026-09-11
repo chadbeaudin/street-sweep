@@ -2,7 +2,7 @@
 
 import React, { useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle, Tooltip } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
@@ -88,6 +88,7 @@ interface MapProps {
     avoidedRoads?: [number, number][][];
     avoidDraftPath?: [number, number][][];
     avoidDraftPoints?: { lat: number; lon: number }[];
+    onAvoidRoadDelete?: (index: number) => void;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -477,7 +478,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -945,6 +946,31 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         opacity={0.85}
                         interactive={false}
                     />
+                ))}
+
+                {/* Wider invisible hitbox for removing a single avoided section — right-click
+                    to delete, mirroring the "right-click to delete" pattern used for waypoints.
+                    Rendered on top so it wins over the road hitbox layer below. Left clicks must
+                    bubble through to the map/road-hitbox layer underneath -- otherwise this layer
+                    silently swallowed normal point/avoid clicks landing on an already-avoided road. */}
+                {avoidedRoads && onAvoidRoadDelete && avoidedRoads.map((road, idx) => (
+                    <Polyline
+                        key={`avoided-hitbox-${idx}`}
+                        positions={road as [number, number][]}
+                        color="#DC2626"
+                        weight={16}
+                        opacity={0}
+                        interactive={true}
+                        bubblingMouseEvents={true}
+                        eventHandlers={{
+                            contextmenu: (e) => {
+                                e.originalEvent.preventDefault();
+                                onAvoidRoadDelete(idx);
+                            },
+                        }}
+                    >
+                        <Tooltip sticky>Right-click to stop avoiding this section</Tooltip>
+                    </Polyline>
                 ))}
 
                 {/* In-progress avoid-segment draft (#45) — dashed until the user toggles Avoid mode off */}

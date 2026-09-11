@@ -946,6 +946,11 @@ export default function Home() {
     // routingOptions.avoidedRoads.
     const avoidDraftPathRef = useRef<[number, number][][]>([]);
     const avoidLastPointRef = useRef<{ lat: number; lon: number } | null>(null);
+    // Bumped on undo (and on entering/leaving Avoid mode) so an /api/step response
+    // for a point the user already undid can't land after the fact and silently
+    // re-add the segment it belonged to -- previously that stray segment stuck
+    // around until a second Undo click cleared it.
+    const avoidEpochRef = useRef(0);
     const [avoidDraftPath, setAvoidDraftPath] = useState<[number, number][][]>([]);
     // Dropped immediately per click, independent of the async /api/step snap, so
     // a click always gives instant visual feedback even before (or if) the snap
@@ -953,12 +958,22 @@ export default function Home() {
     const [avoidDraftPoints, setAvoidDraftPoints] = useState<{ lat: number; lon: number }[]>([]);
 
     const handleAvoidPointAdd = useCallback((point: { lat: number; lon: number }) => {
+        const lastPoint = avoidLastPointRef.current;
+        // De-duplicate: the road hitbox's click bubbles up to the map's own click
+        // handler (bubblingMouseEvents, same as handlePointAdd's road clicks), so a
+        // single click on a road fires this twice. Without this guard each click
+        // silently dropped two points, and Undo/Ctrl+Z had to be pressed twice to
+        // remove what looked like one point.
+        if (lastPoint) {
+            const dist = Math.sqrt(Math.pow(lastPoint.lat - point.lat, 2) + Math.pow(lastPoint.lon - point.lon, 2));
+            if (dist < 0.0001) return; // Roughly 10 meters
+        }
         setAvoidDraftPoints(prev => [...prev, point]);
         const currentBbox = bboxRef.current;
-        const lastPoint = avoidLastPointRef.current;
         avoidLastPointRef.current = point;
         if (!currentBbox || !lastPoint) return; // first click just anchors the start
 
+        const epoch = avoidEpochRef.current;
         (async () => {
             try {
                 const stepRes = await fetch('/api/step', {
@@ -967,6 +982,7 @@ export default function Home() {
                     body: JSON.stringify({ point, lastPoint, bbox: currentBbox, routingOptions: routingOptionsRef.current })
                 });
                 const stepData = await stepRes.json();
+                if (avoidEpochRef.current !== epoch) return; // undone (or draft reset) before this resolved
                 // stepData.path comes back as [lon, lat] pairs (same as manualRoute) — swap to [lat, lon].
                 const segment: [number, number][] = (stepData.path && stepData.path.length > 0)
                     ? stepData.path.map((p: [number, number]) => [p[1], p[0]] as [number, number])
@@ -987,6 +1003,7 @@ export default function Home() {
                 const combined = avoidDraftPathRef.current.flat() as [number, number][];
                 setRoutingOptions(ro => ({ ...ro, avoidedRoads: [...ro.avoidedRoads, combined] }));
             }
+            avoidEpochRef.current++;
             avoidDraftPathRef.current = [];
             setAvoidDraftPath([]);
             setAvoidDraftPoints([]);
@@ -1401,6 +1418,7 @@ export default function Home() {
     // silently discarded a point from whatever route the user was building before
     // switching into Avoid mode.
     const handleUndoAvoidPoint = useCallback(() => {
+        avoidEpochRef.current++;
         if (avoidDraftPathRef.current.length > 0) {
             avoidDraftPathRef.current = avoidDraftPathRef.current.slice(0, -1);
             setAvoidDraftPath(avoidDraftPathRef.current);
@@ -1425,6 +1443,19 @@ export default function Home() {
         const { snapshot, index } = redo(historyRef.current, historyIndexRef.current);
         if (snapshot) applySnapshot(snapshot, index);
     }, [applySnapshot, isAvoidMode]);
+
+    useEffect(() => {
+        const handleUndoShortcut = (e: KeyboardEvent) => {
+            const tag = (e.target as HTMLElement)?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                handleUndo();
+            }
+        };
+        document.addEventListener('keydown', handleUndoShortcut);
+        return () => document.removeEventListener('keydown', handleUndoShortcut);
+    }, [handleUndo]);
 
     const totalElevationGain = useMemo(() => {
         if (!elevationData || elevationData.length < 2) return 0;
@@ -2123,7 +2154,7 @@ export default function Home() {
                             data-tour="mode-avoid"
                             onClick={toggleAvoidMode}
                             className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isAvoidMode ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                            title="Click roads to mark them as avoided"
+                            title="Click roads to mark them as avoided. Right-click a marked (red) section to remove just that one."
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 105.636 5.636a9 9 0 0012.728 12.728zM5.636 5.636l12.728 12.728" />
@@ -2227,6 +2258,7 @@ export default function Home() {
                     avoidedRoads={routingOptions.avoidedRoads}
                     avoidDraftPath={avoidDraftPath}
                     avoidDraftPoints={avoidDraftPoints}
+                    onAvoidRoadDelete={(idx: number) => setRoutingOptions(ro => ({ ...ro, avoidedRoads: ro.avoidedRoads.filter((_, i) => i !== idx) }))}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
                     onRouteHover={setRouteHoverPoint}
