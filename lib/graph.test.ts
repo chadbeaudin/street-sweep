@@ -1095,6 +1095,90 @@ describe('StreetGraph', () => {
             expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
             expect(graph.graph.getLink('1', '3')!.data.isRidden).toBe(false);
         });
+
+        // Real-world bug: a street the rider had clearly ridden straight through
+        // (South Lamonte St, Spokane) had a ~11m unridden sliver mid-block, split
+        // across two short OSM-graph edges, sandwiched between two long ridden
+        // edges on either side -- classic sparse/decimated GPS trace missing a
+        // couple of the finely-diced graph edges OSM has near intersections. The
+        // CPP solver treated that sliver as a genuine isolated required pocket,
+        // reachable only by an out-and-back through the already-ridden street on
+        // both sides. lib/riddenRoads.ts's map-overlay matching already bridges
+        // exactly this class of short (<=20m) gap; buildFromOSM now mirrors it so
+        // routing and the overlay agree on what's ridden.
+        test('bridges a short (<=20m) unridden gap fully sandwiched between two ridden edges on the same way', () => {
+            const graph = new StreetGraph();
+            // Four collinear nodes along one way: 1-2 ridden (100m), 2-3 the short
+            // unridden gap (10m), 3-4 ridden (100m). Only the GPS trace for 1-2 and
+            // 3-4 is provided -- 2-3 has no matching points at all.
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },   // ~100m east of 1
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.41857 }, // ~10m east of 2
+                    { type: 'node', id: 4, lat: 47.65, lon: -117.4173 },  // ~100m east of 3
+                    { type: 'way', id: 500, nodes: [1, 2, 3, 4], tags: { highway: 'residential' } },
+                ]
+            };
+            // Two separate polylines (not one continuous track) -- buildRiddenIndex
+            // interpolates between consecutive points *within* a polyline at ~12m
+            // stride, so a single combined array would draw a fake interpolated
+            // line straight across the gap and defeat the point of this test.
+            const riddenRoads: [number, number][][] = [
+                [[47.65, -117.42], [47.65, -117.4195], [47.65, -117.4190], [47.65, -117.4187]], // covers 1-2
+                [[47.65, -117.41857], [47.65, -117.4180], [47.65, -117.4175], [47.65, -117.4173]], // covers 3-4
+            ];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(true); // bridged
+            expect(graph.graph.getLink('3', '4')!.data.isRidden).toBe(true);
+        });
+
+        test('does NOT bridge a gap open at the start/end of the way (not sandwiched, so not bridged)', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.41988 }, // ~10m east of 1 -- unridden
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.4187 },  // ~100m further -- ridden
+                    { type: 'way', id: 501, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                ]
+            };
+            const riddenRoads: [number, number][][] = [[
+                [47.65, -117.41988], [47.65, -117.4193], [47.65, -117.4187], // covers 2-3's interior
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(false); // real gap, not bridged
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(true);
+        });
+
+        test('does NOT bridge a gap longer than 20m even when sandwiched by ridden edges', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },  // ridden (~100m)
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.4157 },  // ~250m further -- genuinely unridden
+                    { type: 'node', id: 4, lat: 47.65, lon: -117.4144 },  // ridden (~100m)
+                    { type: 'way', id: 502, nodes: [1, 2, 3, 4], tags: { highway: 'residential' } },
+                ]
+            };
+            // Two separate polylines (not one continuous track) -- buildRiddenIndex
+            // interpolates between consecutive points *within* a polyline at ~12m
+            // stride, so a single combined array would draw a fake interpolated
+            // line straight across the gap and defeat the point of this test.
+            const riddenRoads: [number, number][][] = [
+                [[47.65, -117.42], [47.65, -117.4195], [47.65, -117.4190], [47.65, -117.4187]],
+                [[47.65, -117.4144], [47.65, -117.4148], [47.65, -117.4150]], // stays >50m clear of node 3
+            ];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(false); // too long to bridge
+            expect(graph.graph.getLink('3', '4')!.data.isRidden).toBe(true);
+        });
     });
 
     describe('gated-community / HOA streets (access=private)', () => {

@@ -466,6 +466,49 @@ export class StreetGraph {
                     bikeLaneValues.includes(way.tags?.['cycleway:right'] || '') ||
                     bikeLaneValues.includes(way.tags?.['cycleway:both'] || '');
 
+                // Precompute isRidden per edge along this way before adding any links, so a
+                // short (<=20m) unridden gap fully bounded by ridden edges on both sides can be
+                // bridged first. checkIfRidden works edge-by-edge on graph nodes, which OSM often
+                // splits every few meters near intersections -- sparse/decimated GPS traces can
+                // land a hair outside the 50m match window right at one of those short internal
+                // edges even though the rider clearly rode straight through, producing a spurious
+                // unridden sliver the CPP solver then treats as a real, isolated required pocket
+                // (forcing an avoidable out-and-back to "cover" a few meters of already-ridden
+                // street). lib/riddenRoads.ts's map-overlay matching already bridges exactly this
+                // class of gap (see its GAP_BRIDGE comment) — mirror it here so routing and the
+                // overlay agree on what's ridden. Only bridges within this same way, never across
+                // a real cross-street, and never a gap open at the way's own start/end (that's a
+                // real unmatched edge, not a sandwiched sliver).
+                const GAP_BRIDGE_METERS = 20;
+                const wayEdgeCoords: ({ lat: number, lon: number } | undefined)[] = [];
+                for (let i = 0; i < way.nodes.length; i++) {
+                    wayEdgeCoords.push(way.geometry?.[i] || nodesMap.get(way.nodes[i]));
+                }
+                const wayEdges: { dist: number, isRidden: boolean }[] = [];
+                for (let i = 0; i < way.nodes.length - 1; i++) {
+                    const uCoord = wayEdgeCoords[i];
+                    const vCoord = wayEdgeCoords[i + 1];
+                    if (!uCoord || !vCoord) { wayEdges.push({ dist: 0, isRidden: false }); continue; }
+                    wayEdges.push({
+                        dist: this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon),
+                        isRidden: this.checkIfRidden(uCoord, vCoord, riddenRoads),
+                    });
+                }
+                {
+                    let i = 0;
+                    while (i < wayEdges.length) {
+                        if (wayEdges[i].isRidden) { i++; continue; }
+                        let j = i, gapLen = 0;
+                        while (j < wayEdges.length && !wayEdges[j].isRidden) { gapLen += wayEdges[j].dist; j++; }
+                        const boundedBefore = i > 0 && wayEdges[i - 1].isRidden;
+                        const boundedAfter = j < wayEdges.length && wayEdges[j].isRidden;
+                        if (boundedBefore && boundedAfter && gapLen <= GAP_BRIDGE_METERS) {
+                            for (let k = i; k < j; k++) wayEdges[k].isRidden = true;
+                        }
+                        i = j;
+                    }
+                }
+
                 for (let i = 0; i < way.nodes.length - 1; i++) {
                     const uId = way.nodes[i];
                     const vId = way.nodes[i + 1];
@@ -519,7 +562,7 @@ export class StreetGraph {
                         if (hasBikeLane) {
                             dist *= 0.9;
                         }
-                        const isRidden = this.checkIfRidden(uCoord, vCoord, riddenRoads);
+                        const isRidden = wayEdges[i].isRidden;
 
                         this.graph.addLink(uIdStr, vIdStr, {
                             id: way.id.toString(),
