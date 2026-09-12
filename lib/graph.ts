@@ -1589,11 +1589,22 @@ export class StreetGraph {
                 }
             }
 
-            let areaPath = this.solveCPP(areaEntryReference, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, true);
+            // preferNaturalEndpoint should only apply to the synthetic "farthest corner"
+            // fallback (no real destination to aim for) — see its own doc comment above
+            // findEndpointNode: "Real user-chosen points... should always snap to the
+            // literal nearest node". farCorner is a real user-chosen point whenever
+            // realExitTarget was available, so forcing the natural-odd-node search there
+            // let the trail's open end snap to some unrelated pre-existing odd junction
+            // up to 400m away from the actual requested destination instead of literally
+            // the closest point to it, then charged a separate, avoidable exit-bridge
+            // detour (often back through ground the area trail's own parity matching had
+            // already crossed) to reach the real target from there.
+            const areaPreferNatural = !realExitTarget;
+            let areaPath = this.solveCPP(areaEntryReference, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, areaPreferNatural);
             if (areaPath.length === 0) {
                 // All area streets already ridden — re-solve including ridden roads so the
                 // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(areaEntryReference, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, true);
+                areaPath = this.solveCPP(areaEntryReference, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, areaPreferNatural);
             }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 

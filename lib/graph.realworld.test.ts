@@ -99,6 +99,64 @@ describe('real-world regression: Manito 27th/Latawah mixed-mode route', () => {
     });
 });
 
+// Real request/response captured live from the app: a mixed-mode lasso route
+// (approach clicks -> lasso over Eagle Ridge/Shelby Ridge/Latah Hills Ct,
+// Spokane -> a post-area click) where the returned route crossed the S Shelby
+// Ridge St / S Latah Hills Ct junction 6 times, confirmed by parsing an
+// exported GPX's raw trackpoints against real street coordinates.
+//
+// Root cause, found by tracing the mixed-mode assembly in solveCPP: the
+// area-only sub-solve is told to end its open Euler path at farCorner, which
+// is set to the REAL post-area click (realExitTarget) whenever one exists —
+// but it was calling that sub-solve with preferNaturalEndpoint always true.
+// That flag's own doc comment says it should only apply to the synthetic
+// "farthest corner" fallback (no real destination) -- for a real user click,
+// findEndpointNode should snap to the literal nearest node. With it wrongly
+// forced on here, the area trail's open end snapped to the nearest
+// pre-existing odd-degree junction (the Shelby Ridge/Latah Hills Ct corner,
+// odd for unrelated internal parity reasons) instead of literally the
+// closest point to the real target -- 220m away -- and a separate exit
+// bridge then had to backtrack through that same junction to actually reach
+// the click, re-crossing ground the area trail had already covered.
+//
+// Fix: pass `!realExitTarget` (only true for the synthetic-corner fallback)
+// instead of an unconditional `true`. Verified against this exact captured
+// request: junction crossings dropped 6 -> 3, the route's last point now
+// lands exactly on the real target (was 220m short), and total distance
+// improved slightly (matching weight 4531.6 -> 4380.3).
+describe('real-world regression: Eagle Ridge/Shelby Ridge/Latah Hills Ct mixed-mode lasso', () => {
+    const fixture = require('./__fixtures__/eagle-ridge-shelby-latah.json');
+    const JUNCTION: [number, number] = [47.5947403, -117.4205502];
+
+    function buildAndSolve() {
+        const graph = new StreetGraph();
+        graph.buildFromOSM(fixture.osm, fixture.riddenRoads, fixture.routingOptions);
+        const hasPost = fixture.preAreaPointCount != null && fixture.selectedPoints.length > fixture.preAreaPointCount;
+        const endPoint = hasPost ? fixture.selectedPoints[fixture.selectedPoints.length - 1] : undefined;
+        return { circuit: graph.solveCPP(
+            fixture.selectedPoints[0], endPoint, fixture.manualRoute, fixture.selectionBoxes,
+            fixture.exitRoute, fixture.approachRoute, false, fixture.routingOptions.riddenPenalty, fixture.selectionPolygons, 0
+        ), endPoint };
+    }
+
+    test('the route ends exactly at the real post-area click, not ~220m short of it', () => {
+        const { circuit, endPoint } = buildAndSolve();
+        const last = circuit[circuit.length - 1];
+        expect(haversineM(last.lat, last.lon, endPoint.lat, endPoint.lon)).toBeLessThan(5);
+    });
+
+    test('crosses the Shelby Ridge/Latah Hills Ct junction at most 3 times, not 6', () => {
+        const { circuit } = buildAndSolve();
+        const visits = circuit.filter(p => haversineM(p.lat, p.lon, JUNCTION[0], JUNCTION[1]) < 15).length;
+        expect(visits).toBeLessThanOrEqual(3);
+    });
+
+    test('total distance matches the fixed, verified-lower value (~6.036mi)', () => {
+        const { circuit } = buildAndSolve();
+        expect(routeDistanceMiles(circuit)).toBeCloseTo(6.036, 1);
+    });
+});
+
 // General-purpose optimality guards, independent of any specific real-world
 // area: a hand-drawn/manually-assembled route over the same required streets
 // should never beat what solveCPP produces. Each case below computes its own
