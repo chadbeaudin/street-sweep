@@ -57,8 +57,10 @@ describe('real-world regression: Comstock Park neighborhood box (#90)', () => {
 //    traced its own coordinates through the returned circuit, including the
 //    out-and-back to its southern end.
 // 2. The odd-node matching is provably optimal: brute-forced across all
-//    possible pairings (10 odd nodes -> 945 combinations), landing on the
-//    exact same 1507.2m the algorithm found.
+//    possible pairings, landing on the exact same weight the algorithm
+//    found (originally 1507.2m/10 nodes; after the GAP_BRIDGE_METERS
+//    20->50 fix below dropped a couple more spurious gaps to 1146.9m/8
+//    nodes, still exactly matching brute force).
 // 3. The box's unridden mileage is scattered across several small,
 //    disconnected pockets (Latawah, a 35m sliver of 27th, bits of Scott/28th/
 //    Garfield/Grand/Hatch) -- connecting all of them into one continuous
@@ -80,9 +82,9 @@ describe('real-world regression: Manito 27th/Latawah mixed-mode route', () => {
         );
     }
 
-    test('distance matches the independently brute-force-verified optimal (~1.70mi)', () => {
+    test('distance matches the independently brute-force-verified optimal (~1.539mi)', () => {
         const circuit = buildAndSolve();
-        expect(routeDistanceMiles(circuit)).toBeCloseTo(1.70, 1);
+        expect(routeDistanceMiles(circuit)).toBeCloseTo(1.539, 2);
     });
 
     test('fully covers the unridden South Latawah St stretch, including its southern end', () => {

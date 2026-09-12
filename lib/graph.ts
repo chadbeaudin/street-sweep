@@ -467,19 +467,22 @@ export class StreetGraph {
                     bikeLaneValues.includes(way.tags?.['cycleway:both'] || '');
 
                 // Precompute isRidden per edge along this way before adding any links, so a
-                // short (<=20m) unridden gap fully bounded by ridden edges on both sides can be
-                // bridged first. checkIfRidden works edge-by-edge on graph nodes, which OSM often
-                // splits every few meters near intersections -- sparse/decimated GPS traces can
-                // land a hair outside the 50m match window right at one of those short internal
-                // edges even though the rider clearly rode straight through, producing a spurious
-                // unridden sliver the CPP solver then treats as a real, isolated required pocket
-                // (forcing an avoidable out-and-back to "cover" a few meters of already-ridden
-                // street). lib/riddenRoads.ts's map-overlay matching already bridges exactly this
-                // class of gap (see its GAP_BRIDGE comment) — mirror it here so routing and the
-                // overlay agree on what's ridden. Only bridges within this same way, never across
-                // a real cross-street, and never a gap open at the way's own start/end (that's a
-                // real unmatched edge, not a sandwiched sliver).
-                const GAP_BRIDGE_METERS = 20;
+                // short unridden gap fully bounded by ridden edges on both sides can be bridged
+                // first. checkIfRidden works edge-by-edge on graph nodes, which OSM often splits
+                // every few meters near intersections -- sparse/decimated GPS traces (cul-de-sacs
+                // especially: two real dead-end streets, both confirmed ridden by the rider, each
+                // had a 20-50m internal gap where the summary polyline just didn't have a point
+                // close enough) can land outside the match window across a short run of those
+                // internal edges even though the rider clearly rode straight through, producing a
+                // spurious unridden sliver the CPP solver then treats as a real, isolated required
+                // pocket (forcing an avoidable out-and-back to "cover" a few meters of
+                // already-ridden street). Capped at the same 50m tolerance checkIfRidden's own
+                // proximity match already allows (see MATCH tolerance there) -- bridging a gap no
+                // wider than the slop the matcher already tolerates for a single point isn't a
+                // meaningfully bigger leap of faith. Only bridges within this same way, never
+                // across a real cross-street, and never a gap open at the way's own start/end
+                // (that's a real unmatched edge, not a sandwiched sliver).
+                const GAP_BRIDGE_METERS = 50;
                 const wayEdgeCoords: ({ lat: number, lon: number } | undefined)[] = [];
                 for (let i = 0; i < way.nodes.length; i++) {
                     wayEdgeCoords.push(way.geometry?.[i] || nodesMap.get(way.nodes[i]));

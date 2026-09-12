@@ -1104,9 +1104,14 @@ describe('StreetGraph', () => {
         // CPP solver treated that sliver as a genuine isolated required pocket,
         // reachable only by an out-and-back through the already-ridden street on
         // both sides. lib/riddenRoads.ts's map-overlay matching already bridges
-        // exactly this class of short (<=20m) gap; buildFromOSM now mirrors it so
-        // routing and the overlay agree on what's ridden.
-        test('bridges a short (<=20m) unridden gap fully sandwiched between two ridden edges on the same way', () => {
+        // this class of gap; buildFromOSM now mirrors it so routing and the
+        // overlay agree on what's ridden. (The cap started at 20m but two more
+        // real dead-end streets -- West Auburn Crest Ct, ~22.5m gap; South Vale
+        // Ct, ~47m gap across two edges -- both confirmed ridden by the rider,
+        // showed the same pattern with a wider gap, so it was raised to 50m to
+        // match the tolerance checkIfRidden's own proximity match already
+        // allows for a single point.)
+        test('bridges a short (<=50m) unridden gap fully sandwiched between two ridden edges on the same way', () => {
             const graph = new StreetGraph();
             // Four collinear nodes along one way: 1-2 ridden (100m), 2-3 the short
             // unridden gap (10m), 3-4 ridden (100m). Only the GPS trace for 1-2 and
@@ -1135,6 +1140,32 @@ describe('StreetGraph', () => {
             expect(graph.graph.getLink('3', '4')!.data.isRidden).toBe(true);
         });
 
+        test('bridges a ~47m gap split across two consecutive unridden edges (South Vale Ct pattern)', () => {
+            const graph = new StreetGraph();
+            // Five collinear nodes: 1-2 ridden, 2-3 and 3-4 unridden (summing to
+            // ~47m, matching South Vale Ct's real gap), 4-5 ridden.
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },   // ~100m east of 1
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.41847 }, // ~23m east of 2
+                    { type: 'node', id: 4, lat: 47.65, lon: -117.41823 }, // ~24m east of 3 (gap totals ~47m)
+                    { type: 'node', id: 5, lat: 47.65, lon: -117.4171 },  // ~100m east of 4
+                    { type: 'way', id: 503, nodes: [1, 2, 3, 4, 5], tags: { highway: 'residential' } },
+                ]
+            };
+            const riddenRoads: [number, number][][] = [
+                [[47.65, -117.42], [47.65, -117.4195], [47.65, -117.4190], [47.65, -117.4187]],
+                [[47.65, -117.41823], [47.65, -117.4178], [47.65, -117.4174], [47.65, -117.4171]],
+            ];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(true); // bridged
+            expect(graph.graph.getLink('3', '4')!.data.isRidden).toBe(true); // bridged
+            expect(graph.graph.getLink('4', '5')!.data.isRidden).toBe(true);
+        });
+
         test('does NOT bridge a gap open at the start/end of the way (not sandwiched, so not bridged)', () => {
             const graph = new StreetGraph();
             const mockData: OverpassResponse = {
@@ -1154,7 +1185,7 @@ describe('StreetGraph', () => {
             expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(true);
         });
 
-        test('does NOT bridge a gap longer than 20m even when sandwiched by ridden edges', () => {
+        test('does NOT bridge a gap longer than 50m even when sandwiched by ridden edges', () => {
             const graph = new StreetGraph();
             const mockData: OverpassResponse = {
                 version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
