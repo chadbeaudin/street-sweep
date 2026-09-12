@@ -151,12 +151,16 @@ export function isCyclingActivity(type?: string): boolean {
     return isBikingActivity(type) || type.toLowerCase() === 'virtualride';
 }
 
-// Outdoor running types only, mirroring BIKING_TYPES above. 'virtualrun'
-// (treadmill) is deliberately excluded for the same reason 'virtualride' is:
-// no real-world GPS location.
+// "Running" mode really means "on foot" -- runs, walks, and hikes all count
+// (#88 follow-up: a rider wants credit for any street covered on foot, not
+// just actual runs). 'virtualrun' (treadmill) is deliberately excluded for
+// the same reason 'virtualride' is: no real-world GPS location.
 const RUNNING_TYPES = new Set([
     'run',
     'trailrun',
+    'walk',
+    'hike',
+    'snowshoe',
 ]);
 
 export function isRunningActivity(type?: string): boolean {

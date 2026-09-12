@@ -111,16 +111,18 @@ describe('stats.isCyclingActivity', () => {
 });
 
 describe('stats.isRunningActivity', () => {
-    it('accepts known run sport types (case-insensitive)', () => {
+    it('accepts any on-foot sport type (case-insensitive)', () => {
         expect(isRunningActivity('Run')).toBe(true);
         expect(isRunningActivity('run')).toBe(true);
         expect(isRunningActivity('TrailRun')).toBe(true);
+        expect(isRunningActivity('Walk')).toBe(true);
+        expect(isRunningActivity('Hike')).toBe(true);
+        expect(isRunningActivity('Snowshoe')).toBe(true);
     });
 
-    it('rejects non-running activity types, including cycling', () => {
+    it('rejects non-foot activity types, including cycling', () => {
         expect(isRunningActivity('Ride')).toBe(false);
-        expect(isRunningActivity('Walk')).toBe(false);
-        expect(isRunningActivity('Hike')).toBe(false);
+        expect(isRunningActivity('EBikeRide')).toBe(false);
     });
 
     it('rejects virtual/treadmill runs (no real-world GPS)', () => {
@@ -147,8 +149,10 @@ describe('stats.isModeActivity / isModeActivityBroad', () => {
         expect(isModeActivity('Run', 'cycling')).toBe(false);
     });
 
-    it('running mode matches only run types', () => {
+    it('running mode matches any on-foot type, not just runs', () => {
         expect(isModeActivity('Run', 'running')).toBe(true);
+        expect(isModeActivity('Walk', 'running')).toBe(true);
+        expect(isModeActivity('Hike', 'running')).toBe(true);
         expect(isModeActivity('Ride', 'running')).toBe(false);
     });
 
