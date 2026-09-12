@@ -35,7 +35,7 @@ function routeDistanceMiles(route: { lat: number; lon: number }[]): number {
 describe('real-world regression: Comstock Park neighborhood box (#90)', () => {
     test('box selection distance matches the independently brute-force-verified optimal (2.4801mi)', () => {
         const graph = new StreetGraph();
-        graph.buildFromOSM(fixture as OverpassResponse, null, { avoidTrails: true });
+        graph.buildFromOSM(fixture as unknown as OverpassResponse, null, { avoidTrails: true });
 
         const route = graph.solveCPP(undefined, undefined, undefined, [BOX]);
         const distanceMiles = routeDistanceMiles(route);

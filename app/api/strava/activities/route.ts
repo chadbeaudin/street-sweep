@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities, resolveAthleteId } from '@/lib/strava';
+import { refreshRiddenRoadsInBackground } from '@/lib/riddenRoadsRefresh';
 
 export async function POST(req: Request) {
     try {
@@ -19,7 +20,17 @@ export async function POST(req: Request) {
             console.log('[API/Strava] No credentials in request body, will fallback to server-side ENV.');
         }
 
-        if (forceSync) await forceSyncStravaActivities(stravaCredentials);
+        if (forceSync) {
+            await forceSyncStravaActivities(stravaCredentials);
+            // A manual sync means the user explicitly wants their latest rides
+            // reflected everywhere -- kick the map overlay's own recompute
+            // right now instead of leaving it to catch up on its independent
+            // 24h timer. Fire-and-forget: the overlay is best-effort/eventual,
+            // this response doesn't wait on it.
+            resolveAthleteId(stravaCredentials)
+                .then(athleteId => refreshRiddenRoadsInBackground(athleteId, stravaCredentials, mode))
+                .catch(e => console.warn(`[API/Strava] Could not kick ridden-roads overlay refresh: ${e.message}`));
+        }
         const { riddenRoads, activityElevations, activityTypes } = await fetchCyclingRiddenRoads(stravaCredentials, mode);
 
         return NextResponse.json({ riddenRoads, activityElevations, activityTypes });
