@@ -7,9 +7,12 @@ import pkg from '@/package.json';
 interface HowToDialogProps {
     isOpen: boolean;
     onClose: () => void;
+    activityMode: 'cycling' | 'running';
 }
 
-const slides = [
+function buildSlides(activityMode: 'cycling' | 'running') {
+    const verbPast = activityMode === 'running' ? 'run' : 'ridden';
+    return [
     {
         icon: Info,
         title: 'About StreetSweep',
@@ -45,8 +48,8 @@ const slides = [
         title: 'Welcome to StreetSweep',
         body: (
             <>
-                <p>StreetSweep helps you build an optimized route covering roads you haven&apos;t ridden yet.</p>
-                <p>Unlike typical route planners that focus on the fastest or bike-friendliest path between two points, StreetSweep optimizes for <span className="font-medium">coverage</span> — getting you the most new road with the least backtracking.</p>
+                <p>StreetSweep helps you build an optimized route covering roads you haven&apos;t {verbPast} yet.</p>
+                <p>Unlike typical route planners that focus on the fastest{activityMode === 'cycling' ? ' or bike-friendliest' : ''} path between two points, StreetSweep optimizes for <span className="font-medium">coverage</span> — getting you the most new road with the least backtracking.</p>
                 <p className="text-gray-500">There are two ways to plan a route. Here&apos;s how each works.</p>
             </>
         ),
@@ -74,7 +77,7 @@ const slides = [
         body: (
             <>
                 <p>Switch to <span className="font-medium">Area</span> mode (or press <kbd className="px-1 py-0.5 rounded bg-gray-100 border text-xs">A</kbd>) and drag a box — or use the <span className="font-medium">lasso</span> (or press <kbd className="px-1 py-0.5 rounded bg-gray-100 border text-xs">L</kbd>) to draw a freehand shape.</p>
-                <p>StreetSweep sweeps <span className="font-medium">every unridden street</span> inside with minimal backtracking. Best for covering a whole neighborhood.</p>
+                <p>StreetSweep sweeps <span className="font-medium">every street you haven&apos;t {verbPast} yet</span> inside with minimal backtracking. Best for covering a whole neighborhood.</p>
                 <p className="text-gray-500">Press <kbd className="px-1 py-0.5 rounded bg-gray-100 border text-xs">P</kbd> to return to Point mode.</p>
             </>
         ),
@@ -97,30 +100,32 @@ const slides = [
         body: (
             <>
                 <ul className="list-disc pl-5 space-y-2 marker:text-indigo-400">
-                    <li>Connect <span className="font-medium">Strava</span> to overlay roads you&apos;ve already ridden — those are skipped.</li>
+                    <li>Connect <span className="font-medium">Strava</span> to overlay roads you&apos;ve already {verbPast} — those are skipped.</li>
                     <li>Sync your route library with <span className="font-medium">RideWithGPS</span>, or export a single route there.</li>
                     <li>Send it directly to Garmin*, or export as GPX/TCX/FIT.</li>
                 </ul>
                 <div className="text-xs text-gray-500 pt-1 border-t border-gray-100">
-                    <div className="flex items-center gap-2"><span className="w-4 h-1 rounded bg-blue-700" /> roads you&apos;ve ridden &nbsp; <span className="w-4 h-1 rounded bg-red-500" /> generated route</div>
+                    <div className="flex items-center gap-2"><span className="w-4 h-1 rounded bg-blue-700" /> roads you&apos;ve {verbPast} &nbsp; <span className="w-4 h-1 rounded bg-red-500" /> generated route</div>
                     <div className="pt-4">*Garmin push is experimental.</div>
                 </div>
             </>
         ),
     },
-];
+    ];
+}
 
 const SPOTLIGHT_PADDING = 8;
 const CARD_WIDTH = 380;
 const CARD_GAP = 14;
 const VIEWPORT_MARGIN = 16;
 
-export function HowToDialog({ isOpen, onClose }: HowToDialogProps) {
+export function HowToDialog({ isOpen, onClose, activityMode }: HowToDialogProps) {
     const [i, setI] = useState(0);
     const [targetRect, setTargetRect] = useState<DOMRect | null>(null);
     const cardRef = useRef<HTMLDivElement>(null);
     const [cardHeight, setCardHeight] = useState(220);
 
+    const slides = buildSlides(activityMode);
     const slide = slides[i];
     const Icon = slide.icon;
     const last = i === slides.length - 1;

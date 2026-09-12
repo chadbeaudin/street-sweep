@@ -768,7 +768,9 @@ export default function Home() {
     const runExportOrShowTips = (target: 'garmin' | 'rwgps') => {
         let dismissed = false;
         try { dismissed = localStorage.getItem(EXPORT_TIPS_DISMISSED_KEY) === '1'; } catch { /* ignore */ }
-        if (dismissed) {
+        // The only tip today is bike-computer specific (drink/feed reminders),
+        // so there's nothing to show in running mode -- skip straight to export.
+        if (dismissed || activityMode !== 'cycling') {
             target === 'garmin' ? doSendToGarmin() : doSendToRwgps();
             return;
         }
@@ -1700,7 +1702,7 @@ export default function Home() {
                                             </button>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
-                                                    Ridden Road Penalty: {routingOptions.riddenPenalty}x
+                                                    {activityMode === 'running' ? 'Run' : 'Ridden'} Road Penalty: {routingOptions.riddenPenalty}x
                                                 </label>
                                                 <input
                                                     type="range"
@@ -1710,7 +1712,7 @@ export default function Home() {
                                                     onChange={(e) => setRoutingOptions({ ...routingOptions, riddenPenalty: parseInt(e.target.value) })}
                                                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                                 />
-                                                <p className="text-xs text-gray-500 mt-2">Higher values strongly prefer unridden roads (less backtracking)</p>
+                                                <p className="text-xs text-gray-500 mt-2">Higher values strongly prefer roads you haven&apos;t {activityMode === 'running' ? 'run' : 'ridden'} yet (less backtracking)</p>
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
@@ -1730,7 +1732,7 @@ export default function Home() {
                                                         Running
                                                     </button>
                                                 </div>
-                                                <p className="text-xs text-gray-500 mt-2">Filters which Strava activities count as ridden roads and coverage</p>
+                                                <p className="text-xs text-gray-500 mt-2">Filters which Strava activities count toward covered roads and coverage stats</p>
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
@@ -2368,6 +2370,7 @@ export default function Home() {
                     isOpen={showExportTips}
                     onClose={() => { setShowExportTips(false); pendingExportTargetRef.current = null; }}
                     onContinue={handleExportTipsContinue}
+                    activityMode={activityMode}
                 />
 
                 {rwgpsUploadResult && (
@@ -2395,7 +2398,7 @@ export default function Home() {
                     />
                 )}
 
-                <HowToDialog isOpen={showHowTo} onClose={closeHowTo} />
+                <HowToDialog isOpen={showHowTo} onClose={closeHowTo} activityMode={activityMode} />
 
                 {showActivityModePrompt && (
                     <div className="fixed inset-0 z-[2100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">

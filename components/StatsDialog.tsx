@@ -107,6 +107,10 @@ function formatAge(refreshedAt?: string): string | null {
 }
 
 export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials, activityMode }: StatsDialogProps) {
+    const activityNoun = activityMode === 'running' ? 'run' : 'ride';
+    const activityNounPlural = activityMode === 'running' ? 'runs' : 'rides';
+    const activityVerbPast = activityMode === 'running' ? 'run' : 'ridden';
+    const categoryLabel = activityMode === 'running' ? 'Running' : 'Biking';
     const [stats, setStats] = useState<StatsResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -168,7 +172,9 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     useEffect(() => { if (!isOpen) setShowFtpDetail(false); }, [isOpen]);
 
     useEffect(() => {
-        if (!isOpen || !stravaCredentials?.refreshToken) return;
+        // FTP (Functional Threshold Power) is a cycling-specific metric; there's
+        // no running equivalent, so skip fetching it entirely in running mode.
+        if (!isOpen || !stravaCredentials?.refreshToken || activityMode !== 'cycling') return;
         let cancelled = false;
         let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -193,7 +199,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, stravaCredentials]);
+    }, [isOpen, stravaCredentials, activityMode]);
 
     if (!isOpen) return null;
 
@@ -223,7 +229,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                     {loading && (
                         <div className="flex flex-col items-center gap-3 py-12 text-gray-500">
                             <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
-                            <p className="text-sm">Crunching your rides…</p>
+                            <p className="text-sm">Crunching your {activityNounPlural}…</p>
                         </div>
                     )}
 
@@ -268,7 +274,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
 
                             <div>
                                 <div className="flex items-center justify-between mb-3">
-                                    <h3 className="text-sm font-semibold text-gray-700">Biking Locations Ridden</h3>
+                                    <h3 className="text-sm font-semibold text-gray-700">{categoryLabel} Locations {activityMode === 'running' ? 'Run' : 'Ridden'}</h3>
                                     <span className="text-xs text-gray-400">tap to drill down</span>
                                 </div>
                                 <div className="grid grid-cols-4 gap-2">
@@ -355,7 +361,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                         {[
                                             { label: 'Total Distance', value: `${Math.round(stats.totalDistanceMiles).toLocaleString()}`, unit: 'mi' },
                                             { label: 'New Ground', value: `${Math.round(stats.explorationPct ?? 0)}%`, unit: 'of miles were new' },
-                                            { label: 'Longest Ride', value: `${Math.round(stats.longestRideMiles ?? 0)}`, unit: 'mi' },
+                                            { label: activityMode === 'running' ? 'Longest Run' : 'Longest Ride', value: `${Math.round(stats.longestRideMiles ?? 0)}`, unit: 'mi' },
                                             { label: 'Biggest Climb', value: `${Math.round(stats.biggestClimbFeet ?? 0).toLocaleString()}`, unit: 'ft' },
                                             { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days' },
                                         ].map(r => (
@@ -374,7 +380,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Miles per Year</div>
                                                 <div className="flex gap-1.5 h-24">
                                                     {stats.ridesPerYear.map(y => (
-                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(y.miles).toLocaleString()} mi · ${y.rides} rides`}>
+                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(y.miles).toLocaleString()} mi · ${y.rides} ${activityNounPlural}`}>
                                                             <div className="w-full flex-1 flex items-end">
                                                                 <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }} />
                                                             </div>
@@ -388,7 +394,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                 </div>
                             )}
 
-                            {ftpReadings && ftpReadings.length > 0 && (() => {
+                            {activityMode === 'cycling' && ftpReadings && ftpReadings.length > 0 && (() => {
                                 const latest = ftpReadings[ftpReadings.length - 1];
                                 const chartData = ftpReadings.map(r => ({ ...r, label: new Date(r.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }));
 
@@ -459,7 +465,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                             <div>
                                 <div className="flex items-center justify-between mb-3">
                                     <h3 className="text-sm font-semibold text-gray-700">Top Cities by Coverage</h3>
-                                    <span className="text-xs text-gray-400">ridden ÷ total roads</span>
+                                    <span className="text-xs text-gray-400">{activityVerbPast} ÷ total roads</span>
                                 </div>
                                 {!stats.cities || stats.cities.length === 0 ? (
                                     <p className="text-sm text-gray-500">No cities detected yet.</p>
@@ -475,7 +481,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                             <span className="flex-shrink-0 w-5 h-5 rounded-full bg-gray-100 text-gray-500 text-[11px] font-bold flex items-center justify-center">{i + 1}</span>
                                                             <div className="min-w-0">
                                                                 <div className="font-medium text-gray-900 truncate">{c.name}{c.state ? `, ${c.state}` : ''}</div>
-                                                                <div className="text-xs text-gray-500">{c.activityCount} {c.activityCount === 1 ? 'ride' : 'rides'}</div>
+                                                                <div className="text-xs text-gray-500">{c.activityCount} {c.activityCount === 1 ? activityNoun : activityNounPlural}</div>
                                                             </div>
                                                         </div>
                                                         <div className="text-right flex-shrink-0">

@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { X, Lightbulb, Check } from 'lucide-react';
 
-const EXPORT_TIPS = [
+// Bike-computer specific (drink/feed reminders are a cycling-device feature),
+// so only shown in cycling mode.
+const CYCLING_EXPORT_TIPS = [
     "If riding in a metro/suburban area, disable any drink/feed reminders that may pop up, as these may interfere with routing directions.",
 ];
 
@@ -11,10 +13,12 @@ interface ExportTipsDialogProps {
     isOpen: boolean;
     onClose: () => void;
     onContinue: (dontShowAgain: boolean) => void;
+    activityMode: 'cycling' | 'running';
 }
 
-export function ExportTipsDialog({ isOpen, onClose, onContinue }: ExportTipsDialogProps) {
+export function ExportTipsDialog({ isOpen, onClose, onContinue, activityMode }: ExportTipsDialogProps) {
     const [dontShowAgain, setDontShowAgain] = useState(false);
+    const tips = activityMode === 'cycling' ? CYCLING_EXPORT_TIPS : [];
 
     if (!isOpen) return null;
 
@@ -31,7 +35,7 @@ export function ExportTipsDialog({ isOpen, onClose, onContinue }: ExportTipsDial
                 </div>
                 <div className="p-6 space-y-3">
                     <ul className="space-y-3 text-sm text-gray-700">
-                        {EXPORT_TIPS.map((tip, idx) => (
+                        {tips.map((tip, idx) => (
                             <li key={idx} className="flex gap-2">
                                 <span className="text-amber-500 font-bold">&bull;</span>
                                 <span>{tip}</span>
