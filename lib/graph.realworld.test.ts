@@ -44,6 +44,59 @@ describe('real-world regression: Comstock Park neighborhood box (#90)', () => {
     });
 });
 
+// Real request/response captured live from the app: a mixed-mode route (two
+// approach clicks + a box over East 27th-29th Ave / S Latawah-Hatch St,
+// Spokane) that was reported as "covering less unridden road than a manual
+// point-to-point route" -- the manual route (Tekoa -> 27th -> Latawah) looked
+// like it covered more fresh ground than the box route, which appeared to
+// prefer already-ridden South Lamonte St instead of unridden S Latawah St.
+//
+// Investigation verdict: NOT a bug. Three things independently confirmed
+// against this exact captured request/response:
+// 1. S Latawah St (entirely unridden, ~200m) IS fully covered by the route --
+//    traced its own coordinates through the returned circuit, including the
+//    out-and-back to its southern end.
+// 2. The odd-node matching is provably optimal: brute-forced across all
+//    possible pairings (10 odd nodes -> 945 combinations), landing on the
+//    exact same 1507.2m the algorithm found.
+// 3. The box's unridden mileage is scattered across several small,
+//    disconnected pockets (Latawah, a 35m sliver of 27th, bits of Scott/28th/
+//    Garfield/Grand/Hatch) -- connecting all of them into one continuous
+//    route mathematically requires more already-ridden connector mileage
+//    than a simple 2-point manual route ever has to traverse, since that
+//    route only has to connect 2 points, not sweep every remaining scrap in
+//    the whole box.
+describe('real-world regression: Manito 27th/Latawah mixed-mode route', () => {
+    const fixture = require('./__fixtures__/manito-27th-latawah.json');
+
+    function buildAndSolve() {
+        const graph = new StreetGraph();
+        graph.buildFromOSM(fixture.osm, fixture.riddenRoads, fixture.routingOptions);
+        const hasPost = fixture.preAreaPointCount != null && fixture.selectedPoints.length > fixture.preAreaPointCount;
+        const endPoint = hasPost ? fixture.selectedPoints[fixture.selectedPoints.length - 1] : undefined;
+        return graph.solveCPP(
+            fixture.selectedPoints[0], endPoint, fixture.manualRoute, fixture.selectionBoxes,
+            fixture.exitRoute, fixture.approachRoute, false, fixture.routingOptions.riddenPenalty, null, 0
+        );
+    }
+
+    test('distance matches the independently brute-force-verified optimal (~1.70mi)', () => {
+        const circuit = buildAndSolve();
+        expect(routeDistanceMiles(circuit)).toBeCloseTo(1.70, 1);
+    });
+
+    test('fully covers the unridden South Latawah St stretch, including its southern end', () => {
+        const circuit = buildAndSolve();
+        const visitsNear = (lat: number, lon: number) =>
+            circuit.some(p => Math.abs(p.lat - lat) < 0.0003 && Math.abs(p.lon - lon) < 0.0003);
+
+        // Northern end (near East 27th Ave) and southern end of the required
+        // Latawah stretch -- both must appear, not just the easy-to-reach end.
+        expect(visitsNear(47.62994, -117.40411)).toBe(true);
+        expect(visitsNear(47.62809, -117.40414)).toBe(true);
+    });
+});
+
 // General-purpose optimality guards, independent of any specific real-world
 // area: a hand-drawn/manually-assembled route over the same required streets
 // should never beat what solveCPP produces. Each case below computes its own
