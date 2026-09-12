@@ -936,16 +936,31 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 ))}
 
-                {/* User-marked "avoid" roads (#45) */}
+                {/* User-marked "avoid" roads (#45). Red/orange candy-cane hash (two
+                    offset-dashed lines on the same coordinates) instead of a solid
+                    color -- solid red is already the generated route, and several
+                    base-map road classes render yellow, so a solid line in either
+                    color was easy to mistake for something else at a glance. */}
                 {avoidedRoads && avoidedRoads.map((road, idx) => (
-                    <Polyline
-                        key={`avoided-${idx}`}
-                        positions={road as [number, number][]}
-                        color="#DC2626"
-                        weight={4}
-                        opacity={0.85}
-                        interactive={false}
-                    />
+                    <React.Fragment key={`avoided-${idx}`}>
+                        <Polyline
+                            positions={road as [number, number][]}
+                            color="#DC2626"
+                            weight={4}
+                            opacity={0.9}
+                            dashArray="8, 8"
+                            interactive={false}
+                        />
+                        <Polyline
+                            positions={road as [number, number][]}
+                            color="#F97316"
+                            weight={4}
+                            opacity={0.9}
+                            dashArray="8, 8"
+                            dashOffset="8"
+                            interactive={false}
+                        />
+                    </React.Fragment>
                 ))}
 
                 {/* Wider invisible hitbox for removing a single avoided section — right-click
@@ -973,17 +988,28 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     </Polyline>
                 ))}
 
-                {/* In-progress avoid-segment draft (#45) — dashed until the user toggles Avoid mode off */}
+                {/* In-progress avoid-segment draft (#45) — same red/orange hash as the
+                    committed lines above, just lighter/thinner until finalized */}
                 {avoidDraftPath && avoidDraftPath.map((segment, idx) => (
-                    <Polyline
-                        key={`avoided-draft-${idx}`}
-                        positions={segment as [number, number][]}
-                        color="#DC2626"
-                        weight={4}
-                        opacity={0.7}
-                        dashArray="6, 6"
-                        interactive={false}
-                    />
+                    <React.Fragment key={`avoided-draft-${idx}`}>
+                        <Polyline
+                            positions={segment as [number, number][]}
+                            color="#DC2626"
+                            weight={4}
+                            opacity={0.6}
+                            dashArray="6, 6"
+                            interactive={false}
+                        />
+                        <Polyline
+                            positions={segment as [number, number][]}
+                            color="#F97316"
+                            weight={4}
+                            opacity={0.6}
+                            dashArray="6, 6"
+                            dashOffset="6"
+                            interactive={false}
+                        />
+                    </React.Fragment>
                 ))}
 
                 {/* Immediate per-click feedback for the avoid draft, independent of the async snap */}
@@ -994,7 +1020,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         interactive={false}
                         icon={L.divIcon({
                             className: '',
-                            html: '<div style="width:12px;height:12px;background:#DC2626;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.4)"></div>',
+                            html: '<div style="width:12px;height:12px;background:#F97316;border:2px solid white;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,0.4)"></div>',
                             iconSize: [12, 12],
                             iconAnchor: [6, 6],
                         })}
