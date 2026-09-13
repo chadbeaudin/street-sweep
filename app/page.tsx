@@ -438,7 +438,16 @@ export default function Home() {
             getCachedPrecomputedRoads(credentialsKey).then(cachedRoads => {
                 if (cancelled) return;
                 if (cachedRoads) {
+                    // Paint the cached copy immediately (no wait), but still revalidate
+                    // against the server in the background -- the server refreshes this
+                    // overlay on its own ~24h timer (or right after a manual Strava sync,
+                    // see #85), and a plain page load / hard refresh has no other way to
+                    // notice a completed recompute. Without this, a rider who synced,
+                    // then reloaded before the background recompute finished, would keep
+                    // seeing the stale pre-sync overlay indefinitely until they clicked
+                    // Sync again -- a hard refresh doesn't touch IndexedDB.
                     setPrecomputedRidden(cachedRoads);
+                    fetchFresh();
                 } else {
                     setIsRiddenComputing(true);
                     fetchFresh();
