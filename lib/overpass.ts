@@ -26,6 +26,29 @@ const OSM_CACHE = new Map<string, { data: OverpassResponse; timestamp: number }>
 const CACHE_TTL = 1000 * 60 * 60 * 24 * 30; // 30 days — OSM streets are effectively static at this timescale
 const IN_FLIGHT_REQUESTS = new Map<string, Promise<OverpassResponse>>();
 
+// OSM_CACHE was unbounded: every distinct ~0.02°-tile bbox ever fetched stayed
+// in memory for the process's whole lifetime. A single ridden-roads overlay
+// recompute alone touches ~1750 tiles (lib/riddenRoadsRefresh.ts), and it can
+// now fire more than once a day (see #85's post-sync trigger) -- confirmed
+// via a prod OOM crash whose heap plateaued around 480-490MB. This tier is
+// purely a hot-path accelerator on top of the disk cache (readDiskCache),
+// which is itself durable and local, so evicting the oldest entries here
+// only costs a fast disk read on a miss, never a network re-fetch -- safe to
+// cap aggressively. Simple insertion-order FIFO eviction (not true LRU) is
+// enough here: this tier's job is smoothing repeat reads within one request
+// burst (a pan/zoom session, one recompute pass), not being a long-lived hot
+// set.
+const OSM_CACHE_MAX_ENTRIES = 2000;
+function setOsmCache(key: string, data: OverpassResponse) {
+  OSM_CACHE.delete(key); // re-inserting moves it to the end (most-recent) in Map iteration order
+  OSM_CACHE.set(key, { data, timestamp: Date.now() });
+  while (OSM_CACHE.size > OSM_CACHE_MAX_ENTRIES) {
+    const oldestKey = OSM_CACHE.keys().next().value;
+    if (oldestKey === undefined) break;
+    OSM_CACHE.delete(oldestKey);
+  }
+}
+
 // Overpass mirrors allow only ~2 query slots per IP; firing more concurrent
 // requests queues them server-side until our client timeout aborts them.
 const MAX_CONCURRENT_FETCHES = 2;
@@ -384,7 +407,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   const diskCached = await readDiskCache(cacheKey);
   if (diskCached && diskCached.elements.length > 0) {
     console.log(`${ts()} Returning disk-cached OSM data (${diskCached.elements.length} elems) for ${cacheKey}`);
-    OSM_CACHE.set(cacheKey, { data: diskCached, timestamp: now });
+    setOsmCache(cacheKey, diskCached);
     return diskCached;
   }
 
@@ -394,7 +417,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   const dbCached = process.env.OVERPASS_URL ? null : await getDbCached(cacheKey, minElements, bbox);
   if (dbCached && dbCached.elements.length > 0) {
     console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
-    OSM_CACHE.set(cacheKey, { data: dbCached, timestamp: now });
+    setOsmCache(cacheKey, dbCached);
     // Seed the local disk so subsequent reads skip Neon entirely.
     // writeDiskCache catches internally, so a fire-and-forget call is safe.
     void writeDiskCache(cacheKey, dbCached);
@@ -477,7 +500,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               }
 
               recordSuccess(endpoint);
-              OSM_CACHE.set(cacheKey, { data, timestamp: Date.now() });
+              setOsmCache(cacheKey, data);
               setDbCached(cacheKey, data); // fire-and-forget
               void writeDiskCache(cacheKey, data);
               return data;
@@ -507,7 +530,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
       console.warn(`${ts()} All Overpass endpoints exhausted. Trying OSM API fallback...`);
       const osmFallback = await fetchFromOSMAPIWithSplit(bbox);
       if (osmFallback && osmFallback.elements.length > 0) {
-        OSM_CACHE.set(cacheKey, { data: osmFallback, timestamp: Date.now() });
+        setOsmCache(cacheKey, osmFallback);
         setDbCached(cacheKey, osmFallback);
         void writeDiskCache(cacheKey, osmFallback);
         return osmFallback;

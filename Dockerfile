@@ -22,6 +22,15 @@ ARG VERSION
 ENV APP_VERSION=$VERSION
 ENV NODE_ENV production
 
+# Node's default heap-sizing heuristic self-limits old-space to roughly half
+# of detected memory rather than the fly.toml VM size -- confirmed via a
+# prod OOM crash whose GC trace showed the heap plateauing at ~480-490MB and
+# dying, on a machine with 1024MB available. Bumping the VM's memory alone
+# (512mb -> 1024mb) didn't help because Node never tried to use the extra
+# room. Cap explicitly at 896MB, leaving ~128MB headroom for non-heap
+# overhead (native buffers, the OS, etc.) within the container.
+ENV NODE_OPTIONS="--max-old-space-size=896"
+
 LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/public/icon.png"
 
 RUN groupadd --system --gid 1001 nodejs
