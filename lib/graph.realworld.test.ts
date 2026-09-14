@@ -347,4 +347,60 @@ describe('real-world regression: Duvall/Carnation double-lasso crash', () => {
         expect(() => graph.solveCPP(undefined, undefined, undefined, [boxA, boxB]))
             .toThrow(/too large or fragmented/);
     });
+
+    // Real prod false-positive (2026-09-13, same day as the fix above): a user
+    // legitimately lassoed all of Duvall, WA (a real town's full street grid,
+    // one connected area) plus a nearby neighborhood linked by route points,
+    // and hit 226 odd junctions -- entirely normal for a real town's worth of
+    // T-intersections, not fragmentation. An earlier version of this guard
+    // used a flat odd-node cap (120) and incorrectly rejected it. The guard
+    // must key off odd-node-count * graph-size (the actual APSP cost driver),
+    // not odd-node count alone, so a single large-but-normal area with many
+    // odd nodes and a proportionally small graph must pass.
+    //
+    // A real town's grid is mostly 4-way (even-degree) intersections with
+    // odd (T-junction) nodes concentrated on the perimeter -- unlike the
+    // comb above, where every single node is deliberately made odd. Model
+    // that with an NxN street grid: interior nodes are even (degree 4),
+    // perimeter non-corner nodes are odd (degree 3), giving ~4*(N-2) odd
+    // nodes across ~2*N*(N-1) edges -- proportionally far more edges per
+    // odd node than the pathological comb case.
+    function buildGrid(baseLat: number, baseLon: number, n: number): { nodes: any[]; ways: any[] } {
+        const nodes: any[] = [];
+        const ways: any[] = [];
+        let nextId = 1;
+        const idAt = (r: number, c: number) => r * n + c + 1;
+        for (let r = 0; r < n; r++) {
+            for (let c = 0; c < n; c++) {
+                nodes.push({ type: 'node', id: idAt(r, c), lat: baseLat + r * 0.0005, lon: baseLon + c * 0.0005 });
+            }
+        }
+        nextId = n * n + 1;
+        for (let r = 0; r < n; r++) {
+            for (let c = 0; c < n; c++) {
+                if (c < n - 1) ways.push({ type: 'way', id: nextId++, nodes: [idAt(r, c), idAt(r, c + 1)], tags: { highway: 'residential' } });
+                if (r < n - 1) ways.push({ type: 'way', id: nextId++, nodes: [idAt(r, c), idAt(r + 1, c)], tags: { highway: 'residential' } });
+            }
+        }
+        return { nodes, ways };
+    }
+
+    test('a single large connected area with many odd junctions (whole-town selection) is NOT rejected', () => {
+        const n = 58; // ~4*(58-2) = 224 odd (perimeter T-junctions), ~6612 edges
+        const town = buildGrid(47.7197, -121.9721, n);
+
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [...town.nodes, ...town.ways],
+        };
+
+        const graph = new StreetGraph();
+        graph.buildFromOSM(mockData);
+
+        const box = { north: 47.7197 + n * 0.0005 + 0.0001, south: 47.7197 - 0.0001, east: -121.9721 + n * 0.0005 + 0.0001, west: -121.9721 - 0.0001 };
+
+        expect(() => graph.solveCPP(undefined, undefined, undefined, [box])).not.toThrow();
+    });
 });
