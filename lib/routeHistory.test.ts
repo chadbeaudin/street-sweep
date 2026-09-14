@@ -1,4 +1,4 @@
-import { RouteSnapshot, pushSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from './routeHistory';
+import { RouteSnapshot, pushSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from './routeHistory';
 
 const snap = (over: Partial<RouteSnapshot> = {}): RouteSnapshot => ({
     points: [],
@@ -132,5 +132,50 @@ describe('shouldAddComputedEndpoint', () => {
 
     it('is false once a real post-area point already exists — add the marker only once', () => {
         expect(shouldAddComputedEndpoint(2, 3, true)).toBe(false);
+    });
+});
+
+// Real user report: after generating a route over one lasso, the app
+// materializes the sweep's end as a waypoint. Drawing a SECOND lasso then made
+// that stale endpoint the route's destination, so the route swept the new area
+// and backtracked several miles to where the previous sweep had ended.
+describe('dropStaleComputedEndpoint', () => {
+    type TestPoint = { id: string; lat: number; lon: number; computed?: boolean };
+    const clicked = (id: string): TestPoint => ({ id, lat: 1, lon: 1 });
+    const computed = (id: string): TestPoint => ({ id, lat: 2, lon: 2, computed: true });
+
+    it('drops a trailing auto-computed endpoint', () => {
+        const points = [clicked('a'), clicked('b'), computed('c')];
+        expect(dropStaleComputedEndpoint(points).map(p => p.id)).toEqual(['a', 'b']);
+    });
+
+    it('keeps a trailing endpoint the user actually clicked', () => {
+        const points = [clicked('a'), clicked('b')];
+        expect(dropStaleComputedEndpoint(points)).toBe(points);
+    });
+
+    it('keeps a computed point that is not the last one — the user clicked past it', () => {
+        const points = [clicked('a'), computed('b'), clicked('c')];
+        expect(dropStaleComputedEndpoint(points).map(p => p.id)).toEqual(['a', 'b', 'c']);
+    });
+
+    it('returns the same array reference when nothing is dropped, so callers can skip a re-render', () => {
+        const points = [clicked('a')];
+        expect(dropStaleComputedEndpoint(points)).toBe(points);
+    });
+
+    it('handles an empty list', () => {
+        expect(dropStaleComputedEndpoint([])).toEqual([]);
+    });
+
+    // After the drop, point count falls back to preAreaPointCount, which is
+    // what makes the server treat the new area as the route's end (no
+    // post-area waypoint => no forced exit bridge back to the old endpoint).
+    it('restores the point count to preAreaPointCount so no exit bridge is requested', () => {
+        const preAreaPointCount = 2;
+        const points = [clicked('a'), clicked('b'), computed('c')];
+        const trimmed = dropStaleComputedEndpoint(points);
+        expect(trimmed).toHaveLength(preAreaPointCount);
+        expect(shouldAddComputedEndpoint(preAreaPointCount, trimmed.length, true)).toBe(true);
     });
 });

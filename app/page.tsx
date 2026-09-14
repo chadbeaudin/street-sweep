@@ -18,7 +18,7 @@ import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
-import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint } from '@/lib/routeHistory';
+import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
 import { filterRiddenRoadsToBbox } from '@/lib/riddenRoads';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -187,7 +187,7 @@ export default function Home() {
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const fetchedRoadTilesRef = useRef<Set<string>>(new Set());
     const roadTileCacheRef = useRef<[number, number][][]>([]);
-    const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[]>([]);
+    const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped'; computed?: boolean }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
     const historyRef = useRef<RouteSnapshot[]>([]);
     const selectionBoxesRef = useRef<{ north: number; south: number; east: number; west: number }[]>([]);
@@ -632,7 +632,7 @@ export default function Home() {
                     const coords = feature.geometry.coordinates;
                     if (coords.length > 0) {
                         const [lon, lat] = coords[coords.length - 1];
-                        const newPoint = { lat, lon, id: Math.random().toString(36).substr(2, 9), status: 'snapped' as const };
+                        const newPoint = { lat, lon, id: Math.random().toString(36).substr(2, 9), status: 'snapped' as const, computed: true };
                         pointsRef.current = [...pointsRef.current, newPoint];
                         setSelectedPoints([...pointsRef.current]);
                         const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
@@ -2270,6 +2270,13 @@ export default function Home() {
                             const newBoxes = [...selectionBoxesRef.current, box];
                             selectionBoxesRef.current = newBoxes;
                             setSelectionBoxes(newBoxes);
+                            // See the lasso handler: a prior sweep's auto-computed endpoint
+                            // is superseded by this new area rather than backtracked to.
+                            const trimmed = dropStaleComputedEndpoint(pointsRef.current);
+                            if (trimmed !== pointsRef.current) {
+                                pointsRef.current = trimmed;
+                                setSelectedPoints([...trimmed]);
+                            }
                             // Lock in how many approach points existed when the first box was drawn
                             if (preAreaPointCountRef.current === null) {
                                 preAreaPointCountRef.current = pointsRef.current.length;
@@ -2290,6 +2297,14 @@ export default function Home() {
                             const newPolygons = [...selectionPolygonsRef.current, polygon];
                             selectionPolygonsRef.current = newPolygons;
                             setSelectionPolygons(newPolygons);
+                            // A previous sweep's auto-computed endpoint isn't a destination
+                            // the user picked — this new area supersedes it, so the route
+                            // ends here instead of backtracking to where the last one did.
+                            const trimmed = dropStaleComputedEndpoint(pointsRef.current);
+                            if (trimmed !== pointsRef.current) {
+                                pointsRef.current = trimmed;
+                                setSelectedPoints([...trimmed]);
+                            }
                             // Lock in how many approach points existed when the first polygon was drawn
                             if (preAreaPointCountRef.current === null) {
                                 preAreaPointCountRef.current = pointsRef.current.length;

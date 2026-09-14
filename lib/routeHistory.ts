@@ -3,7 +3,7 @@
 // so undo/redo after an area selection restores those too (#25).
 
 export interface RouteSnapshot {
-    points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[];
+    points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped'; computed?: boolean }[];
     route: [number, number][][];
     selectionBoxes: { north: number; south: number; east: number; west: number }[];
     selectionPolygons: [number, number][][];
@@ -46,4 +46,21 @@ export function isFirstPointAfterArea(preAreaPointCount: number | null, pointInd
 // exists (currentPointCount > preAreaPointCount), don't add another.
 export function shouldAddComputedEndpoint(preAreaPointCount: number | null, currentPointCount: number, hasArea: boolean): boolean {
     return hasArea && preAreaPointCount !== null && currentPointCount === preAreaPointCount;
+}
+
+/**
+ * Drop a trailing auto-computed endpoint when a new area is drawn.
+ *
+ * That endpoint only ever recorded where the previous sweep happened to finish
+ * — the user never chose it. Leaving it in place makes it the route's
+ * destination, so drawing a second lasso produces a sweep of the new area
+ * followed by a long backtrack to the old endpoint, instead of simply ending
+ * in the newly drawn area. A waypoint the user actually clicked is a real
+ * destination and is always kept.
+ */
+export function dropStaleComputedEndpoint<T extends { computed?: boolean }>(points: T[]): T[] {
+    if (points.length > 0 && points[points.length - 1].computed) {
+        return points.slice(0, -1);
+    }
+    return points;
 }

@@ -60,7 +60,7 @@ interface MapProps {
     startPoint?: { lat: number; lon: number; label: string } | null;
     isPickingStart?: boolean;
     onStartPick?: (lat: number, lon: number) => void;
-    selectedPoints: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped' }[];
+    selectedPoints: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped'; computed?: boolean }[];
     onPointAdd: (point: { lat: number; lon: number }) => void;
     onPointMove: (idx: number, latlng: { lat: number; lon: number }) => void;
     onPointMoveStart?: () => void;

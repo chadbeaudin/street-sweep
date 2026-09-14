@@ -3,6 +3,13 @@ export interface Waypoint {
     lat: number;
     lon: number;
     status?: 'snapped' | 'pending';
+    /**
+     * True for the endpoint the app materializes itself after an area sweep
+     * (see shouldAddComputedEndpoint) rather than one the user clicked. It
+     * marks where the last sweep happened to finish, not a destination the
+     * user chose — so drawing another area supersedes it.
+     */
+    computed?: boolean;
 }
 
 /**
