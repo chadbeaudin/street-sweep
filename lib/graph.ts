@@ -340,7 +340,12 @@ export class StreetGraph {
                 }
             }
         }
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}|R${riddenPointCount}:${riddenKey}|A${avoidedPointCount}:${avoidedKey}`;
+        // The same bbox can now be backed by two very different datasets: the full
+        // enclosing rectangle, or a corridor-only subset fetched as disjoint regions
+        // (see lib/fetchRegions.ts). Including the source and element count keeps a
+        // corridor graph from being served for a full-rect request, and vice versa.
+        const dataKey = `|D${data.generator === 'StreetSweep regions' ? 'c' : 'f'}${data.elements.length}`;
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${riddenPointCount}:${riddenKey}|A${avoidedPointCount}:${avoidedKey}`;
         const now = Date.now();
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {

@@ -556,3 +556,63 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
 export async function fetchOSMDataByQuery(queryStr: string): Promise<OverpassResponse> {
   throw new Error("Not implemented");
 }
+
+/**
+ * Fetch several disjoint regions and merge them into one response.
+ *
+ * Used instead of a single enclosing bbox when a route's areas are far apart
+ * (see lib/fetchRegions.ts): fetching only the corridor the route actually
+ * travels keeps the resulting graph proportional to the route rather than to
+ * the empty rectangle spanning it.
+ *
+ * Regions are fetched with limited concurrency so a long corridor doesn't
+ * burst dozens of simultaneous Overpass queries and trip the circuit breakers.
+ * A region that fails or comes back empty is skipped rather than failing the
+ * whole route — the remaining regions still produce a usable graph.
+ */
+export async function fetchOSMDataForRegions(regions: BoundingBox[]): Promise<OverpassResponse> {
+  const CONCURRENCY = 4;
+  const results: OverpassResponse[] = [];
+  let skippedTooLarge = false;
+
+  for (let i = 0; i < regions.length; i += CONCURRENCY) {
+    const batch = regions.slice(i, i + CONCURRENCY);
+    const settled = await Promise.all(batch.map(async (region) => {
+      try {
+        return await fetchOSMData(region);
+      } catch (err: any) {
+        console.warn(`${ts()} Region fetch failed (${region.south},${region.west},${region.north},${region.east}): ${err?.message}`);
+        return null;
+      }
+    }));
+    for (const res of settled) {
+      if (!res) continue;
+      if (res.skippedTooLarge) skippedTooLarge = true;
+      results.push(res);
+    }
+  }
+
+  // Regions are disjoint but their tile-snapped fetches overlap at the seams,
+  // and a way crossing a seam comes back from both — dedupe by type/id so the
+  // graph doesn't get duplicate edges.
+  const seen = new Set<string>();
+  const elements: OverpassResponse['elements'] = [];
+  for (const res of results) {
+    for (const el of res.elements) {
+      const key = `${el.type}/${el.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      elements.push(el);
+    }
+  }
+
+  console.log(`${ts()} Fetched ${regions.length} regions -> ${elements.length} unique elements.`);
+
+  return {
+    version: 0.6,
+    generator: 'StreetSweep regions',
+    osm3s: { timestamp_osm_base: new Date().toISOString(), copyright: '' },
+    elements,
+    ...(skippedTooLarge ? { skippedTooLarge: true } : {}),
+  };
+}

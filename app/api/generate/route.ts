@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { fetchOSMData } from '@/lib/overpass';
+import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
+import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
+import type { BoundingBox } from '@/lib/types';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
 
@@ -106,10 +108,47 @@ export async function POST(request: Request) {
             }
         }
 
-        console.log(`${ts()} Fetching OSM data for buffered bbox:`, bufferedBbox);
+        // Fetching the whole enclosing rectangle is wasteful — and dangerous —
+        // when the route's pieces are far apart: a lasso over Duvall, WA joined
+        // to a second area several miles southeast dragged in the entire empty
+        // rural gap between them, producing a 148,022-edge graph that pushed the
+        // odd-node matching step into OOM territory. Decompose into the corridor
+        // the route actually travels and fetch only that, falling back to the
+        // single bbox when the corridor wouldn't save enough to be worth the
+        // extra requests (the common case: one compact selection).
+        const regionPaths: [number, number][][] = [];
+        // manualRoute/exitRoute/approachRoute are [lon, lat]; regions want [lat, lon].
+        for (const path of [manualRoute, exitRoute, approachRoute]) {
+            if (path && path.length > 0) regionPaths.push(path.map((p: [number, number]) => [p[1], p[0]] as [number, number]));
+        }
+        const areaBboxes: BoundingBox[] = [];
+        for (const box of selectionBoxes || []) {
+            areaBboxes.push({ south: box.south - BUFFER, north: box.north + BUFFER, west: box.west - BUFFER, east: box.east + BUFFER });
+        }
+        for (const polygon of selectionPolygons) {
+            const lats = polygon.map(p => p[0]);
+            const lons = polygon.map(p => p[1]);
+            areaBboxes.push({ south: Math.min(...lats) - BUFFER, north: Math.max(...lats) + BUFFER, west: Math.min(...lons) - BUFFER, east: Math.max(...lons) + BUFFER });
+        }
+        const regionPoints: [number, number][] = (selectedPoints || []).map((p: any) => [p.lat, p.lon] as [number, number]);
+        if (persistentStart && typeof persistentStart.lat === 'number') regionPoints.push([persistentStart.lat, persistentStart.lon]);
+
+        const regions = buildFetchRegions({ areaBboxes, paths: regionPaths, points: regionPoints });
+        const fullArea = bboxArea(bufferedBbox);
+        const regionsArea = regions.reduce((sum, r) => sum + bboxArea(r), 0);
+        // Only worth splitting when the corridor is meaningfully smaller than the
+        // full rectangle; buildFetchRegions already caps the request count itself.
+        const useRegions = regions.length > 1 && regionsArea < fullArea * 0.8;
+
         let osmData;
         try {
-            osmData = await fetchOSMData(bufferedBbox);
+            if (useRegions) {
+                console.log(`${ts()} Fetching OSM data as ${regions.length} corridor regions (${regionsArea.toFixed(4)} sq deg vs ${fullArea.toFixed(4)} full rect).`);
+                osmData = await fetchOSMDataForRegions(regions);
+            } else {
+                console.log(`${ts()} Fetching OSM data for buffered bbox:`, bufferedBbox);
+                osmData = await fetchOSMData(bufferedBbox);
+            }
         } catch (osmError: any) {
             console.error(`${ts()} OSM fetch failed:`, osmError);
             return NextResponse.json({ error: osmError.message || 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 500 });
