@@ -278,3 +278,73 @@ describe('optimality guards: solveCPP must match a mathematically-verified minim
         expect(routeTotal).toBeLessThanOrEqual(handDrawn + 0.5); // +0.5m float slack
     });
 });
+
+// Real prod crash (2026-09-13): a user drew a lasso, added some points, then
+// drew a SECOND lasso several miles away (Duvall + Carnation, WA) without
+// realizing selectionPolygons accumulates every polygon ever drawn rather
+// than replacing the previous one. The combined request fetched 102,100 OSM
+// road edges and produced 252 odd nodes needing pairwise APSP + 2-opt
+// matching, which OOM-killed the server. Reproduced here with a synthetic
+// "comb" graph (many dead-end teeth force many odd nodes) split into two
+// widely-separated clusters selected via two boxes in one solveCPP call --
+// the same shape as two disconnected lassos, just far smaller in absolute
+// node count so the test runs fast.
+describe('real-world regression: Duvall/Carnation double-lasso crash', () => {
+    function buildComb(idPrefix: number, baseLat: number, baseLon: number, teeth: number): { nodes: any[]; ways: any[] } {
+        const nodes: any[] = [];
+        const ways: any[] = [];
+        let nextId = idPrefix;
+        const spineIds: number[] = [];
+        for (let i = 0; i <= teeth; i++) {
+            const id = nextId++;
+            spineIds.push(id);
+            nodes.push({ type: 'node', id, lat: baseLat, lon: baseLon + i * 0.0005 });
+        }
+        for (let i = 0; i < spineIds.length - 1; i++) {
+            ways.push({ type: 'way', id: nextId++, nodes: [spineIds[i], spineIds[i + 1]], tags: { highway: 'residential' } });
+        }
+        // A dead-end tooth off every spine node makes that node odd (degree 3)
+        // and its tooth tip odd (degree 1) -- forcing many required odd-node
+        // pairings, mirroring the real crash's 252-odd-node matching blowup.
+        for (const spineId of spineIds) {
+            const tipId = nextId++;
+            const spineNode = nodes.find(n => n.id === spineId);
+            nodes.push({ type: 'node', id: tipId, lat: baseLat + 0.0005, lon: spineNode.lon });
+            ways.push({ type: 'way', id: nextId++, nodes: [spineId, tipId], tags: { highway: 'residential' } });
+        }
+        return { nodes, ways };
+    }
+
+    test('two disconnected far-apart selections fail fast with an actionable error instead of hanging/crashing', () => {
+        // Enough teeth per cluster to clear the MAX_ODD_NODES safety guard on
+        // its own, without needing anywhere near the real crash's 102k-edge
+        // graph.
+        const clusterA = buildComb(1, 47.7197, -121.9721, 200); // Duvall, WA
+        const clusterB = buildComb(1000000, 47.6923, -121.9232, 200); // Carnation, WA, ~4mi away
+
+        // Real streets always connect somehow -- without a connecting road the
+        // solver correctly treats clusterB as an unreachable island and drops
+        // it entirely, which would silently defeat this test. Wire the two
+        // clusters together with a single (non-required, outside both boxes)
+        // connector way so they form one connected graph, same as the real
+        // Duvall/Carnation road network. Node id 1 is clusterA's first spine
+        // node, 1000000 is clusterB's first spine node (see buildComb).
+        const connectorWay = { type: 'way', id: 2000000, nodes: [1, 1000000], tags: { highway: 'residential' } };
+
+        const mockData: OverpassResponse = {
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [...clusterA.nodes, ...clusterA.ways, ...clusterB.nodes, ...clusterB.ways, connectorWay],
+        };
+
+        const graph = new StreetGraph();
+        graph.buildFromOSM(mockData);
+
+        const boxA = { north: 47.7208, south: 47.7197, east: -121.9721 + 200 * 0.0005 + 0.0001, west: -121.9721 - 0.0001 };
+        const boxB = { north: 47.6934, south: 47.6923, east: -121.9232 + 200 * 0.0005 + 0.0001, west: -121.9232 - 0.0001 };
+
+        expect(() => graph.solveCPP(undefined, undefined, undefined, [boxA, boxB]))
+            .toThrow(/too large or fragmented/);
+    });
+});

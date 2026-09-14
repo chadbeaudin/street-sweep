@@ -2135,6 +2135,24 @@ export class StreetGraph {
         }
 
         const remainingOdd = new Set(nodesToFlip);
+
+        // Real prod crash (2026-09-13): a user drew two lassos several miles apart
+        // (Duvall + Carnation, WA) without realizing selections accumulate rather
+        // than replace -- selectionPolygons keeps every polygon ever drawn until
+        // "Clear Workspace". The combined bbox fetched 102,100 OSM road edges and
+        // produced 252 odd nodes needing pairwise APSP + 2-opt matching, which
+        // OOM-killed the server. The odd-node count, not raw bbox degrees, is what
+        // actually drives this step's cost (each pair needs a Dijkstra over the
+        // whole graph, and matching is O(n^2) pairs) -- every legitimate single-area
+        // or long point-to-point route seen in practice tops out around 20-30 odd
+        // nodes, even for extensive coverage. Cap well above that (120) so this
+        // never rejects a real request, but fails fast with an actionable message
+        // instead of a multi-second computation that can crash the whole server.
+        const MAX_ODD_NODES = 120;
+        if (remainingOdd.size > MAX_ODD_NODES) {
+            throw new Error(`This selection is too large or fragmented to route (${remainingOdd.size} disconnected junctions need matching, limit ${MAX_ODD_NODES}). If you drew more than one area, "Clear Workspace" and try a single, smaller selection -- separate areas that are far apart make routing exponentially more expensive.`);
+        }
+
         console.log(`${ts()} Matching ${remainingOdd.size} odd nodes using APSP + 2-opt approach...`);
         
         const oddArray = Array.from(remainingOdd);
