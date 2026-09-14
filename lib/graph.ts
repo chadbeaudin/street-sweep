@@ -1068,6 +1068,55 @@ export class StreetGraph {
     }
 
     /**
+     * Shortest-path weights from one node to a set of targets, without building
+     * the paths themselves.
+     *
+     * The odd-node matching step needs an all-pairs distance matrix over what
+     * can be hundreds of nodes, but only ever compares weights — it doesn't
+     * touch a path until the final matching is chosen. Materializing a path per
+     * pair is what made that step run out of memory on large selections: 206
+     * odd nodes means ~42,000 paths held at once, each potentially hundreds of
+     * segments long across a miles-wide graph. Weights alone are two numbers
+     * per pair, so the caller reconstructs the handful of paths it actually
+     * needs afterwards.
+     */
+    public findAllTargetWeights(fromId: string, targetIds: Set<string>, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): Map<string, number> {
+        const distances = new Map<string, number>();
+        const queue = new MinHeap<{ id: string; weight: number }>();
+        queue.push({ id: fromId, weight: 0 }, 0);
+        distances.set(fromId, 0);
+
+        const results = new Map<string, number>();
+        const targetsLeft = new Set(targetIds);
+        targetsLeft.delete(fromId);
+
+        while (queue.size() > 0) {
+            const { id: u, weight: distU } = queue.pop()!;
+
+            const known = distances.get(u);
+            if (known !== undefined && known < distU) continue;
+
+            if (targetsLeft.has(u)) {
+                results.set(u, distU);
+                targetsLeft.delete(u);
+                if (targetsLeft.size === 0) break;
+            }
+
+            const node = this.graph.getNode(u);
+            node?.links?.forEach((link: any) => {
+                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                const weight = link.data.weight * (link.data.isRidden ? riddenPenalty : 1);
+                const alt = distU + weight;
+                if (!distances.has(v) || alt < distances.get(v)!) {
+                    distances.set(v, alt);
+                    queue.push({ id: v, weight: alt }, alt);
+                }
+            });
+        }
+        return results;
+    }
+
+    /**
      * Like findClosestTarget, but caps how far ridden/backtrack penalties (penalizedLinks)
      * are allowed to detour the result. Point-to-point mode has no bounded area to fall back
      * on the way the CPP solver does, so a heavily-penalized route can wander several blocks
@@ -2159,8 +2208,16 @@ export class StreetGraph {
         // lassos -> huge graph) but stays small for a big-but-normal single area.
         const graphSize = this.graph.getLinkCount();
         const oddNodeWork = remainingOdd.size * graphSize;
-        const MAX_ODD_NODE_WORK = 8_000_000; // real crash: 252 * 102,100 ~= 25.7M
-        const MAX_ODD_NODES_HARD_CAP = 400; // backstop regardless of graph size
+        // The original crash was memory, not CPU: the distance matrix used to
+        // hold a full path per pair (~42,000 multi-mile paths at 206 odd nodes),
+        // which is what actually exhausted the heap. That matrix now holds
+        // weights only and paths are built for the chosen pairs alone, so what
+        // remains is one Dijkstra per odd node — bounded CPU that degrades
+        // gracefully. These limits exist to keep a pathological selection from
+        // tying up a request for minutes, and sit far above real routes:
+        // 500 odd nodes over a 200k-edge network is already an extreme case.
+        const MAX_ODD_NODE_WORK = 100_000_000;
+        const MAX_ODD_NODES_HARD_CAP = 500;
         if (oddNodeWork > MAX_ODD_NODE_WORK || remainingOdd.size > MAX_ODD_NODES_HARD_CAP) {
             throw new Error(`This selection is too large or fragmented to route (${remainingOdd.size} disconnected junctions across a ${graphSize}-edge road network). If you drew more than one area, "Clear Workspace" and try a single, smaller selection -- separate areas that are far apart make routing exponentially more expensive.`);
         }
@@ -2168,15 +2225,17 @@ export class StreetGraph {
         console.log(`${ts()} Matching ${remainingOdd.size} odd nodes using APSP + 2-opt approach...`);
         
         const oddArray = Array.from(remainingOdd);
-        const distMatrix = new Map<string, Map<string, { weight: number, path: any[] }>>();
-        
+        // Weights only — see findAllTargetWeights. Carrying a path per pair here
+        // is what exhausted memory on large selections; the paths for the pairs
+        // actually chosen are reconstructed once the matching is settled.
+        const distMatrix = new Map<string, Map<string, number>>();
+
         // 1. Compute APSP for odd nodes with a mild ridden penalty (see
         // MATCHING_RIDDEN_PENALTY comment) so short ridden connectors are still
         // preferred over long ones, without out-weighing doubling a nearby
         // required road entirely.
         for (const u of oddArray) {
-            const res = this.findAllTargets(u, remainingOdd, undefined, MATCHING_RIDDEN_PENALTY);
-            distMatrix.set(u, res);
+            distMatrix.set(u, this.findAllTargetWeights(u, remainingOdd, MATCHING_RIDDEN_PENALTY));
         }
 
         // 2. Multiple random initial matchings with 2-opt refinement
@@ -2186,21 +2245,21 @@ export class StreetGraph {
             for (let j = i + 1; j < oddArray.length; j++) {
                 const u = oddArray[i];
                 const v = oddArray[j];
-                const res = distMatrix.get(u)?.get(v);
-                if (res) {
-                    allPairs.push({ u, v, weight: res.weight });
+                const weight = distMatrix.get(u)?.get(v);
+                if (weight !== undefined) {
+                    allPairs.push({ u, v, weight });
                 }
             }
         }
 
-        let bestMatching: { u: string, v: string, weight: number, path: any[] }[] | null = null;
+        let bestMatching: { u: string, v: string, weight: number }[] | null = null;
         let bestTotalWeight = Infinity;
 
         // Try greedy + multiple random starts to escape local minima
         const numStartAttempts = Math.min(5, Math.ceil(oddArray.length / 2));
 
         for (let attempt = 0; attempt < numStartAttempts; attempt++) {
-            let currentMatches: { u: string, v: string, weight: number, path: any[] }[] = [];
+            let currentMatches: { u: string, v: string, weight: number }[] = [];
 
             if (attempt === 0) {
                 // First: greedy by edge weight
@@ -2210,12 +2269,7 @@ export class StreetGraph {
                     if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
                         unmatched.delete(pair.u);
                         unmatched.delete(pair.v);
-                        currentMatches.push({
-                            u: pair.u,
-                            v: pair.v,
-                            weight: pair.weight,
-                            path: distMatrix.get(pair.u)!.get(pair.v)!.path
-                        });
+                        currentMatches.push({ u: pair.u, v: pair.v, weight: pair.weight });
                     }
                 }
             } else {
@@ -2226,12 +2280,7 @@ export class StreetGraph {
                     if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
                         unmatched.delete(pair.u);
                         unmatched.delete(pair.v);
-                        currentMatches.push({
-                            u: pair.u,
-                            v: pair.v,
-                            weight: pair.weight,
-                            path: distMatrix.get(pair.u)!.get(pair.v)!.path
-                        });
+                        currentMatches.push({ u: pair.u, v: pair.v, weight: pair.weight });
                     }
                 }
             }
@@ -2250,24 +2299,24 @@ export class StreetGraph {
                         const currentWeight = m1.weight + m2.weight;
 
                         // Option A: Pair (m1.u, m2.u) and (m1.v, m2.v)
-                        const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u)?.weight ?? Infinity;
-                        const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v)?.weight ?? Infinity;
+                        const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u) ?? Infinity;
+                        const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v) ?? Infinity;
                         const sumA = w_u1u2 + w_v1v2;
 
                         // Option B: Pair (m1.u, m2.v) and (m1.v, m2.u)
-                        const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v)?.weight ?? Infinity;
-                        const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u)?.weight ?? Infinity;
+                        const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v) ?? Infinity;
+                        const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u) ?? Infinity;
                         const sumB = w_u1v2 + w_v1u2;
 
                         // Compare and swap if better
                         if (sumA < currentWeight && sumA <= sumB) {
-                            currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2, path: distMatrix.get(m1.u)!.get(m2.u)!.path };
-                            currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2, path: distMatrix.get(m1.v)!.get(m2.v)!.path };
+                            currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2 };
+                            currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2 };
                             improved = true;
                             break;
                         } else if (sumB < currentWeight) {
-                            currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2, path: distMatrix.get(m1.u)!.get(m2.v)!.path };
-                            currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2, path: distMatrix.get(m1.v)!.get(m2.u)!.path };
+                            currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2 };
+                            currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2 };
                             improved = true;
                             break;
                         }
@@ -2283,7 +2332,24 @@ export class StreetGraph {
             }
         }
 
-        const finalMatching = bestMatching || [];
+        // Now that the pairing is settled, reconstruct paths for just these
+        // pairs. Grouped by source so each source costs one Dijkstra regardless
+        // of how many partners it ended up with.
+        const matchedBySource = new Map<string, Set<string>>();
+        for (const m of bestMatching || []) {
+            if (!matchedBySource.has(m.u)) matchedBySource.set(m.u, new Set());
+            matchedBySource.get(m.u)!.add(m.v);
+        }
+        const matchedPaths = new Map<string, any[]>();
+        for (const [u, targets] of matchedBySource) {
+            const res = this.findAllTargets(u, targets, undefined, MATCHING_RIDDEN_PENALTY);
+            for (const [v, { path }] of res) matchedPaths.set(`${u}|${v}`, path);
+        }
+
+        const finalMatching = (bestMatching || []).map(m => ({
+            ...m,
+            path: matchedPaths.get(`${m.u}|${m.v}`) ?? [],
+        }));
         console.log(`${ts()} Matching found with weight ${bestTotalWeight.toFixed(1)} after ${numStartAttempts} attempts.`);
 
         // Detailed match logging — coords help identify where doubled edges are visually

@@ -1316,6 +1316,81 @@ describe('StreetGraph', () => {
             expect(link.data.isAvoided).toBe(false);
         });
     });
+
+    // The odd-node matching step builds an all-pairs distance matrix. It used
+    // to store a full path for every pair, which is what exhausted memory on
+    // large selections (206 odd nodes => ~42,000 multi-mile paths held at
+    // once). It now stores weights only and rebuilds paths for the chosen
+    // pairs, so findAllTargetWeights MUST agree exactly with the weights
+    // findAllTargets reports -- if they ever diverge, the matcher would
+    // optimize against one set of distances and route along another.
+    describe('findAllTargetWeights', () => {
+        function buildTestGraph(): StreetGraph {
+            // A loop with a spur and an alternate longer route, so several
+            // targets have genuinely different shortest-path distances.
+            const mockData: OverpassResponse = {
+                version: 0.6,
+                generator: 'test',
+                osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 0, lon: 0 },
+                    { type: 'node', id: 2, lat: 0, lon: 0.002 },
+                    { type: 'node', id: 3, lat: 0.002, lon: 0.002 },
+                    { type: 'node', id: 4, lat: 0.002, lon: 0 },
+                    { type: 'node', id: 5, lat: 0.002, lon: 0.004 },
+                    { type: 'node', id: 6, lat: 0.004, lon: 0.002 },
+                    { type: 'way', id: 10, nodes: [1, 2], tags: { highway: 'residential' } },
+                    { type: 'way', id: 11, nodes: [2, 3], tags: { highway: 'residential' } },
+                    { type: 'way', id: 12, nodes: [3, 4], tags: { highway: 'residential' } },
+                    { type: 'way', id: 13, nodes: [4, 1], tags: { highway: 'residential' } },
+                    { type: 'way', id: 14, nodes: [3, 5], tags: { highway: 'residential' } },
+                    { type: 'way', id: 15, nodes: [3, 6], tags: { highway: 'residential' } },
+                ],
+            };
+            const g = new StreetGraph();
+            g.buildFromOSM(mockData);
+            return g;
+        }
+
+        test('reports exactly the same weights as findAllTargets, for every source', () => {
+            const g = buildTestGraph();
+            const targets = new Set(['1', '2', '3', '4', '5', '6']);
+
+            for (const source of targets) {
+                const withPaths = g.findAllTargets(source, targets);
+                const weightsOnly = g.findAllTargetWeights(source, targets);
+
+                expect([...weightsOnly.keys()].sort()).toEqual([...withPaths.keys()].sort());
+                for (const [target, { weight }] of withPaths) {
+                    expect(weightsOnly.get(target)).toBeCloseTo(weight, 6);
+                }
+            }
+        });
+
+        test('applies the ridden penalty identically to findAllTargets', () => {
+            const g = buildTestGraph();
+            // Penalise one leg of the loop so the cheaper way around changes.
+            g.graph.getLink('1', '2')!.data.isRidden = true;
+            const targets = new Set(['1', '3']);
+
+            const withPaths = g.findAllTargets('1', targets, undefined, 20);
+            const weightsOnly = g.findAllTargetWeights('1', targets, 20);
+
+            expect(weightsOnly.get('3')).toBeCloseTo(withPaths.get('3')!.weight, 6);
+        });
+
+        test('omits unreachable targets, same as findAllTargets', () => {
+            const g = buildTestGraph();
+            const targets = new Set(['3', '999']);
+
+            const withPaths = g.findAllTargets('1', targets);
+            const weightsOnly = g.findAllTargetWeights('1', targets);
+
+            expect(weightsOnly.has('999')).toBe(false);
+            expect(withPaths.has('999')).toBe(false);
+            expect(weightsOnly.has('3')).toBe(true);
+        });
+    });
 });
 
 describe('Point-in-Polygon Functions', () => {
