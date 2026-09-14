@@ -1,4 +1,4 @@
-import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap, filterRiddenRoadsToBbox } from './graph';
+import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap, filterRiddenRoadsToBbox, graphCacheSize } from './graph';
 import { isRoutableHighway } from './highwayFilter';
 import { OverpassResponse } from './types';
 
@@ -1324,6 +1324,48 @@ describe('StreetGraph', () => {
     // pairs, so findAllTargetWeights MUST agree exactly with the weights
     // findAllTargets reports -- if they ever diverge, the matcher would
     // optimize against one set of distances and route along another.
+    // A cached StreetGraph retains every edge and spatial index it built, so an
+    // unbounded cache is the process's largest memory retainer -- distinct
+    // bboxes, routing options and ridden-road revisions each pin another full
+    // graph for an hour. Verifies the cache evicts instead of growing forever,
+    // and that a graph still in use isn't the one thrown away.
+    describe('getCachedGraph eviction', () => {
+        const graphFor = (lat: number): OverpassResponse => ({
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat, lon: 0 },
+                { type: 'node', id: 2, lat, lon: 0.001 },
+                { type: 'way', id: 100, nodes: [1, 2], tags: { highway: 'residential' } },
+            ],
+        });
+        const bboxFor = (lat: number) => ({ south: lat - 0.01, north: lat + 0.01, west: -0.01, east: 0.01 });
+
+        test('keeps the cache bounded no matter how many distinct areas are routed', () => {
+            for (let i = 0; i < 40; i++) {
+                StreetGraph.getCachedGraph(bboxFor(10 + i), graphFor(10 + i));
+            }
+            expect(graphCacheSize()).toBeLessThanOrEqual(4);
+        });
+
+        test('a repeatedly-used graph survives eviction while cold ones are dropped', () => {
+            const hotBbox = bboxFor(50);
+            const hotData = graphFor(50);
+            const hot = StreetGraph.getCachedGraph(hotBbox, hotData);
+
+            // Route several other areas, touching the hot one in between so it
+            // stays the most recently used entry.
+            for (let i = 0; i < 20; i++) {
+                StreetGraph.getCachedGraph(bboxFor(60 + i), graphFor(60 + i));
+                StreetGraph.getCachedGraph(hotBbox, hotData);
+            }
+
+            // Same instance back => served from cache, never evicted and rebuilt.
+            expect(StreetGraph.getCachedGraph(hotBbox, hotData)).toBe(hot);
+        });
+    });
+
     describe('findAllTargetWeights', () => {
         function buildTestGraph(): StreetGraph {
             // A loop with a spur and an alternate longer route, so several

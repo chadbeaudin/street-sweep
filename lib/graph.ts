@@ -49,6 +49,33 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const GRAPH_CACHE = new Map<string, { graph: StreetGraph; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
+// A cached StreetGraph is big — a large selection holds ~100k edges plus the
+// node/edge spatial indices built over them — and entries live for an hour.
+// Left unbounded this is the process's largest retainer: every distinct bbox,
+// routing-option set and ridden-roads revision a user touches pins another
+// full graph, which is enough to exhaust a 1GB VM without any single request
+// being unreasonable. Keep only the few most recently used, which is all the
+// /api/step, /api/snap and /api/path reuse this cache exists for needs.
+const GRAPH_CACHE_MAX_ENTRIES = 4;
+
+// `timestamp` is the graph's original build time, not its last use: passing it
+// through on a cache hit keeps the TTL measured from when the data was fetched,
+// so refreshing recency for eviction can't keep a stale graph alive forever.
+function setCachedGraph(key: string, graph: StreetGraph, timestamp: number = Date.now()) {
+    GRAPH_CACHE.delete(key);
+    GRAPH_CACHE.set(key, { graph, timestamp });
+    while (GRAPH_CACHE.size > GRAPH_CACHE_MAX_ENTRIES) {
+        const oldestKey = GRAPH_CACHE.keys().next().value;
+        if (oldestKey === undefined) break;
+        GRAPH_CACHE.delete(oldestKey);
+    }
+}
+
+// Exposed for tests — lets a test assert eviction without reaching into module state.
+export function graphCacheSize(): number {
+    return GRAPH_CACHE.size;
+}
+
 // Default penalty for previously-ridden roads. Can be overridden per-request.
 const DEFAULT_RIDDEN_PENALTY = 15;
 // Odd-node (T-join) matching penalty for ridden roads. Deliberately much lower than
@@ -350,13 +377,16 @@ export class StreetGraph {
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {
             console.log(`${ts()} Returning cached StreetGraph for ${key}`);
+            // Re-insert so this counts as the most recently used entry and the
+            // eviction below drops a genuinely cold graph instead of this one.
+            setCachedGraph(key, cached.graph, cached.timestamp);
             return cached.graph;
         }
         const newGraph = new StreetGraph();
         newGraph.buildFromOSM(data, riddenRoads, options);
         // Don't cache empty graphs — OSM data may have been transiently unavailable
         if (newGraph.graph.getNodesCount() > 0) {
-            GRAPH_CACHE.set(key, { graph: newGraph, timestamp: now });
+            setCachedGraph(key, newGraph);
         }
         return newGraph;
     }
