@@ -159,6 +159,8 @@ export default function Home() {
 
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
+    const stravaCredentialsRef = useRef<any>(undefined);
+    useEffect(() => { stravaCredentialsRef.current = stravaCredentials; }, [stravaCredentials]);
     const [stravaError, setStravaError] = useState<string | null>(null);
     const [stravaRefreshKey, setStravaRefreshKey] = useState(0);
     const [showStats, setShowStats] = useState(false);
@@ -339,6 +341,41 @@ export default function Home() {
             }
         }
     }, []);
+
+    // Bridges NextAuth sign-in to the existing (separate, unchanged) Strava
+    // connect flow: a Strava sign-in already granted activity:read (lib/auth.ts),
+    // so it can populate the same `stravaCredentials` the manual "Connect to
+    // Strava" flow has always produced -- everything downstream (activity sync,
+    // ridden-roads) just works unchanged. Runs once per distinct athleteId (not
+    // on every render), and reverses itself on sign-out. Skipped entirely if the
+    // user already has their own custom Strava app credentials configured
+    // (advancedStravaIntegration power users) -- session sign-in shouldn't
+    // silently override a deliberate manual setup.
+    const syncedAthleteIdRef = useRef<string | null>(null);
+    useEffect(() => {
+        const athleteId = (session?.user as any)?.athleteId as string | undefined;
+        if (athleteId) {
+            if (syncedAthleteIdRef.current === athleteId) return;
+            if (stravaCredentialsRef.current?.clientId || stravaCredentialsRef.current?.clientSecret) return;
+            syncedAthleteIdRef.current = athleteId;
+            (async () => {
+                try {
+                    const res = await fetch('/api/auth/strava-credentials');
+                    if (!res.ok) return;
+                    const { refreshToken } = await res.json();
+                    const creds = { refreshToken };
+                    setStravaCredentials(creds);
+                    try { localStorage.setItem('strava_settings', JSON.stringify(creds)); } catch { /* ignore */ }
+                } catch { /* ignore -- falls back to whatever stravaCredentials already had */ }
+            })();
+        } else if (syncedAthleteIdRef.current) {
+            // Was session-connected, now signed out -- disconnect Strava too,
+            // since for these users the account *is* the Strava connection.
+            syncedAthleteIdRef.current = null;
+            setStravaCredentials({});
+            try { localStorage.removeItem('strava_settings'); } catch { /* ignore */ }
+        }
+    }, [session]);
 
     useEffect(() => {
         // Don't fetch until we've at least tried to load from localStorage
@@ -1527,17 +1564,23 @@ export default function Home() {
 
 
                 <div className="hidden md:flex items-center gap-3">
-                    <StravaHeaderButton
-                        isConnected={!!stravaCredentials?.refreshToken}
-                        stravaError={stravaError}
-                        isLoading={isStravaLoading}
-                        onClick={() => setShowStravaSettings(true)}
-                        onRefresh={() => {
-                            clearCachedRoads();
-                            clearCachedPrecomputedRoads();
-                            setStravaRefreshKey(k => k + 1);
-                        }}
-                    />
+                    {/* Redundant once signed in via Strava (#87) -- that login already
+                        grants activity:read and drives stravaCredentials itself (see the
+                        session-sync effect above), so a separate connect button here would
+                        just be a second control for the same thing. */}
+                    {!(session?.user as any)?.athleteId && (
+                        <StravaHeaderButton
+                            isConnected={!!stravaCredentials?.refreshToken}
+                            stravaError={stravaError}
+                            isLoading={isStravaLoading}
+                            onClick={() => setShowStravaSettings(true)}
+                            onRefresh={() => {
+                                clearCachedRoads();
+                                clearCachedPrecomputedRoads();
+                                setStravaRefreshKey(k => k + 1);
+                            }}
+                        />
+                    )}
 
                     <RwgpsHeaderButton
                         isConnected={!!rwgpsCredentials?.accessToken}
@@ -1880,17 +1923,19 @@ export default function Home() {
                 </div>
 
                 <div className="flex md:hidden items-center gap-2">
-                    <StravaHeaderButton
-                        isConnected={!!stravaCredentials?.refreshToken}
-                        stravaError={stravaError}
-                        isLoading={isStravaLoading}
-                        onClick={() => setShowStravaSettings(true)}
-                        onRefresh={() => {
-                            clearCachedRoads();
-                            clearCachedPrecomputedRoads();
-                            setStravaRefreshKey(k => k + 1);
-                        }}
-                    />
+                    {!(session?.user as any)?.athleteId && (
+                        <StravaHeaderButton
+                            isConnected={!!stravaCredentials?.refreshToken}
+                            stravaError={stravaError}
+                            isLoading={isStravaLoading}
+                            onClick={() => setShowStravaSettings(true)}
+                            onRefresh={() => {
+                                clearCachedRoads();
+                                clearCachedPrecomputedRoads();
+                                setStravaRefreshKey(k => k + 1);
+                            }}
+                        />
+                    )}
 
                     <div className="relative">
                         <button
@@ -2103,8 +2148,11 @@ export default function Home() {
                     tour's spotlighted buttons sitting on top of this gate's own opaque
                     backdrop-blur instead of the live map. Showing the tour first (it already
                     auto-opens for first-time visitors) means it closes into this gate, not
-                    the other way around. */}
-                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && !showHowTo && (
+                    the other way around. Also suppressed for a Strava-signed-in user whose
+                    stravaCredentials hasn't finished syncing from the session yet (#87) --
+                    they're already connected, just waiting a beat on the bridge fetch, so
+                    flashing "connect Strava" at them would be wrong and confusing. */}
+                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && !showHowTo && !(session?.user as any)?.athleteId && (
                     <div className="absolute inset-0 z-[1100] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg text-center border border-gray-100 animate-in fade-in zoom-in duration-300 relative">
                             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100 mx-auto mb-6">

@@ -14,6 +14,14 @@ if (process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET) {
     providers.push(StravaProviderBase({
         clientId: process.env.STRAVA_CLIENT_ID,
         clientSecret: process.env.STRAVA_CLIENT_SECRET,
+        // Matches the scope already requested by the existing manual "Connect
+        // to Strava" flow (app/api/strava/auth/route.ts) -- activity:read, not
+        // just the base provider's default `read` (profile-only). This lets a
+        // Strava sign-in double as activity access: the resulting Account's
+        // refresh_token is directly usable by the existing activity-sync code
+        // (lib/strava.ts) without a separate connect step. See
+        // app/api/auth/strava-credentials/route.ts for the bridge.
+        authorization: { params: { scope: 'read,activity:read' } },
         // Strava's token-exchange response is non-standard: it embeds the full
         // athlete profile inline as an extra `athlete` field alongside the real
         // OAuth tokens. NextAuth passes the whole token response through to the
