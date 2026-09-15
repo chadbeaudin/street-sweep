@@ -1,14 +1,21 @@
 import { NextResponse } from 'next/server';
 import { GarminConnect } from 'garmin-connect';
 import { haversineM } from '@/lib/geometry';
+import { z } from 'zod';
+import { Polyline, parseBody } from '@/lib/validation';
+
+const Body = z.object({
+    route: Polyline.min(1),
+    name: z.string().max(200).optional().nullable(),
+    email: z.string().min(1).max(320),
+    password: z.string().min(1).max(500),
+});
 
 export async function POST(req: Request) {
     try {
-        const { route, name, email, password } = await req.json();
-
-        if (!route || !email || !password) {
-            return NextResponse.json({ error: 'Missing required data' }, { status: 400 });
-        }
+        const parsed = await parseBody(req, Body);
+        if ('error' in parsed) return parsed.error;
+        const { route, name, email, password } = parsed.data;
 
         const GCClient = new GarminConnect({ username: email, password });
         await GCClient.login();

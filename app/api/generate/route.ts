@@ -4,12 +4,34 @@ import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
 import type { BoundingBox } from '@/lib/types';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
+import { z } from 'zod';
+import { BBox, Polyline, PolylineList, LatLon } from '@/lib/validation';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
+// Lighter validation pass (security review finding #7): this route has many
+// legacy/optional fields whose exact shape has grown organically, so rather
+// than fully modeling every field, this only enforces a real bbox shape and
+// bounds the array-valued fields against resource exhaustion. Fields not
+// covered here keep their existing loose/legacy handling below.
+const GenerateBody = z.object({
+    bbox: BBox,
+    riddenRoads: PolylineList.optional().nullable(),
+    selectedPoints: z.array(LatLon).max(2_000).optional().nullable(),
+    manualRoute: Polyline.optional().nullable(),
+    selectionBoxes: z.array(BBox).max(500).optional().nullable(),
+    selectionPolygons: z.array(z.array(z.tuple([z.number().finite(), z.number().finite()])).max(20_000)).max(500).optional().nullable(),
+}).passthrough();
+
 export async function POST(request: Request) {
     try {
-        const { bbox, riddenRoads, selectedPoints, startPoint: persistentStart, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, selectionPolygons: selectionPolygonsRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = await request.json();
+        const json = await request.json();
+        const check = GenerateBody.safeParse(json);
+        if (!check.success) {
+            return NextResponse.json({ error: 'Invalid request body', details: check.error.flatten() }, { status: 400 });
+        }
+
+        const { bbox, riddenRoads, selectedPoints, startPoint: persistentStart, manualRoute, selectionBox, selectionBoxes: selectionBoxesRaw, selectionPolygons: selectionPolygonsRaw, routingOptions, preAreaPointCount, exitRoute, approachRoute } = json;
 
         // Backward compatibility: Convert single selectionBox to array if present
         const selectionBoxes = selectionBoxesRaw || (selectionBox ? [selectionBox] : null);

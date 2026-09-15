@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
+import { z } from 'zod';
+import { LatLon, BBox, parseBody } from '@/lib/validation';
+
+const Body = z.object({ point: LatLon, bbox: BBox });
 
 export async function POST(req: NextRequest) {
     try {
-        const { point, bbox } = await req.json();
-
-        if (!point || !bbox) {
-            return NextResponse.json({ error: 'Missing point or bbox' }, { status: 400 });
-        }
+        const parsed = await parseBody(req, Body);
+        if ('error' in parsed) return parsed.error;
+        const { point, bbox } = parsed.data;
 
         const osmData = await fetchOSMData(bbox);
         const graph = StreetGraph.getCachedGraph(bbox, osmData);

@@ -1,14 +1,16 @@
 import { NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
+import { z } from 'zod';
+import { LatLon, BBox, parseBody } from '@/lib/validation';
+
+const Body = z.object({ start: LatLon, end: LatLon, bbox: BBox });
 
 export async function POST(request: Request) {
     try {
-        const { start, end, bbox } = await request.json();
-
-        if (!start || !end || !bbox) {
-            return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
-        }
+        const parsed = await parseBody(request, Body);
+        if ('error' in parsed) return parsed.error;
+        const { start, end, bbox } = parsed.data;
 
         const osmData = await fetchOSMData(bbox);
         const graph = StreetGraph.getCachedGraph(bbox, osmData);

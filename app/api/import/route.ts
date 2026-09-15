@@ -4,6 +4,15 @@ import { parseGpxTrack, GpxCoord as Coord } from '@/lib/gpx';
 
 const SEMICIRCLES_TO_DEG = 180 / Math.pow(2, 31);
 
+// A real GPX/TCX/FIT route file -- even a multi-day, fully-elevation-annotated
+// one -- is realistically a few hundred KB to a few MB. No limit existed
+// before this, so an arbitrarily large upload could be parsed in full
+// (buffered into memory, regex-scanned or FIT-decoded) before any of the
+// coordinate-count/shape checks below ever ran -- a straightforward
+// resource-exhaustion vector, worse on a memory-constrained machine (see the
+// prod OOM fixes elsewhere in this codebase).
+const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024; // 20MB
+
 function parseFit(buffer: Buffer): Coord[] {
     const { Decoder, Stream } = require('@garmin/fitsdk'); // eslint-disable-line
     const stream = Stream.fromBuffer(buffer);
@@ -49,6 +58,9 @@ export async function POST(request: Request) {
         const file = formData.get('file') as File | null;
         if (!file) {
             return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+        }
+        if (file.size > MAX_IMPORT_FILE_BYTES) {
+            return NextResponse.json({ error: `File too large (max ${MAX_IMPORT_FILE_BYTES / (1024 * 1024)}MB)` }, { status: 413 });
         }
 
         const name = file.name.toLowerCase();
