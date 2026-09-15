@@ -28,8 +28,10 @@ describe('validation primitives', () => {
         expect(Polyline.safeParse(tooMany).success).toBe(false);
     });
 
-    it('PolylineList caps at 2,000 polylines', () => {
-        const tooMany = Array.from({ length: 2_001 }, () => [[0, 0]]);
+    it('PolylineList caps at 50,000 polylines', () => {
+        const ok = Array.from({ length: 50_000 }, () => [[0, 0]]);
+        const tooMany = Array.from({ length: 50_001 }, () => [[0, 0]]);
+        expect(PolylineList.safeParse(ok).success).toBe(true);
         expect(PolylineList.safeParse(tooMany).success).toBe(false);
     });
 });

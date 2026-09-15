@@ -3,6 +3,7 @@ import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
 import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
 import type { BoundingBox } from '@/lib/types';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
+import { haversineM } from '@/lib/geometry';
 import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
 import { z } from 'zod';
 import { BBox, Polyline, PolylineList, LatLon } from '@/lib/validation';
@@ -117,16 +118,34 @@ export async function POST(request: Request) {
         // points a long distance apart create a bbox that can overwhelm Overpass
         // (times out on every mirror). Fail fast with a specific, accurate message
         // instead of a multi-minute mirror-timeout cascade ending in a vague one.
-        // Capped at the same 0.5° bbox limit lib/overpass.ts already enforces as a
-        // hard ceiling, so this doesn't reject anything that could succeed anyway.
+        //
+        // This must be based on the points/manualRoute extent alone, NOT bufferedBbox
+        // (which also folds in the client's current map-viewport bbox) -- otherwise a
+        // routing request between two nearby points fails just because the user
+        // happened to be zoomed out, even though the actual OSM fetch below only
+        // needs the small area around the points. Real-world distance (haversine),
+        // not raw degree spans, since a degree of longitude shrinks with latitude --
+        // comparing raw degrees on both axes made the cap effectively tighter than
+        // intended (and than lib/overpass.ts's own ~55km bbox ceiling) anywhere away
+        // from the equator.
         const hasDrawnArea = (selectionBoxes && selectionBoxes.length > 0) || (selectionPolygons && selectionPolygons.length > 0);
         if (!hasDrawnArea) {
-            const latSpan = bufferedBbox.north - bufferedBbox.south;
-            const lonSpan = bufferedBbox.east - bufferedBbox.west;
-            const MAX_POINT_ROUTE_SPAN_DEG = 0.5; // ~55km — matches lib/overpass.ts's hard cap
-            if (latSpan > MAX_POINT_ROUTE_SPAN_DEG || lonSpan > MAX_POINT_ROUTE_SPAN_DEG) {
-                console.warn(`${ts()} Point-to-point span too large (${latSpan.toFixed(3)}x${lonSpan.toFixed(3)}), failing fast.`);
-                return NextResponse.json({ error: 'Those points are too far apart to route directly — try breaking the route into shorter segments.' }, { status: 400 });
+            let pointsMinLat = Infinity, pointsMaxLat = -Infinity, pointsMinLon = Infinity, pointsMaxLon = -Infinity;
+            (selectedPoints || []).forEach((p: any) => {
+                pointsMinLat = Math.min(pointsMinLat, p.lat); pointsMaxLat = Math.max(pointsMaxLat, p.lat);
+                pointsMinLon = Math.min(pointsMinLon, p.lon); pointsMaxLon = Math.max(pointsMaxLon, p.lon);
+            });
+            (manualRoute || []).forEach((p: [number, number]) => {
+                pointsMinLat = Math.min(pointsMinLat, p[1]); pointsMaxLat = Math.max(pointsMaxLat, p[1]);
+                pointsMinLon = Math.min(pointsMinLon, p[0]); pointsMaxLon = Math.max(pointsMaxLon, p[0]);
+            });
+            const MAX_POINT_ROUTE_SPAN_M = 55_000; // ~55km — matches lib/overpass.ts's bbox ceiling
+            if (Number.isFinite(pointsMinLat)) {
+                const spanM = haversineM(pointsMinLat, pointsMinLon, pointsMaxLat, pointsMaxLon);
+                if (spanM > MAX_POINT_ROUTE_SPAN_M) {
+                    console.warn(`${ts()} Point-to-point span too large (${(spanM / 1000).toFixed(1)}km), failing fast.`);
+                    return NextResponse.json({ error: 'Those points are too far apart to route directly — try breaking the route into shorter segments.' }, { status: 400 });
+                }
             }
         }
 

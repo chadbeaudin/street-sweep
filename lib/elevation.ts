@@ -37,7 +37,11 @@ const OpenMeteoProvider: ElevationProvider = {
 
 const SelfHostedOpenTopoProvider: ElevationProvider = {
     name: 'Self-hosted Open Topo Data (Copernicus 90m)',
-    batchSize: 500, // our own server — not the public API's 100-location cap
+    // The server enforces its own max_locations regardless of who's asking
+    // (confirmed: 261 locations → "Too many locations provided (261), the
+    // limit is 100") — self-hosted only buys us no rate limiting, not a
+    // bigger per-request cap.
+    batchSize: 100,
     selfHosted: true,
     async fetch(lats, lons) {
         const locations = lats.map((lat, i) => `${lat},${lons[i]}`).join('|');

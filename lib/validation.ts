@@ -27,7 +27,12 @@ export const BBox = z.object({
 // 2-3 finite numbers.
 export const CoordTuple = z.array(z.number().finite()).min(2).max(3);
 export const Polyline = z.array(CoordTuple).max(20_000);
-export const PolylineList = z.array(Polyline).max(2_000);
+// riddenRoads/precomputedRidden is one entry per matched ridden OSM segment
+// (lib/riddenRoads.ts), not per activity -- a rider with hundreds of activities
+// over a wide area can easily have tens of thousands of distinct ridden
+// segments within a single request's bbox. 2,000 was tuned for resource
+// exhaustion, not real usage, and rejected legitimate requests.
+export const PolylineList = z.array(Polyline).max(50_000);
 
 // routingOptions is an evolving, loosely-typed options bag (avoid toggles,
 // penalties, user-marked avoided roads, etc.) -- deliberately kept
