@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { decryptToken } from '@/lib/tokenCrypto';
 import { NextResponse } from 'next/server';
 
 // Bridges the new NextAuth session to the existing (separate, unchanged)
@@ -22,5 +23,12 @@ export async function GET() {
         return NextResponse.json({ error: 'No linked Strava account' }, { status: 404 });
     }
 
-    return NextResponse.json({ refreshToken: account.refresh_token });
+    let refreshToken: string;
+    try {
+        refreshToken = decryptToken(account.refresh_token);
+    } catch {
+        return NextResponse.json({ error: 'Stored Strava token could not be decrypted' }, { status: 500 });
+    }
+
+    return NextResponse.json({ refreshToken });
 }

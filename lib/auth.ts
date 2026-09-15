@@ -1,7 +1,9 @@
 import type { NextAuthOptions } from 'next-auth';
+import type { AdapterAccount } from 'next-auth/adapters';
 import StravaProviderBase from 'next-auth/providers/strava';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
+import { encryptToken } from './tokenCrypto';
 
 const providers: NextAuthOptions['providers'] = [];
 
@@ -78,8 +80,26 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     }));
 }
 
+// Account.access_token/refresh_token were stored in plaintext -- encrypt
+// them (see lib/tokenCrypto.ts) before the base Prisma adapter's
+// linkAccount writes them, rather than replacing the adapter wholesale.
+// Decryption happens at the one place these are read back out:
+// app/api/auth/strava-credentials/route.ts.
+const baseAdapter = PrismaAdapter(prisma) as NextAuthOptions['adapter'];
+const adapter: NextAuthOptions['adapter'] = {
+    ...baseAdapter,
+    async linkAccount(account: AdapterAccount) {
+        const toStore = {
+            ...account,
+            access_token: account.access_token ? encryptToken(account.access_token as string) : account.access_token,
+            refresh_token: account.refresh_token ? encryptToken(account.refresh_token as string) : account.refresh_token,
+        };
+        return baseAdapter!.linkAccount!(toStore);
+    },
+};
+
 export const authOptions: NextAuthOptions = {
-    adapter: PrismaAdapter(prisma) as NextAuthOptions['adapter'],
+    adapter,
     providers,
     session: { strategy: 'database' },
     callbacks: {
