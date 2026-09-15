@@ -13,8 +13,14 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 interface ElevationProvider {
     name: string;
     batchSize: number;
+    selfHosted?: boolean; // skips the inter-batch throttling delay meant for shared public APIs
     fetch(lats: string[], lons: string[]): Promise<number[]>;
 }
+
+// Self-hosted Open Topo Data instance (no rate limits) — see lib/overpass.ts
+// for the same OVERPASS_URL pattern. Only serves copernicus90 (90m); falls
+// through to Open-Meteo if the box is unreachable.
+const OPEN_TOPO_URL = process.env.OPEN_TOPO_URL || 'https://opentopodata.bigtimber.cloud';
 
 const OpenMeteoProvider: ElevationProvider = {
     name: 'Open-Meteo',
@@ -29,34 +35,13 @@ const OpenMeteoProvider: ElevationProvider = {
     }
 };
 
-// USGS 3DEP/NED, 10m resolution — far more accurate than SRTM's 30m integer-meter
-// grid for the (US-only) routes this app targets. Verified against a real route's
-// RWGPS numbers (728ft gain): SRTM30m naive-summed to 1263ft; NED10m naive-summed
-// to 847ft, within ~30ft of RWGPS after the same hysteresis pass. Falls through to
-// SRTM30m when a point falls outside NED's US coverage (Open Topo Data returns
-// null elevations for out-of-bounds points rather than an error).
-const NED10mProvider: ElevationProvider = {
-    name: 'USGS NED 10m',
-    batchSize: 100, // Public API limit
+const SelfHostedOpenTopoProvider: ElevationProvider = {
+    name: 'Self-hosted Open Topo Data (Copernicus 90m)',
+    batchSize: 500, // our own server — not the public API's 100-location cap
+    selfHosted: true,
     async fetch(lats, lons) {
         const locations = lats.map((lat, i) => `${lat},${lons[i]}`).join('|');
-        const url = `https://api.opentopodata.org/v1/ned10m?locations=${locations}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!data.results) throw new Error('Malformed response');
-        const elevations = data.results.map((r: any) => r.elevation);
-        if (elevations.some((e: number | null) => e === null)) throw new Error('Point outside NED10m coverage');
-        return elevations;
-    }
-};
-
-const OpenTopoDataProvider: ElevationProvider = {
-    name: 'Open Topo Data (SRTM 30m)',
-    batchSize: 100, // Public API limit
-    async fetch(lats, lons) {
-        const locations = lats.map((lat, i) => `${lat},${lons[i]}`).join('|');
-        const url = `https://api.opentopodata.org/v1/srtm30m?locations=${locations}`;
+        const url = `${OPEN_TOPO_URL}/v1/copernicus90?locations=${locations}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -65,7 +50,7 @@ const OpenTopoDataProvider: ElevationProvider = {
     }
 };
 
-const PROVIDERS = [NED10mProvider, OpenTopoDataProvider, OpenMeteoProvider];
+const PROVIDERS = [SelfHostedOpenTopoProvider, OpenMeteoProvider];
 
 /**
  * Fetches elevation data for a list of coordinates using multiple fallback providers.
@@ -135,7 +120,7 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
                     throw new Error(`Failed to fetch current batch from ${provider.name}`);
                 }
 
-                if (i + provider.batchSize < sampledCoords.length) {
+                if (!provider.selfHosted && i + provider.batchSize < sampledCoords.length) {
                     await delay(500);
                 }
             }

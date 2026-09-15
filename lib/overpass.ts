@@ -3,9 +3,9 @@ import { isRoutableHighway } from './highwayFilter';
 import { prisma } from './prisma';
 import { readDiskCache, writeDiskCache } from './osmDiskCache';
 
-// Self-hosted Overpass first (no rate limits), public mirrors as fallback for
-// areas outside the local extract. Set OVERPASS_URL to the /api/interpreter
-// endpoint of a self-hosted instance (e.g. via Cloudflare Tunnel).
+// Self-hosted Overpass first (no rate limits, worldwide coverage via Clone Mode),
+// public mirrors as fallback if it's ever unreachable. Set OVERPASS_URL to the
+// /api/interpreter endpoint of a self-hosted instance (e.g. via Cloudflare Tunnel).
 const OVERPASS_ENDPOINTS = [
   ...(process.env.OVERPASS_URL ? [process.env.OVERPASS_URL] : []),
   'https://lz4.overpass-api.de/api/interpreter',
@@ -49,22 +49,37 @@ function setOsmCache(key: string, data: OverpassResponse) {
   }
 }
 
-// Overpass mirrors allow only ~2 query slots per IP; firing more concurrent
-// requests queues them server-side until our client timeout aborts them.
-const MAX_CONCURRENT_FETCHES = 2;
-let activeFetches = 0;
-const fetchWaiters: (() => void)[] = [];
-async function acquireFetchSlot(): Promise<void> {
-    if (activeFetches < MAX_CONCURRENT_FETCHES) {
-        activeFetches++;
-        return;
+// Public Overpass mirrors allow only ~2 query slots per IP; firing more concurrent
+// requests queues them server-side until our client timeout aborts them. Our
+// self-hosted instance (OVERPASS_URL) has no such limit and no other tenants, so
+// it gets its own much larger pool — otherwise RiddenRoads' ~1750-tile refresh
+// serializes through the same 2-slot queue as interactive map requests.
+const PUBLIC_MAX_CONCURRENT_FETCHES = 2;
+const SELF_HOSTED_MAX_CONCURRENT_FETCHES = 20;
+
+class Semaphore {
+  private active = 0;
+  private readonly waiters: (() => void)[] = [];
+  constructor(private readonly max: number) {}
+  async acquire(): Promise<void> {
+    if (this.active < this.max) {
+      this.active++;
+      return;
     }
-    await new Promise<void>(resolve => fetchWaiters.push(resolve));
-    activeFetches++;
+    await new Promise<void>(resolve => this.waiters.push(resolve));
+    this.active++;
+  }
+  release(): void {
+    this.active--;
+    this.waiters.shift()?.();
+  }
 }
-function releaseFetchSlot(): void {
-    activeFetches--;
-    fetchWaiters.shift()?.();
+
+const publicFetchSlots = new Semaphore(PUBLIC_MAX_CONCURRENT_FETCHES);
+const selfHostedFetchSlots = new Semaphore(SELF_HOSTED_MAX_CONCURRENT_FETCHES);
+
+function slotsFor(endpoint: string): Semaphore {
+  return endpoint === process.env.OVERPASS_URL ? selfHostedFetchSlots : publicFetchSlots;
 }
 
 // Circuit breaker: skip mirrors that failed recently
@@ -453,7 +468,6 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
     let lastError: Error | null = null;
     const maxRetries = 1; // One pass through all mirrors
 
-    await acquireFetchSlot();
     try {
       for (let attempt = 0; attempt < maxRetries; attempt++) {
         for (const endpoint of OVERPASS_ENDPOINTS) {
@@ -461,6 +475,8 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
             console.log(`${ts()} Skipping ${endpoint} (circuit open)`);
             continue;
           }
+          const slots = slotsFor(endpoint);
+          await slots.acquire();
           try {
             console.log(`${ts()} Fetching OSM data from ${endpoint}...`);
             const controller = new AbortController();
@@ -521,6 +537,8 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
             // Timeouts (AbortError) mean the endpoint is slow/overloaded — use full TTL
             recordFailure(endpoint, false);
             lastError = error;
+          } finally {
+            slots.release();
           }
         }
       }
@@ -543,7 +561,6 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
         elements: []
       };
     } finally {
-      releaseFetchSlot();
       IN_FLIGHT_REQUESTS.delete(cacheKey);
     }
   })();
