@@ -2499,7 +2499,13 @@ export default function Home() {
 
                 <HowToDialog isOpen={showHowTo} onClose={closeHowTo} activityMode={activityMode} />
 
-                {showActivityModePrompt && (
+                {/* Suppressed while the how-to tour is open -- this gate's own
+                    backdrop-blur otherwise sits between the tour's spotlight
+                    overlay and the page, blurring whatever the tour is
+                    highlighting (see the Strava-connect gate above for the
+                    same pattern). It reappears once the tour closes if the
+                    user still hasn't chosen a mode. */}
+                {showActivityModePrompt && !showHowTo && (
                     <div className="fixed inset-0 z-[2100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center">
                             <h2 className="text-lg font-bold text-gray-900 mb-2">What are you using StreetSweep for?</h2>
