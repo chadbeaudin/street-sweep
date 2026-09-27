@@ -18,6 +18,25 @@ const MIN_COVERED_M = 11;    // min traversed length for a segment to count (kil
 const STEP_M = 12;           // densify stride so sparse GPS points don't skip segments
 const GRID = 0.005;          // ~500m spatial cells
 
+// Mirrors checkProximity's bearing gate in lib/graph.ts: proximity alone let a GPS
+// point on a main road match a short dead-end spur or cross-street segment that
+// happened to sit within TOLERANCE_M, even though the rider's actual travel
+// direction there ran along the main road, not the spur -- rendering a short
+// perpendicular "ridden" tick that was never actually ridden. Close matches skip
+// the check (turns/doglegs near intersections legitimately have odd local
+// bearings); only the borderline outer band, where a perpendicular street is most
+// likely to falsely qualify, gets filtered.
+const BEARING_CHECK_DISTANCE_M = 20;
+const MAX_BEARING_DIFF_DEG = 85;
+
+function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    const y = Math.sin(Δλ) * Math.cos(φ2);
+    const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
 // riddenRoads/precomputedRidden held client-side is the rider's entire ride
 // history (see app/page.tsx's stravaRoadsRef), not scoped to what's on screen.
 // Sending it whole in every /api/step or /api/generate request body means
@@ -82,7 +101,7 @@ export function dedupeRiddenRoads(
     };
 
     const coverage = new Map<string, { minT: number; maxT: number; lenM: number }>();
-    const markPoint = (gLat: number, gLon: number) => {
+    const markPoint = (gLat: number, gLon: number, travelBearing: number) => {
         const cand = segGrid.get(cellKey(gLat, gLon));
         if (!cand) return;
         const mLon = M_PER_DEG_LAT * Math.cos(gLat * Math.PI / 180);
@@ -93,6 +112,11 @@ export function dedupeRiddenRoads(
             const road = roads[r];
             const { dist, t, lenM } = ptSegProj(gLat, gLon, road[s][0], road[s][1], road[s + 1][0], road[s + 1][1], mLon);
             if (dist > TOLERANCE_M) continue;
+            if (dist >= BEARING_CHECK_DISTANCE_M) {
+                const segBearing = bearingDeg(road[s][0], road[s][1], road[s + 1][0], road[s + 1][1]) % 180;
+                const diff = Math.abs(travelBearing % 180 - segBearing);
+                if (Math.min(diff, 180 - diff) > MAX_BEARING_DIFF_DEG) continue;
+            }
             if (!existing) coverage.set(key, { minT: t, maxT: t, lenM });
             else { if (t < existing.minT) existing.minT = t; if (t > existing.maxT) existing.maxT = t; }
         }
@@ -101,7 +125,16 @@ export function dedupeRiddenRoads(
     for (const activity of riddenRoads) {
         for (let i = 0; i < activity.length; i++) {
             const [la1, lo1] = activity[i];
-            markPoint(la1, lo1);
+            // Local travel bearing: out of this point where possible, else into it
+            // (the trace's final point) -- used to reject a point matching a nearby
+            // street it never actually turned onto.
+            let travelBearing = 0;
+            if (i + 1 < activity.length) {
+                travelBearing = bearingDeg(la1, lo1, activity[i + 1][0], activity[i + 1][1]);
+            } else if (i > 0) {
+                travelBearing = bearingDeg(activity[i - 1][0], activity[i - 1][1], la1, lo1);
+            }
+            markPoint(la1, lo1, travelBearing);
             if (i + 1 < activity.length) {
                 const [la2, lo2] = activity[i + 1];
                 const mLon = M_PER_DEG_LAT * Math.cos(la1 * Math.PI / 180);
@@ -109,7 +142,7 @@ export function dedupeRiddenRoads(
                 const steps = Math.floor(dM / STEP_M);
                 for (let k = 1; k < steps; k++) {
                     const t = k / steps;
-                    markPoint(la1 + (la2 - la1) * t, lo1 + (lo2 - lo1) * t);
+                    markPoint(la1 + (la2 - la1) * t, lo1 + (lo2 - lo1) * t, travelBearing);
                 }
             }
         }

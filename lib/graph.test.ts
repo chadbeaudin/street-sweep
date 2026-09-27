@@ -1096,6 +1096,37 @@ describe('StreetGraph', () => {
             expect(graph.graph.getLink('1', '3')!.data.isRidden).toBe(false);
         });
 
+        test('does not credit a short dead-end spur that the rider only passed near on the main road', () => {
+            // Real-world bug: a short perpendicular dead-end stub branching off a
+            // ridden main road got marked ridden even though the rider never turned
+            // onto it -- proximity-only matching let a main-road GPS point within
+            // 50m of the (short) spur's far end credit it. The spur's far end sits
+            // outside the endpoint exclusion zone, so only a travel-direction
+            // (bearing) check catches this: the rider's GPS bearing there runs
+            // along the main road, not along the perpendicular spur.
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.4210 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4190 },   // main road, east-west
+                    { type: 'node', id: 3, lat: 47.6503, lon: -117.4190 }, // spur, running due north off node 2
+                    { type: 'way', id: 500, nodes: [1, 2], tags: { highway: 'residential' } },
+                    { type: 'way', id: 501, nodes: [2, 3], tags: { highway: 'residential' } }, // ~33m dead-end spur, due north
+                ]
+            };
+            // Dense trace straight along the main road, passing right by the spur's
+            // base -- close enough (well within 50m) to the spur's far end (node 3)
+            // to satisfy proximity alone, but traveling east-west, not north.
+            const riddenRoads: [number, number][][] = [[
+                [47.65, -117.4210], [47.65, -117.4205], [47.65, -117.4200],
+                [47.65, -117.4195], [47.65, -117.4190],
+            ]];
+            graph.buildFromOSM(mockData, riddenRoads);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(false);
+        });
+
         // Real-world bug: a street the rider had clearly ridden straight through
         // (South Lamonte St, Spokane) had a ~11m unridden sliver mid-block, split
         // across two short OSM-graph edges, sandwiched between two long ridden

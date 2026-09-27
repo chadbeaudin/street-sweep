@@ -28,6 +28,28 @@ describe('dedupeRiddenRoads', () => {
         expect(hitSpur).toBe(false);
     });
 
+    it('regression: does not mark a longer dead-end spur ridden just because a straight-through main-road trace passes within tolerance of it', () => {
+        // Real-world bug: a short perpendicular dead-end street (not just an
+        // intersection-corner jitter) sat entirely within TOLERANCE_M (50m) of a
+        // straight GPS trace along the main road it branches off of, so proximity
+        // alone credited the whole spur as ridden even though the rider never
+        // turned onto it -- rendered on the map as a short blue tick jutting off
+        // the main ridden line.
+        const mainRoad: [number, number][] = [[-0.01, 0], [0, 0], [0.01, 0]];
+        // ~40m dead-end spur branching east from the intersection -- long enough
+        // to clear MIN_COVERED_M, and its far tip is still within 50m of the main
+        // road's own line.
+        const spurLenDeg = metersToLatDeg(40);
+        const spur: [number, number][] = [[0, 0], [0, spurLenDeg]];
+
+        // Rider rides straight through the main road -- no jitter, no turn.
+        const ride: [number, number][] = [[-0.01, 0], [0, 0], [0.01, 0]];
+
+        const result = dedupeRiddenRoads([ride], [mainRoad, spur]);
+        const hitSpur = result.some(seg => seg.some(([, lon]) => lon > 0));
+        expect(hitSpur).toBe(false);
+    });
+
     it('regression: marks a road ridden when the GPS trace runs ~35m off it the whole way (real-world corner-cutting/drift)', () => {
         // A single ~180m road. Real riders don't trace a road's exact geometry --
         // cutting corners at intersections or drifting under tree/building cover --
