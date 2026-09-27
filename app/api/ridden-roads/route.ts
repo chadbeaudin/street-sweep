@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 import { RIDDEN_VERSION, RIDDEN_REFRESHING, riddenRoadsCacheKey, refreshRiddenRoadsInBackground, ActivityMode } from '@/lib/riddenRoadsRefresh';
+import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -9,7 +10,11 @@ interface Creds { clientId?: string; clientSecret?: string; refreshToken?: strin
 
 export async function POST(request: Request) {
     try {
-        const { stravaCredentials, activityMode } = await request.json() as { stravaCredentials?: Creds; activityMode?: string };
+        let { stravaCredentials, activityMode } = await request.json() as { stravaCredentials?: Creds; activityMode?: string };
+        if (!stravaCredentials?.refreshToken) {
+            const sessionCreds = await getSessionStravaCredentials();
+            if (sessionCreds) stravaCredentials = { ...stravaCredentials, ...sessionCreds };
+        }
         if (!stravaCredentials?.refreshToken) {
             return NextResponse.json({ error: 'stravaCredentials.refreshToken required' }, { status: 400 });
         }
