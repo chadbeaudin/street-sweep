@@ -109,10 +109,22 @@ export function dedupeRiddenRoads(
         const cand = segGrid.get(cellKey(gLat, gLon));
         if (!cand) return;
         const mLon = M_PER_DEG_LAT * Math.cos(gLat * Math.PI / 180);
+        // Only the single CLOSEST candidate within tolerance gets credited, not every
+        // one -- a GPS point belongs to one road, not however many happen to sit within
+        // TOLERANCE_M. Without this, a genuinely different but roughly-parallel road or
+        // trail running near the real ridden street for even part of its length (common
+        // in Moab's braided jeep-trail network) got credited alongside it for that
+        // stretch, even though the rider only ever traveled the real one. Bearing
+        // filtering alone can't catch this: a parallel road shares the real road's
+        // bearing by definition.
+        let best: { key: string; t: number; lenM: number; dist: number } | null = null;
         for (const [r, s] of cand) {
             const key = `${r}:${s}`;
-            const existing = coverage.get(key);
-            if (existing && (existing.maxT - existing.minT) * existing.lenM >= MIN_COVERED_M) continue;
+            // (No early skip for an already-sufficiently-covered key here: that was a
+            // performance shortcut, but it silently dropped the real road out of the
+            // "closest candidate" race below once it had enough coverage, letting a
+            // farther, wrong nearby road win by default on later points -- exactly how a
+            // roughly-parallel trail sneaking within TOLERANCE_M got credited.)
             const road = roads[r];
             const { dist, t, lenM } = ptSegProj(gLat, gLon, road[s][0], road[s][1], road[s + 1][0], road[s + 1][1], mLon);
             if (dist > TOLERANCE_M) continue;
@@ -138,9 +150,12 @@ export function dedupeRiddenRoads(
                 const diff = Math.abs(travelBearing % 180 - segBearing);
                 if (Math.min(diff, 180 - diff) > MAX_BEARING_DIFF_DEG) continue;
             }
-            if (!existing) coverage.set(key, { minT: t, maxT: t, lenM });
-            else { if (t < existing.minT) existing.minT = t; if (t > existing.maxT) existing.maxT = t; }
+            if (!best || dist < best.dist) best = { key, t, lenM, dist };
         }
+        if (!best) return;
+        const existing = coverage.get(best.key);
+        if (!existing) coverage.set(best.key, { minT: best.t, maxT: best.t, lenM: best.lenM });
+        else { if (best.t < existing.minT) existing.minT = best.t; if (best.t > existing.maxT) existing.maxT = best.t; }
     };
 
     for (const activity of riddenRoads) {
