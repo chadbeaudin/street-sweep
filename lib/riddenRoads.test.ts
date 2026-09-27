@@ -175,6 +175,33 @@ describe('dedupeRiddenRoads', () => {
         const hitSpur = result.some(seg => seg.some(([, lon]) => lon > 0));
         expect(hitSpur).toBe(true);
     });
+
+    it('regression: does not credit a genuinely different, roughly-parallel road running close to the real one for part of its length', () => {
+        // Real-world bug: a short stretch of a completely different (but nearby,
+        // similarly-oriented) trail got credited as ridden because it ran within
+        // TOLERANCE_M of the real ridden road for part of its length -- the bearing
+        // check alone can't catch this, since a parallel road shares the real
+        // road's own bearing by definition. Only picking the single closest
+        // candidate per GPS point (not crediting every candidate within
+        // tolerance) fixes it.
+        const realRoad: [number, number][] = [[0, 0], [0, metersToLatDeg(500)]];
+        // A different trail, mostly far away, but drifting within ~15m of the real
+        // road for one ~150m stretch in the middle -- close enough to satisfy
+        // TOLERANCE_M there even though it's the wrong road.
+        const nearbyTrail: [number, number][] = [
+            [metersToLatDeg(200), metersToLatDeg(200)],
+            [metersToLatDeg(15), metersToLatDeg(240)],
+            [metersToLatDeg(15), metersToLatDeg(390)],
+            [metersToLatDeg(200), metersToLatDeg(430)],
+        ];
+
+        // Rider rides the real road start to finish.
+        const ride: [number, number][] = [[0, 0], [0, metersToLatDeg(500)]];
+
+        const result = dedupeRiddenRoads([ride], [realRoad, nearbyTrail]);
+        const hitTrail = result.some(seg => seg.some(([lat]) => lat > metersToLatDeg(5)));
+        expect(hitTrail).toBe(false);
+    });
 });
 
 describe('combineRiddenOverlay', () => {

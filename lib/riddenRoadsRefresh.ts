@@ -7,13 +7,16 @@ import { prisma } from './prisma';
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Bumped: dedupeRiddenRoads now also forces the bearing check near either
-// endpoint of a matched segment regardless of distance -- the v8 bearing fix
-// only applied it past BEARING_CHECK_DISTANCE_M, so a GPS point right at a
-// shared intersection could still credit a short perpendicular spur (or one
-// split by OSM into several short way-segments) via its clamped, near-zero
-// endpoint distance.
-export const RIDDEN_VERSION = 9;
+// Bumped: dedupeRiddenRoads now (1) forces the bearing check near either
+// endpoint of a matched segment regardless of distance -- a GPS point right at
+// a shared intersection could otherwise still credit a short perpendicular
+// spur via its clamped, near-zero endpoint distance -- and (2) only credits
+// the single closest candidate road per GPS point instead of every candidate
+// within tolerance, so a genuinely different but roughly-parallel trail
+// running near the real ridden road for part of its length no longer gets
+// credited alongside it (bearing alone can't catch this, since a parallel
+// road shares the real road's own bearing).
+export const RIDDEN_VERSION = 10;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 // Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has
 // no external rate limit, so this is generous — it exists to catch pathological
