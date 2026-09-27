@@ -28,6 +28,10 @@ const GRID = 0.005;          // ~500m spatial cells
 // likely to falsely qualify, gets filtered.
 const BEARING_CHECK_DISTANCE_M = 20;
 const MAX_BEARING_DIFF_DEG = 85;
+// Matches checkProximity's own endpoint exclusion in lib/graph.ts -- a GPS point at an
+// intersection is shared by every road meeting there, so it can't prove travel down any
+// one of them.
+const ENDPOINT_EXCLUSION_M = 10;
 
 function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): number {
     const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
@@ -112,7 +116,24 @@ export function dedupeRiddenRoads(
             const road = roads[r];
             const { dist, t, lenM } = ptSegProj(gLat, gLon, road[s][0], road[s][1], road[s + 1][0], road[s + 1][1], mLon);
             if (dist > TOLERANCE_M) continue;
-            if (dist >= BEARING_CHECK_DISTANCE_M) {
+            // A GPS point sitting at (or very near) a shared intersection node projects
+            // (clamped) onto EVERY road meeting there, including a short perpendicular
+            // spur it never actually turned onto -- and that clamped distance can be
+            // well under BEARING_CHECK_DISTANCE_M, letting it slip past the bearing
+            // check below entirely regardless of angle. Force the bearing check for any
+            // point landing near either endpoint, independent of distance, since that's
+            // exactly the ambiguous "which of the roads meeting here did they actually
+            // take" case. A blanket t-based exclusion (dropping these points outright,
+            // as graph.ts's checkProximity does) was tried first, but it also throws out
+            // a real ride's own start/end point landing at a road's own vertex -- with
+            // short/sparse traces that can be the *only* point near a short edge,
+            // costing it all its coverage. Gating on bearing instead of dropping the
+            // point keeps that legitimate case (a real turn's bearing naturally aligns
+            // with the segment taken) while still rejecting a main-road point whose
+            // bearing runs along a different street entirely.
+            const tEndpointBand = lenM > 0 ? Math.min(0.4, ENDPOINT_EXCLUSION_M / lenM) : 0;
+            const nearEndpoint = t < tEndpointBand || t > 1 - tEndpointBand;
+            if (nearEndpoint || dist >= BEARING_CHECK_DISTANCE_M) {
                 const segBearing = bearingDeg(road[s][0], road[s][1], road[s + 1][0], road[s + 1][1]) % 180;
                 const diff = Math.abs(travelBearing % 180 - segBearing);
                 if (Math.min(diff, 180 - diff) > MAX_BEARING_DIFF_DEG) continue;
