@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { fetchFtpReadings, resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
+import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
@@ -30,7 +31,11 @@ async function refreshInBackground(athleteId: string, creds: Creds) {
 
 export async function POST(request: Request) {
     try {
-        const { stravaCredentials } = await request.json() as { stravaCredentials?: Creds };
+        let { stravaCredentials } = await request.json() as { stravaCredentials?: Creds };
+        if (!stravaCredentials?.refreshToken) {
+            const sessionCreds = await getSessionStravaCredentials();
+            if (sessionCreds) stravaCredentials = { ...stravaCredentials, ...sessionCreds };
+        }
         if (!stravaCredentials?.refreshToken) {
             return NextResponse.json({ error: 'stravaCredentials.refreshToken required' }, { status: 400 });
         }

@@ -174,7 +174,11 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     useEffect(() => {
         // FTP (Functional Threshold Power) is a cycling-specific metric; there's
         // no running equivalent, so skip fetching it entirely in running mode.
-        if (!isOpen || !stravaCredentials?.refreshToken || activityMode !== 'cycling') return;
+        // Session-linked users have no refreshToken client-side (it never leaves
+        // the server -- see lib/serverStravaCredentials.ts); sessionLinked is
+        // their equivalent "connected" signal, same as elsewhere in the app.
+        const hasStravaCreds = !!(stravaCredentials?.refreshToken || stravaCredentials?.sessionLinked);
+        if (!isOpen || !hasStravaCreds || activityMode !== 'cycling') return;
         let cancelled = false;
         let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
