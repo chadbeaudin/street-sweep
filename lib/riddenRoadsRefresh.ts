@@ -7,16 +7,17 @@ import { prisma } from './prisma';
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Bumped: dedupeRiddenRoads now (1) forces the bearing check near either
-// endpoint of a matched segment regardless of distance -- a GPS point right at
-// a shared intersection could otherwise still credit a short perpendicular
-// spur via its clamped, near-zero endpoint distance -- and (2) only credits
-// the single closest candidate road per GPS point instead of every candidate
-// within tolerance, so a genuinely different but roughly-parallel trail
-// running near the real ridden road for part of its length no longer gets
-// credited alongside it (bearing alone can't catch this, since a parallel
-// road shares the real road's own bearing).
-export const RIDDEN_VERSION = 11;
+// Bumped: the v11 closest-candidate-only fix used a strict single winner with
+// no tie margin, which over-corrected -- a long physical road split by OSM
+// into many short way-segments could flip which segment counts as "closest"
+// from one real (off-line, drifting) GPS point to the next at each bend,
+// starving whichever segment lost that flip of enough matches to individually
+// clear MIN_COVERED_M. A fully-ridden curvy road then rendered as a broken
+// dashed line instead of one continuous stretch. dedupeRiddenRoads now credits
+// every candidate within TIE_MARGIN_M of the closest one, not just the single
+// strict minimum, while a genuinely different nearby road (tens of meters
+// farther, not centimeters) still loses outright.
+export const RIDDEN_VERSION = 12;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 // Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has
 // no external rate limit, so this is generous — it exists to catch pathological
