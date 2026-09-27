@@ -3,7 +3,7 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useSession, signIn, signOut } from 'next-auth/react';
+import { useSession, signIn, signOut, getProviders, type ClientSafeProvider } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Bike, Footprints } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
@@ -38,6 +38,8 @@ import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/eleva
 
 export default function Home() {
     const { data: session } = useSession();
+    const [authProviders, setAuthProviders] = useState<Record<string, ClientSafeProvider> | null>(null);
+    useEffect(() => { getProviders().then(setAuthProviders); }, []);
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [route, setRoute] = useState<[number, number, number?, number?][] | null>(null);
     const [elevationData, setElevationData] = useState<any[] | null>(null);
@@ -1972,12 +1974,31 @@ export default function Home() {
                                     onClick={() => setShowMobileMenu(false)}
                                 ></div>
                                 <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
-                                    <button
-                                        onClick={() => { if (session?.user) signOut(); else signIn('strava'); setShowMobileMenu(false); }}
-                                        className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
-                                    >
-                                        {session?.user ? `Sign out (${session.user.name ?? 'account'})` : 'Sign in'}
-                                    </button>
+                                    {session?.user ? (
+                                        <button
+                                            onClick={() => { signOut(); setShowMobileMenu(false); }}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
+                                        >
+                                            {`Sign out (${session.user.name ?? 'account'})`}
+                                        </button>
+                                    ) : authProviders && Object.values(authProviders).length > 1 ? (
+                                        Object.values(authProviders).map(p => (
+                                            <button
+                                                key={p.id}
+                                                onClick={() => { signIn(p.id); setShowMobileMenu(false); }}
+                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
+                                            >
+                                                {`Continue with ${p.name}`}
+                                            </button>
+                                        ))
+                                    ) : (
+                                        <button
+                                            onClick={() => { signIn(Object.values(authProviders ?? {})[0]?.id ?? 'strava'); setShowMobileMenu(false); }}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
+                                        >
+                                            Sign in
+                                        </button>
+                                    )}
                                     <button
                                         onClick={() => { setShowRwgpsSettings(true); setShowMobileMenu(false); }}
                                         className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
