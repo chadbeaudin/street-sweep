@@ -12,18 +12,22 @@ jest.mock('@/lib/strava', () => ({
     resolveAthleteId: jest.fn().mockResolvedValue('athlete-1'),
 }));
 jest.mock('@/lib/riddenRoadsRefresh', () => ({ refreshRiddenRoadsInBackground: jest.fn() }));
+jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
 
 import { POST } from './route';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities, resolveAthleteId } from '@/lib/strava';
 import { refreshRiddenRoadsInBackground } from '@/lib/riddenRoadsRefresh';
+import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchCyclingRiddenRoads>;
 const mockedForceSync = forceSyncStravaActivities as jest.MockedFunction<typeof forceSyncStravaActivities>;
 const mockedResolveAthleteId = resolveAthleteId as jest.MockedFunction<typeof resolveAthleteId>;
 const mockedRefreshOverlay = refreshRiddenRoadsInBackground as jest.MockedFunction<typeof refreshRiddenRoadsInBackground>;
+const mockedGetSessionCreds = getSessionStravaCredentials as jest.MockedFunction<typeof getSessionStravaCredentials>;
 
 beforeEach(() => {
     mockedResolveAthleteId.mockResolvedValue('athlete-1');
+    mockedGetSessionCreds.mockResolvedValue(null);
 });
 
 function makeRequest(body: any): Request {
@@ -114,5 +118,29 @@ describe('POST /api/strava/activities', () => {
         await POST(makeRequest({ stravaCredentials: { refreshToken: 'tok' } }));
         expect(mockedForceSync).not.toHaveBeenCalled();
         expect(mockedRefreshOverlay).not.toHaveBeenCalled();
+    });
+
+    it('resolves the refresh token from the session when the client sends none (session-linked sign-in)', async () => {
+        mockedFetch.mockResolvedValueOnce({
+            riddenRoads: [], activityElevations: [], activityTypes: [],
+            activityDistances: [], activityStartDates: [],
+            totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
+        });
+        mockedGetSessionCreds.mockResolvedValueOnce({ refreshToken: 'session-tok' });
+        await POST(makeRequest({ stravaCredentials: { sessionLinked: true } }));
+        expect(mockedFetch).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionLinked: true, refreshToken: 'session-tok' }),
+            'cycling',
+        );
+    });
+
+    it('never trusts a client-supplied refreshToken to skip session resolution silently -- session creds win when client sent none', async () => {
+        mockedFetch.mockResolvedValueOnce({
+            riddenRoads: [], activityElevations: [], activityTypes: [],
+            activityDistances: [], activityStartDates: [],
+            totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
+        });
+        await POST(makeRequest({}));
+        expect(mockedGetSessionCreds).toHaveBeenCalled();
     });
 });

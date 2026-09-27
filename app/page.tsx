@@ -159,6 +159,10 @@ export default function Home() {
 
     const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
+    // Session-signed-in users have no refreshToken on the client at all (it
+    // never leaves the server, see lib/serverStravaCredentials.ts) -- their
+    // "connected" state is marked by this sentinel instead.
+    const hasStravaCreds = (c: any) => !!(c?.refreshToken || c?.sessionLinked);
     const stravaCredentialsRef = useRef<any>(undefined);
     useEffect(() => { stravaCredentialsRef.current = stravaCredentials; }, [stravaCredentials]);
     const [stravaError, setStravaError] = useState<string | null>(null);
@@ -318,7 +322,14 @@ export default function Home() {
     useEffect(() => {
         const saved = localStorage.getItem('strava_settings');
         if (saved) {
-            setStravaCredentials(JSON.parse(saved));
+            const parsed = JSON.parse(saved);
+            // `sessionLinked` only means anything alongside a live NextAuth
+            // session -- session status isn't known yet this early (useSession()
+            // starts in 'loading'), so a stale sentinel from a previous sign-in
+            // must not be trusted here. The athleteId-driven effect below
+            // re-sets it once the current session is actually confirmed.
+            const { sessionLinked: _sessionLinked, ...rest } = parsed;
+            setStravaCredentials(rest);
         } else {
             setStravaCredentials({}); // Set to empty object to signal we've checked localStorage
         }
@@ -362,8 +373,13 @@ export default function Home() {
                 try {
                     const res = await fetch('/api/auth/strava-credentials');
                     if (!res.ok) return;
-                    const { refreshToken } = await res.json();
-                    const creds = { refreshToken };
+                    const { connected } = await res.json();
+                    if (!connected) return;
+                    // No refreshToken here by design -- the server resolves it from
+                    // the session itself (lib/serverStravaCredentials.ts) when this
+                    // sentinel-carrying request reaches /api/strava/activities or
+                    // /api/ridden-roads.
+                    const creds = { sessionLinked: true };
                     setStravaCredentials(creds);
                     try { localStorage.setItem('strava_settings', JSON.stringify(creds)); } catch { /* ignore */ }
                 } catch { /* ignore -- falls back to whatever stravaCredentials already had */ }
@@ -382,7 +398,7 @@ export default function Home() {
         if (stravaCredentials === undefined) return;
 
         // If we have no refreshToken in UI, we haven't connected yet.
-        const hasRequired = !!stravaCredentials?.refreshToken;
+        const hasRequired = hasStravaCreds(stravaCredentials);
 
         if (!hasRequired) {
             console.log('[Strava] No UI credentials configured, skipping initial fetch.');
@@ -446,7 +462,7 @@ export default function Home() {
     // cached client-side (IndexedDB) the same way /api/strava/activities
     // already is, instead of re-fetching the full payload on every page load.
     useEffect(() => {
-        if (!stravaCredentials?.refreshToken) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
+        if (!hasStravaCreds(stravaCredentials)) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
         const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
@@ -1570,7 +1586,7 @@ export default function Home() {
                         just be a second control for the same thing. */}
                     {!(session?.user as any)?.athleteId && (
                         <StravaHeaderButton
-                            isConnected={!!stravaCredentials?.refreshToken}
+                            isConnected={hasStravaCreds(stravaCredentials)}
                             stravaError={stravaError}
                             isLoading={isStravaLoading}
                             onClick={() => setShowStravaSettings(true)}
@@ -1925,7 +1941,7 @@ export default function Home() {
                 <div className="flex md:hidden items-center gap-2">
                     {!(session?.user as any)?.athleteId && (
                         <StravaHeaderButton
-                            isConnected={!!stravaCredentials?.refreshToken}
+                            isConnected={hasStravaCreds(stravaCredentials)}
                             stravaError={stravaError}
                             isLoading={isStravaLoading}
                             onClick={() => setShowStravaSettings(true)}
@@ -2152,7 +2168,7 @@ export default function Home() {
                     stravaCredentials hasn't finished syncing from the session yet (#87) --
                     they're already connected, just waiting a beat on the bridge fetch, so
                     flashing "connect Strava" at them would be wrong and confusing. */}
-                {stravaCredentials !== undefined && !stravaCredentials.refreshToken && !showHowTo && !(session?.user as any)?.athleteId && (
+                {stravaCredentials !== undefined && !hasStravaCreds(stravaCredentials) && !showHowTo && !(session?.user as any)?.athleteId && (
                     <div className="absolute inset-0 z-[1100] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg text-center border border-gray-100 animate-in fade-in zoom-in duration-300 relative">
                             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100 mx-auto mb-6">
