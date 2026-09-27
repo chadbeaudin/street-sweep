@@ -50,6 +50,25 @@ describe('dedupeRiddenRoads', () => {
         expect(hitSpur).toBe(false);
     });
 
+    it('regression: does not mark a spur ridden when OSM splits it into several short way-segments near the intersection', () => {
+        // Real-world bug (harder variant): OSM commonly splits a short physical
+        // spur into several tiny way-segments a few meters each near an
+        // intersection. Each such short segment's own two endpoints sit close
+        // together, both well within reach of a dense main-road GPS trace passing
+        // the intersection -- even though the rider never turned off the main
+        // road. Each segment must independently reject the false credit, not just
+        // a single long spur.
+        const mainRoad: [number, number][] = [[-0.01, 0], [0, 0], [0.01, 0]];
+        const m = metersToLatDeg;
+        const spurSegments: [number, number][] = [[0, 0], [0, m(8)], [0, m(16)], [0, m(24)]];
+
+        const ride: [number, number][] = [[-0.01, 0], [0, 0], [0.01, 0]];
+
+        const result = dedupeRiddenRoads([ride], [mainRoad, spurSegments]);
+        const hitSpur = result.some(seg => seg.some(([, lon]) => lon > 0));
+        expect(hitSpur).toBe(false);
+    });
+
     it('regression: marks a road ridden when the GPS trace runs ~35m off it the whole way (real-world corner-cutting/drift)', () => {
         // A single ~180m road. Real riders don't trace a road's exact geometry --
         // cutting corners at intersections or drifting under tree/building cover --
