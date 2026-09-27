@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
+import { z } from 'zod';
+import { LatLon, BBox, PolylineList, RoutingOptions, parseBody } from '@/lib/validation';
+
+const Body = z.object({
+    point: LatLon,
+    lastPoint: LatLon.optional().nullable(),
+    bbox: BBox,
+    manualRoute: PolylineList.optional().nullable(),
+    riddenRoads: PolylineList.optional().nullable(),
+    routingOptions: RoutingOptions,
+});
 
 export async function POST(req: NextRequest) {
     try {
-        const { point, lastPoint, bbox, manualRoute, riddenRoads, routingOptions } = await req.json();
-
-        if (!point || !bbox) {
-            return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
-        }
+        const parsed = await parseBody(req, Body);
+        if ('error' in parsed) return parsed.error;
+        const { point, lastPoint, bbox, manualRoute, riddenRoads, routingOptions } = parsed.data;
 
         const BUFFER = 0.01; // small buffer beyond the union area for edge connectivity
         const GRID = 0.01;   // Snap to 1km grid for caching
@@ -50,7 +59,7 @@ export async function POST(req: NextRequest) {
 
         // Use the cached graph for speed. We now apply penalties dynamically
         // during pathfinding instead of mutating the graph weights.
-        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads, bufferedBbox), routingOptions);
+        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads as [number, number][][] | undefined, bufferedBbox), routingOptions);
 
         // Get link IDs that should be penalized: already traversed in the current
         // session (avoid backtracking) and already ridden per Strava (prefer new
@@ -61,7 +70,7 @@ export async function POST(req: NextRequest) {
         // chasing distant unridden streets instead of a sensible mostly-unridden route.
         let penalizedLinks: Map<string, number> | undefined;
         if (manualRoute && Array.isArray(manualRoute) && manualRoute.length > 0) {
-            penalizedLinks = graph.getTraversalPenalties(manualRoute, 5);
+            penalizedLinks = graph.getTraversalPenalties(manualRoute as [number, number][][], 5);
         }
         const pointRoutePenalty = routingOptions?.pointRoutePenalty || 4;
         const riddenPenalties = graph.buildRiddenPenaltyMap(pointRoutePenalty);

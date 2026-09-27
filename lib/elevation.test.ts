@@ -60,23 +60,18 @@ describe('elevation library robustness', () => {
         expect(result.elevations).toEqual([1500, 1600]);
         expect(result.sampledCoords).toEqual(mockCoords);
         expect(global.fetch).toHaveBeenCalledWith(
-            expect.stringContaining('ned10m')
+            expect.stringContaining('copernicus90')
         );
     });
 
-    it('falls back to SRTM 30m when NED10m coverage is missing, then Open-Meteo if that also fails', async () => {
-        // First call (NED10m) returns null elevations — out of US coverage
-        (global.fetch as jest.Mock).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({ results: [{ elevation: null }, { elevation: null }] })
-        });
-        // Second call (SRTM 30m) fails
+    it('falls back to Open-Meteo when the self-hosted Open Topo Data instance fails', async () => {
+        // First call (self-hosted copernicus90) fails
         (global.fetch as jest.Mock).mockResolvedValueOnce({
             ok: false,
             status: 500,
             text: async () => 'Open Topo Data Down'
         });
-        // Third call (Open-Meteo) succeeds
+        // Second call (Open-Meteo) succeeds
         (global.fetch as jest.Mock).mockResolvedValueOnce({
             ok: true,
             json: async () => ({ elevation: [1510, 1610] })
@@ -84,10 +79,9 @@ describe('elevation library robustness', () => {
 
         const result = await fetchElevationData(mockCoords);
         expect(result.elevations).toEqual([1510, 1610]);
-        expect(global.fetch).toHaveBeenCalledTimes(3);
-        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain('ned10m');
-        expect((global.fetch as jest.Mock).mock.calls[1][0]).toContain('srtm30m');
-        expect((global.fetch as jest.Mock).mock.calls[2][0]).toContain('api.open-meteo.com');
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+        expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain('copernicus90');
+        expect((global.fetch as jest.Mock).mock.calls[1][0]).toContain('api.open-meteo.com');
     });
 
     it('throws error when all providers fail', async () => {

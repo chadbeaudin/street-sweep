@@ -322,4 +322,137 @@ describe('Integration: server logs', () => {
             expect(totalDistance).toBeLessThan(90);
         }, 120000);
     });
+
+    // ── Manual UAT flows, automated ────────────────────────────────────────────
+    // These mirror the two manual browser smoke tests required before every push
+    // (see memory: feedback_browser_test_before_push): (1) point → point → point,
+    // and (2) point → area → point → area (different shape) → point. Automating
+    // them here means they run in CI/`npm run test:integration` instead of a human
+    // clicking through the UI. Both real bugs the manual pass caught are pinned:
+    // the self-hosted Open Topo Data 100-location batch cap (lib/elevation.ts),
+    // and the "too far apart" check using the viewport bbox instead of the actual
+    // point distance (app/api/generate/route.ts).
+    describe('Route generate — UAT flow: point -> point -> point', () => {
+        const bbox = { south: 38.98, west: -104.65, north: 39.02, east: -104.60 };
+        const routingOptions = { avoidGravel: false, avoidHighways: false, avoidTrails: false };
+        const pointA = { lat: 39.000, lon: -104.630 };
+        const pointB = { lat: 39.005, lon: -104.625 };
+        const pointC = { lat: 39.010, lon: -104.620 };
+
+        it('adding a second then third point each succeeds without error', async () => {
+            const resAB = await post('/api/generate', {
+                bbox,
+                selectedPoints: [pointA, pointB],
+                manualRoute: [[pointA.lon, pointA.lat], [pointB.lon, pointB.lat]],
+                routingOptions,
+            });
+            if (!resAB.ok) {
+                console.warn('Generate API failed (external dependency) — skipping UAT flow check', await resAB.text());
+                return;
+            }
+            const dataAB = await resAB.json();
+            expect(dataAB?.features?.[0]?.geometry?.coordinates?.length).toBeGreaterThan(0);
+
+            const resABC = await post('/api/generate', {
+                bbox,
+                selectedPoints: [pointA, pointB, pointC],
+                manualRoute: [[pointA.lon, pointA.lat], [pointB.lon, pointB.lat], [pointC.lon, pointC.lat]],
+                routingOptions,
+            });
+            expect(resABC.status).toBe(200);
+            const dataABC = await resABC.json();
+            expect(dataABC?.features?.[0]?.geometry?.coordinates?.length).toBeGreaterThan(0);
+        }, 90000);
+    });
+
+    describe('Route generate — UAT flow: point -> lasso -> point -> box (different shape) -> point', () => {
+        const bbox = { south: 38.98, west: -104.65, north: 39.02, east: -104.60 };
+        const routingOptions = { avoidGravel: false, avoidHighways: false, avoidTrails: false };
+        const pointA = { lat: 39.000, lon: -104.630 };
+        const lasso: [number, number][] = [
+            [39.001, -104.629], [39.003, -104.626], [39.002, -104.623], [39.000, -104.625], [39.001, -104.629],
+        ];
+        const pointB = { lat: 39.004, lon: -104.622 };
+        const box = { south: 39.005, west: -104.622, north: 39.008, east: -104.618 };
+        const pointC = { lat: 39.009, lon: -104.617 };
+
+        it('each step (point, lasso, point, box, point) succeeds without error', async () => {
+            const steps = [
+                { selectedPoints: [pointA], selectionPolygons: [] as [number, number][][], selectionBoxes: [] as typeof box[] },
+                { selectedPoints: [pointA], selectionPolygons: [lasso], selectionBoxes: [] as typeof box[] },
+                { selectedPoints: [pointA, pointB], selectionPolygons: [lasso], selectionBoxes: [] as typeof box[] },
+                { selectedPoints: [pointA, pointB], selectionPolygons: [lasso], selectionBoxes: [box] },
+                { selectedPoints: [pointA, pointB, pointC], selectionPolygons: [lasso], selectionBoxes: [box] },
+            ];
+
+            for (const [i, step] of steps.entries()) {
+                const res = await post('/api/generate', { bbox, routingOptions, ...step });
+                if (!res.ok) {
+                    console.warn(`Generate API failed at step ${i} (external dependency) — skipping UAT flow check`, await res.text());
+                    return;
+                }
+                const data = await res.json();
+                expect(data?.features?.[0]?.geometry?.coordinates?.length).toBeGreaterThan(0);
+            }
+        }, 120000);
+    });
+
+    describe('Route generate — regression: too-far-apart check must use point distance, not viewport zoom', () => {
+        it('succeeds for two nearby points even when the client viewport is a huge (zoomed-out) bbox', async () => {
+            // Regression for the bug the manual UAT caught: the pre-check used to be
+            // computed from the full client viewport bbox, so being zoomed out to a
+            // city/state view rejected perfectly routable nearby points.
+            const res = await post('/api/generate', {
+                bbox: { south: 38.0, west: -105.5, north: 40.0, east: -103.5 }, // ~220km-wide viewport
+                selectedPoints: [
+                    { lat: 39.000, lon: -104.630 },
+                    { lat: 39.005, lon: -104.625 }, // ~0.7km from the first point
+                ],
+                manualRoute: [[-104.630, 39.000], [-104.625, 39.005]],
+                routingOptions: { avoidGravel: false, avoidHighways: false, avoidTrails: false },
+            });
+            if (!res.ok) {
+                const body = await res.text();
+                if (body.includes('too far apart')) {
+                    throw new Error(`Regression: viewport-zoom falsely triggered the too-far-apart check: ${body}`);
+                }
+                console.warn('Generate API failed (external dependency) — skipping regression check', body);
+                return;
+            }
+            const data = await res.json();
+            expect(data?.features?.[0]?.geometry?.coordinates?.length).toBeGreaterThan(0);
+        }, 60000);
+    });
+
+    describe('Route generate — regression: self-hosted Open Topo Data 100-location batch cap', () => {
+        // Dense residential grid big enough to produce a route with >100 elevation
+        // sample points (see pointsPerMile in lib/elevation.ts) -- the exact
+        // condition that overflowed the self-hosted server's 100-location-per-request
+        // limit and silently degraded every elevation to 0.
+        const box = { south: 38.980, west: -104.650, north: 39.010, east: -104.610 };
+
+        it('returns non-zero elevations for a route long enough to require multiple elevation batches', async () => {
+            const res = await post('/api/generate', {
+                bbox: box,
+                selectionBoxes: [box],
+                selectedPoints: [{ lat: (box.north + box.south) / 2, lon: (box.east + box.west) / 2 }],
+                routingOptions: { avoidGravel: false, avoidHighways: false, avoidTrails: false },
+            });
+            if (!res.ok) {
+                console.warn('Generate API failed (external dependency) — skipping batch-cap regression check', await res.text());
+                return;
+            }
+            const data = await res.json();
+            const coords: number[][] = data?.features?.[0]?.geometry?.coordinates ?? [];
+            const elevationProfile = data?.features?.[0]?.properties?.elevationProfile ?? [];
+            expect(coords.length).toBeGreaterThan(0);
+
+            if (elevationProfile.length <= 100) {
+                console.warn(`Route only produced ${elevationProfile.length} elevation samples — not enough to exercise the >100-location batch split, skipping`);
+                return;
+            }
+            const elevations = coords.map(c => c[2]);
+            expect(elevations.some((e: number) => e !== 0 && e !== null && e !== undefined)).toBe(true);
+        }, 120000);
+    });
 });

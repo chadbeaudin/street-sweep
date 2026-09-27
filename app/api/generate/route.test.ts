@@ -75,6 +75,33 @@ describe('POST /api/generate', () => {
         expect(mockedFetchOSM).not.toHaveBeenCalled();
     });
 
+    it('does not fast-fail two nearby points just because the viewport bbox is huge', async () => {
+        // Regression: the span check used to be computed from bufferedBbox, which
+        // folds in the client's current map-viewport bbox alongside the points --
+        // so a user zoomed out to a city/state view got rejected even though the
+        // two points they actually clicked were only ~1km apart. The check must
+        // look at the points/manualRoute extent only.
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        await POST(makeRequest({
+            bbox: { north: 40.5, south: 38.5, east: -103.5, west: -105.5 }, // ~220km-wide viewport
+            manualRoute: [[-104.710, 39.020], [-104.715, 39.025]], // two points ~0.6km apart
+        }));
+        expect(mockedFetchOSM).toHaveBeenCalled();
+    });
+
+    it('rejects two points genuinely far apart even when the viewport bbox is small', async () => {
+        // The inverse of the above: a tight viewport doesn't mask two points that
+        // are actually ~96km apart -- the check must be based on the points, not bbox.
+        await POST(makeRequest({
+            bbox: { north: 39.03, south: 39.01, east: -104.69, west: -104.71 },
+            manualRoute: [[-104.70, 39.02], [-104.00, 39.70]],
+        }));
+        const [data, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(400);
+        expect(data.error).toMatch(/too far apart/i);
+        expect(mockedFetchOSM).not.toHaveBeenCalled();
+    });
+
     it('does not fast-fail a large drawn-area selection (only applies to pure point-to-point)', async () => {
         mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
         await POST(makeRequest({
