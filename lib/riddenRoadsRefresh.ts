@@ -16,7 +16,7 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 // running near the real ridden road for part of its length no longer gets
 // credited alongside it (bearing alone can't catch this, since a parallel
 // road shares the real road's own bearing).
-export const RIDDEN_VERSION = 10;
+export const RIDDEN_VERSION = 11;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 // Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has
 // no external rate limit, so this is generous — it exists to catch pathological
