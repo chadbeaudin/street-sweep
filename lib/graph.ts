@@ -333,8 +333,8 @@ export class StreetGraph {
     // multiple /api/step calls via the GRAPH_CACHE.
     private nodeIndex: Map<string, string[]> | null = null;
     private edgeIndex: Map<string, any[]> | null = null;
-    private riddenIndex: Map<string, [number, number][]> | null = null;
-    private avoidedIndex: Map<string, [number, number][]> | null = null;
+    private riddenIndex: Map<string, [number, number, number][]> | null = null;
+    private avoidedIndex: Map<string, [number, number, number][]> | null = null;
 
     public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions): StreetGraph {
         const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
@@ -634,9 +634,9 @@ export class StreetGraph {
         this.riddenIndex = this.buildProximityIndex(riddenRoads);
     }
 
-    /** Builds a spatial index of interpolated points along a set of GPS/road traces, for proximity matching against graph edges. */
-    private buildProximityIndex(roads: [number, number][][]): Map<string, [number, number][]> {
-        const index = new Map<string, [number, number][]>();
+    /** Builds a spatial index of interpolated points along a set of GPS/road traces, for proximity matching against graph edges. Each point carries the local travel bearing so matching can reject perpendicular spurs the rider only passed near, not along (see checkProximity). */
+    private buildProximityIndex(roads: [number, number][][]): Map<string, [number, number, number][]> {
+        const index = new Map<string, [number, number, number][]>();
         // Real GPS traces (especially Strava's summary_polyline) can have consecutive
         // points 50-100m+ apart -- far enough that many short OSM edges between them
         // never get a nearby candidate point at all. The client's own ridden overlay
@@ -645,18 +645,28 @@ export class StreetGraph {
         // it can look fully covered while this index, built from the raw points alone,
         // left most edges with zero candidates nearby. Mirror that here.
         const STEP_M = 12;
-        const addPoint = (lat: number, lon: number) => {
+        const addPoint = (lat: number, lon: number, bearing: number) => {
             const cellLat = Math.floor(lat / GRID_DEG);
             const cellLon = Math.floor(lon / GRID_DEG);
             const key = `${cellLat}:${cellLon}`;
             let bucket = index.get(key);
             if (!bucket) { bucket = []; index.set(key, bucket); }
-            bucket.push([lat, lon]);
+            bucket.push([lat, lon, bearing]);
         };
         for (const activity of roads) {
             for (let i = 0; i < activity.length; i++) {
                 const [lat1, lon1] = activity[i];
-                addPoint(lat1, lon1);
+                // Bearing of the segment leading out of this point (or, for the final
+                // point, the segment leading into it) -- used to tell "GPS point sitting
+                // near this edge while traveling along it" from "GPS point on a different,
+                // perpendicular street that happens to pass within snap distance."
+                let bearing = 0;
+                if (i + 1 < activity.length) {
+                    bearing = this.bearing(lat1, lon1, activity[i + 1][0], activity[i + 1][1]);
+                } else if (i > 0) {
+                    bearing = this.bearing(activity[i - 1][0], activity[i - 1][1], lat1, lon1);
+                }
+                addPoint(lat1, lon1, bearing);
                 if (i + 1 < activity.length) {
                     const [lat2, lon2] = activity[i + 1];
                     const mPerDegLon = 111320 * Math.cos(lat1 * Math.PI / 180);
@@ -664,12 +674,21 @@ export class StreetGraph {
                     const steps = Math.floor(distM / STEP_M);
                     for (let k = 1; k < steps; k++) {
                         const t = k / steps;
-                        addPoint(lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t);
+                        addPoint(lat1 + (lat2 - lat1) * t, lon1 + (lon2 - lon1) * t, bearing);
                     }
                 }
             }
         }
         return index;
+    }
+
+    /** Compass bearing in degrees [0, 360) from point 1 to point 2. */
+    private bearing(lat1: number, lon1: number, lat2: number, lon2: number): number {
+        const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+        const Δλ = (lon2 - lon1) * Math.PI / 180;
+        const y = Math.sin(Δλ) * Math.cos(φ2);
+        const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+        return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     }
 
     private checkIfRidden(u: { lat: number, lon: number }, v: { lat: number, lon: number }, riddenRoads: [number, number][][] | null): boolean {
@@ -682,7 +701,7 @@ export class StreetGraph {
         return this.checkProximity(u, v, this.avoidedIndex);
     }
 
-    private checkProximity(u: { lat: number, lon: number }, v: { lat: number, lon: number }, index: Map<string, [number, number][]>): boolean {
+    private checkProximity(u: { lat: number, lon: number }, v: { lat: number, lon: number }, index: Map<string, [number, number, number][]>): boolean {
 
         // Use segment-to-point distance: for each Strava GPS point near this edge,
         // compute the perpendicular distance to the segment u→v rather than checking
@@ -738,6 +757,28 @@ export class StreetGraph {
         const ENDPOINT_EXCLUSION_METERS = 10;
         const tExclusion = edgeLengthMeters > 0 ? Math.min(0.4, ENDPOINT_EXCLUSION_METERS / edgeLengthMeters) : 0;
 
+        // Edge bearing, for rejecting GPS points that are merely nearby (e.g. on a
+        // through-street) rather than traveling along this edge. A short dead-end
+        // spur branching off a main road sits well within the 50m threshold of GPS
+        // points on that main road, but the rider's travel direction there is
+        // perpendicular to the spur, not along it -- proximity alone was crediting
+        // those spurs as ridden. Compare mod 180 since travel could be in either
+        // direction along the edge.
+        const edgeBearing = this.bearing(uY, uX / cosLat, vY, vX / cosLat) % 180;
+        // Sparse real-world GPS traces (summary_polylines, occasional dropped
+        // points) plus genuine road curvature routinely put a real ridden
+        // point's local bearing well off the edge's own bearing, even at
+        // moderate distance from it (sharp turns, doglegs, sparse sampling
+        // near intersections) -- a tighter threshold regressed
+        // lib/graph.realworld.test.ts's brute-force-verified route distances
+        // by un-crediting real coverage. Close matches (under
+        // BEARING_CHECK_DISTANCE_METERS) skip the check entirely. 85 degrees
+        // still rejects the near-exactly-perpendicular case a dead-end spur
+        // branching off a through-street produces, without touching the wide
+        // range of real-world angle noise short of that.
+        const MAX_BEARING_DIFF_DEG = 85;
+        const BEARING_CHECK_DISTANCE_METERS = 20;
+
         for (let cLat = cellMinLat; cLat <= cellMaxLat; cLat++) {
             for (let cLon = cellMinLon; cLon <= cellMaxLon; cLon++) {
                 const bucket = index.get(`${cLat}:${cLon}`);
@@ -752,7 +793,13 @@ export class StreetGraph {
                     if (t < tExclusion || t > 1 - tExclusion) continue;
                     const closestLat = uY + t * dy;
                     const closestLon = (uX + t * dx) / cosLat;
-                    if (this.haversine(point[0], point[1], closestLat, closestLon) < thresholdMeters) return true;
+                    const dist = this.haversine(point[0], point[1], closestLat, closestLon);
+                    if (dist >= thresholdMeters) continue;
+                    if (dist >= BEARING_CHECK_DISTANCE_METERS) {
+                        const bearingDiff = Math.abs(point[2] % 180 - edgeBearing);
+                        if (Math.min(bearingDiff, 180 - bearingDiff) > MAX_BEARING_DIFF_DEG) continue;
+                    }
+                    return true;
                 }
             }
         }

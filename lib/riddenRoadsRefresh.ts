@@ -7,9 +7,11 @@ import { prisma } from './prisma';
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Bumped: dedupeRiddenRoads now also bridges a short (<=20m) uncovered gap
-// between two covered runs mid-way through the same way, not just at its ends.
-export const RIDDEN_VERSION = 7;
+// Bumped: dedupeRiddenRoads now also rejects a GPS point matching a segment
+// whose bearing runs perpendicular to the point's actual travel direction, so
+// a straight ride down a main road no longer falsely credits a nearby
+// dead-end spur or cross-street as ridden.
+export const RIDDEN_VERSION = 8;
 const TILE = 0.02; // ~2.2km tiles to gather OSM roads over the riding footprint
 // Guard against a runaway precompute. Self-hosted Overpass (OVERPASS_URL) has
 // no external rate limit, so this is generous — it exists to catch pathological
