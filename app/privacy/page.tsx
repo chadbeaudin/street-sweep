@@ -11,9 +11,9 @@ export default function PrivacyPolicyPage() {
             <p className="text-sm text-gray-500 mb-8">Last updated: September 27, 2026</p>
 
             <p className="mb-6">
-                StreetSweep ("we", "us") helps cyclists and runners find and route streets
-                they haven't covered yet. This policy explains what data StreetSweep
-                collects, how it's used, and your choices.
+                StreetSweep (&quot;we&quot;, &quot;us&quot;) helps cyclists and runners find and route streets
+                they haven&apos;t covered yet. This policy explains what data StreetSweep
+                collects, how it&apos;s used, and your choices.
             </p>
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Information We Collect</h2>
@@ -26,7 +26,7 @@ export default function PrivacyPolicyPage() {
                 <li>
                     <strong>Activity and GPS data:</strong> if you connect Strava or Ride
                     with GPS, we import your activity GPS traces (routes/polylines) so we
-                    can determine which streets you've already ridden or run. We do not
+                    can determine which streets you&apos;ve already ridden or run. We do not
                     import photos, comments, or other social content from these services.
                 </li>
                 <li>
@@ -85,7 +85,7 @@ export default function PrivacyPolicyPage() {
                 completely secure, and we cannot guarantee absolute security.
             </p>
 
-            <h2 className="text-xl font-semibold mt-8 mb-2">Children's Privacy</h2>
+            <h2 className="text-xl font-semibold mt-8 mb-2">Children&apos;s Privacy</h2>
             <p className="mb-6">
                 StreetSweep is not directed to children under 13, and we do not knowingly
                 collect personal information from children under 13.
@@ -94,7 +94,7 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-xl font-semibold mt-8 mb-2">Changes to This Policy</h2>
             <p className="mb-6">
                 We may update this policy from time to time. Material changes will be
-                reflected by updating the "Last updated" date above.
+                reflected by updating the &quot;Last updated&quot; date above.
             </p>
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Contact Us</h2>

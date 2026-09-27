@@ -11,14 +11,14 @@ export default function TermsOfServicePage() {
             <p className="text-sm text-gray-500 mb-8">Last updated: September 27, 2026</p>
 
             <p className="mb-6">
-                These Terms of Service ("Terms") govern your use of StreetSweep (the
-                "Service"). By using StreetSweep, you agree to these Terms.
+                These Terms of Service (&quot;Terms&quot;) govern your use of StreetSweep (the
+                &quot;Service&quot;). By using StreetSweep, you agree to these Terms.
             </p>
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Description of Service</h2>
             <p className="mb-6">
                 StreetSweep helps cyclists and runners find and route streets they
-                haven't covered yet, using map data (OpenStreetMap) and, optionally,
+                haven&apos;t covered yet, using map data (OpenStreetMap) and, optionally,
                 your connected Strava or Ride with GPS activity history.
             </p>
 
@@ -33,9 +33,9 @@ export default function TermsOfServicePage() {
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Acceptable Use</h2>
             <ul className="list-disc pl-6 space-y-2 mb-6">
-                <li>Don't use the Service for any unlawful purpose.</li>
-                <li>Don't attempt to disrupt, overload, or gain unauthorized access to the Service or its infrastructure.</li>
-                <li>Don't scrape or bulk-extract data from the Service beyond your own account's data.</li>
+                <li>Don&apos;t use the Service for any unlawful purpose.</li>
+                <li>Don&apos;t attempt to disrupt, overload, or gain unauthorized access to the Service or its infrastructure.</li>
+                <li>Don&apos;t scrape or bulk-extract data from the Service beyond your own account&apos;s data.</li>
             </ul>
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Routing Is Informational Only</h2>
@@ -50,7 +50,7 @@ export default function TermsOfServicePage() {
 
             <h2 className="text-xl font-semibold mt-8 mb-2">No Warranty</h2>
             <p className="mb-6">
-                The Service is provided "as is" and "as available," without warranties of
+                The Service is provided &quot;as is&quot; and &quot;as available,&quot; without warranties of
                 any kind, express or implied, including but not limited to accuracy,
                 completeness, or fitness for a particular purpose.
             </p>
