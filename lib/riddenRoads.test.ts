@@ -202,6 +202,43 @@ describe('dedupeRiddenRoads', () => {
         const hitTrail = result.some(seg => seg.some(([lat]) => lat > metersToLatDeg(5)));
         expect(hitTrail).toBe(false);
     });
+
+    it('regression: a fully-ridden curvy road split into many OSM way-segments stays one continuous covered run', () => {
+        // Real-world bug: the closest-candidate-only fix above, applied with a strict
+        // single winner and no tie margin, over-corrected. A long physical road is
+        // typically split by OSM into many short, individually-numbered way entries
+        // (one per intersection/vertex), and a real GPS trace never sits exactly on
+        // the road's own line -- it drifts a few meters to one side. At each bend,
+        // which of the two neighboring way-segments is "closest" to an off-line point
+        // can flip based on which side of the bend the point falls, starving whichever
+        // segment loses most of its own nearby points of enough matches to individually
+        // clear MIN_COVERED_M -- a fully-ridden curvy road (e.g. a real rider's Sand
+        // Flats Road / CR 82) then rendered as a broken dashed line instead of one
+        // continuous ridden stretch.
+        const m = metersToLatDeg;
+        // A gently curving road, each ~15m stretch its own separate way entry (as OSM
+        // commonly splits at a real vertex), overall heading east while wiggling
+        // slightly north/south.
+        const roads: [number, number][][] = [];
+        const vertices: [number, number][] = [];
+        for (let i = 0; i <= 20; i++) vertices.push([m(i % 2 === 0 ? 0 : 3), m(i * 15)]);
+        for (let i = 0; i < vertices.length - 1; i++) roads.push([vertices[i], vertices[i + 1]]);
+
+        // Rider's real GPS trace drifts a constant 3m to one side of the road's own
+        // line the whole way -- realistic corner-cutting/drift, not a perfect trace.
+        const ride: [number, number][] = vertices.map(([lat, lon]) => [lat + m(3), lon]);
+
+        const result = dedupeRiddenRoads([ride], roads);
+        const coveredLength = result.reduce((sum, seg) => {
+            let len = 0;
+            for (let i = 1; i < seg.length; i++) len += Math.hypot(seg[i][0] - seg[i - 1][0], seg[i][1] - seg[i - 1][1]) * M_PER_DEG_LAT;
+            return sum + len;
+        }, 0);
+
+        // Full road is ~300m -- should render as (essentially) one continuous run, not
+        // a handful of short fragments totaling far less.
+        expect(coveredLength).toBeGreaterThan(280);
+    });
 });
 
 describe('combineRiddenOverlay', () => {

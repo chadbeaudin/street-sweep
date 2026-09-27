@@ -109,15 +109,27 @@ export function dedupeRiddenRoads(
         const cand = segGrid.get(cellKey(gLat, gLon));
         if (!cand) return;
         const mLon = M_PER_DEG_LAT * Math.cos(gLat * Math.PI / 180);
-        // Only the single CLOSEST candidate within tolerance gets credited, not every
-        // one -- a GPS point belongs to one road, not however many happen to sit within
-        // TOLERANCE_M. Without this, a genuinely different but roughly-parallel road or
-        // trail running near the real ridden street for even part of its length (common
-        // in Moab's braided jeep-trail network) got credited alongside it for that
-        // stretch, even though the rider only ever traveled the real one. Bearing
-        // filtering alone can't catch this: a parallel road shares the real road's
-        // bearing by definition.
-        let best: { key: string; t: number; lenM: number; dist: number } | null = null;
+        // Only candidates within TIE_MARGIN_M of the single closest one get credited,
+        // not every candidate within TOLERANCE_M -- a GPS point belongs to one road, not
+        // however many happen to sit within tolerance. Without this, a genuinely
+        // different but roughly-parallel road or trail running near the real ridden
+        // street for even part of its length (common in Moab's braided jeep-trail
+        // network) got credited alongside it for that stretch, even though the rider
+        // only ever traveled the real one. Bearing filtering alone can't catch this: a
+        // parallel road shares the real road's own bearing by definition.
+        //
+        // A strict single-winner version of this (no margin) over-corrected: a long
+        // physical road is typically split by OSM into many short way-segments, and at
+        // their shared vertices a negligible geometric difference (curve, floating
+        // point) can flip "closest" between two segments of that *same* road from one
+        // GPS point to the next, starving whichever one loses of enough matched points
+        // to individually clear MIN_COVERED_M -- fragmenting an otherwise fully-ridden
+        // road into dashes. A small tie margin keeps near-equally-close candidates
+        // (almost always the same road's own adjacent segments) all in play, while a
+        // genuinely different nearby road -- tens of meters farther, not centimeters --
+        // still loses outright.
+        const TIE_MARGIN_M = 3;
+        const candidates: { key: string; t: number; lenM: number; dist: number }[] = [];
         for (const [r, s] of cand) {
             const key = `${r}:${s}`;
             // (No early skip for an already-sufficiently-covered key here: that was a
@@ -150,12 +162,16 @@ export function dedupeRiddenRoads(
                 const diff = Math.abs(travelBearing % 180 - segBearing);
                 if (Math.min(diff, 180 - diff) > MAX_BEARING_DIFF_DEG) continue;
             }
-            if (!best || dist < best.dist) best = { key, t, lenM, dist };
+            candidates.push({ key, t, lenM, dist });
         }
-        if (!best) return;
-        const existing = coverage.get(best.key);
-        if (!existing) coverage.set(best.key, { minT: best.t, maxT: best.t, lenM: best.lenM });
-        else { if (best.t < existing.minT) existing.minT = best.t; if (best.t > existing.maxT) existing.maxT = best.t; }
+        if (candidates.length === 0) return;
+        const minDist = Math.min(...candidates.map(c => c.dist));
+        for (const { key, t, lenM, dist } of candidates) {
+            if (dist > minDist + TIE_MARGIN_M) continue;
+            const existing = coverage.get(key);
+            if (!existing) coverage.set(key, { minT: t, maxT: t, lenM });
+            else { if (t < existing.minT) existing.minT = t; if (t > existing.maxT) existing.maxT = t; }
+        }
     };
 
     for (const activity of riddenRoads) {
