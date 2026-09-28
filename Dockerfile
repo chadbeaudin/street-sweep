@@ -26,10 +26,12 @@ ENV NODE_ENV production
 # of detected memory rather than the fly.toml VM size -- confirmed via a
 # prod OOM crash whose GC trace showed the heap plateauing at ~480-490MB and
 # dying, on a machine with 1024MB available. Bumping the VM's memory alone
-# (512mb -> 1024mb) didn't help because Node never tried to use the extra
-# room. Cap explicitly at 896MB, leaving ~128MB headroom for non-heap
-# overhead (native buffers, the OS, etc.) within the container.
-ENV NODE_OPTIONS="--max-old-space-size=896"
+# doesn't help because Node never tries to use the extra room -- this cap
+# must be bumped by hand every time fly.toml's [[vm]] memory changes.
+# VM is now 2048MB (bumped from 1024MB after a second OOM crash during a
+# large ridden-roads recompute); cap explicitly at 1536MB, leaving ~512MB
+# headroom for non-heap overhead (native buffers, the OS, etc.).
+ENV NODE_OPTIONS="--max-old-space-size=1536"
 
 LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/public/icon.png"
 
