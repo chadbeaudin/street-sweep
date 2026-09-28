@@ -55,6 +55,15 @@ RUN mkdir -p .cache && chown nextjs:nodejs .cache
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# The `worker` Fly process group (fly.toml [processes]) runs this same
+# server.js plus a small self-ticking loop (scripts/worker-tick-loop.js) that
+# calls its own internal-only endpoint (app/api/internal/ridden-roads-tick) --
+# see lib/riddenRoadsRefresh.ts for why: a large ridden-roads recompute used
+# to run inline in the web process and could OOM-crash or block it for 10+
+# minutes. The tick-loop script is plain dependency-free JS, so it needs
+# nothing beyond what's already in this image.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/worker-tick-loop.js ./scripts/worker-tick-loop.js
+
 USER nextjs
 
 EXPOSE 3888

@@ -2167,7 +2167,7 @@ export default function Home() {
                     below -- the map and routing already work while this runs. Without it, a
                     first-time connect (isStravaLoading clears once the raw activity list is
                     fetched) landed the user on what looked like a plain, empty map for up to
-                    a minute while the server-side ridden-road overlay was still computing. */}
+                    several minutes while the server-side ridden-road overlay was still computing. */}
                 {isRiddenComputing && !isStravaLoading && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="relative flex items-center justify-center">
@@ -2175,7 +2175,7 @@ export default function Home() {
                             <Loader2 className="w-4 h-4 animate-spin text-[#FC4C02] relative z-10" />
                         </div>
                         <span className="text-sm font-bold text-gray-900 tracking-tight">
-                            Syncing your ride history... this can take a minute the first time
+                            Syncing your ride history... this can take 5-10 minutes the first time. You can start creating routes now — they&apos;ll just be missing the ridden-roads overlay until this finishes.
                         </span>
                     </div>
                 )}

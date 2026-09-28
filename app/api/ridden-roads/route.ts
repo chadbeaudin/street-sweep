@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
-import { RIDDEN_VERSION, RIDDEN_REFRESHING, riddenRoadsCacheKey, refreshRiddenRoadsInBackground, ActivityMode } from '@/lib/riddenRoadsRefresh';
+import { RIDDEN_VERSION, riddenRoadsCacheKey, refreshRiddenRoadsInBackground, isRiddenRoadsJobActive, ActivityMode } from '@/lib/riddenRoadsRefresh';
 import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
             return NextResponse.json({
                 roads: cached.roads,
                 refreshedAt: cached.refreshedAt.toISOString(),
-                refreshing: RIDDEN_REFRESHING.has(key),
+                refreshing: await isRiddenRoadsJobActive(key),
                 computing: false,
             });
         }

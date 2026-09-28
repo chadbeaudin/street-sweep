@@ -32,6 +32,27 @@ model RiddenRoadsCache {
   @@map("ridden_roads_cache")
 }
 
+// A queued/checkpointed recompute job, processed by the separate `worker`
+// process (worker.ts) -- never run inline in the web-serving process. This
+// lets an API route enqueue a job (near-instant, cannot block or crash the
+// web tier) and lets a crashed worker resume from its last checkpoint
+// (partialRoads/tilesDone) instead of restarting a large recompute from zero.
+model RiddenRoadsJob {
+  key             String    @id // riddenRoadsCacheKey(athleteId, mode)
+  athleteId       String
+  mode            String
+  status          String    @default("queued") // queued | running | done | failed
+  tilesDone       Int       @default(0)
+  tilesTotal      Int       @default(0)
+  partialRoads    Json?     // checkpointed accumulated road geometry, mid-fetch
+  credsEncrypted  String    // encrypted JSON of {clientId?,clientSecret?,refreshToken} -- needed to resume fetching without re-enqueueing; encrypted at rest like Account tokens (lib/tokenCrypto.ts)
+  error           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("ridden_roads_jobs")
+}
+
 model Route {
   id          String            @id @default(cuid())
   name        String?

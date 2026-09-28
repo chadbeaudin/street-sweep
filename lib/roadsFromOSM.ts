@@ -1,4 +1,4 @@
-import { OSMWay } from '@/lib/types';
+import { OSMWay } from './types';
 
 export function roadsFromOSM(data: { elements: any[] }): [number, number][][] {
     const nodeMap = new Map<number, [number, number]>();
@@ -13,7 +13,7 @@ export function roadsFromOSM(data: { elements: any[] }): [number, number][][] {
         // one should still show as covered.
         if (hw === 'motorway') continue;
         let path: [number, number][];
-        if (way.geometry) path = way.geometry.map(p => [p.lat, p.lon]);
+        if (way.geometry) path = way.geometry.map((p: { lat: number; lon: number }) => [p.lat, p.lon]);
         else { path = []; for (const nid of way.nodes ?? []) { const c = nodeMap.get(nid); if (c) path.push(c); } }
         if (path.length > 1) roads.push(path);
     }
