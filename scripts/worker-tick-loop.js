@@ -13,14 +13,34 @@ const PORT = process.env.PORT || 3888;
 const URL = `http://localhost:${PORT}/api/internal/ridden-roads-tick`;
 const SECRET = process.env.INTERNAL_WORKER_SECRET;
 const POLL_INTERVAL_MS = 5000;
+// If the local server.js dies, every tick fails forever with no way to recover
+// on its own (this loop doesn't restart it). Past this many consecutive
+// connection failures, exit non-zero so the container's init sees process 1's
+// job fail and Fly restarts the whole machine, respawning both processes.
+const MAX_CONSECUTIVE_FAILURES = 12; // ~1 minute at POLL_INTERVAL_MS
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function tick() {
+let consecutiveFailures = 0;
+
+// Pure state-transition step, exported so its exit threshold behavior can be
+// unit-tested without real fetch/process.exit.
+function recordTickResult(succeeded, failures = consecutiveFailures) {
+    if (succeeded) return 0;
+    return failures + 1;
+}
+
+async function tick(fetchFn = fetch, exitFn = process.exit) {
     try {
-        await fetch(URL, { method: 'POST', headers: { 'x-internal-secret': SECRET || '' } });
+        await fetchFn(URL, { method: 'POST', headers: { 'x-internal-secret': SECRET || '' } });
+        consecutiveFailures = recordTickResult(true);
     } catch (e) {
-        console.warn(`[worker-tick-loop] tick failed: ${e.message}`);
+        consecutiveFailures = recordTickResult(false);
+        console.warn(`[worker-tick-loop] tick failed: ${e.message} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES} consecutive)`);
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            console.error('[worker-tick-loop] too many consecutive failures, exiting so Fly restarts the machine');
+            exitFn(1);
+        }
     }
 }
 
@@ -33,4 +53,6 @@ async function main() {
     }
 }
 
-main();
+module.exports = { recordTickResult, tick, MAX_CONSECUTIVE_FAILURES };
+
+if (require.main === module) main();
