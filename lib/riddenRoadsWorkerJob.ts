@@ -7,13 +7,12 @@
 import { prisma } from './prisma';
 import { fetchOSMData } from './overpass';
 import { roadsFromOSM } from './roadsFromOSM';
-import { dedupeRiddenRoads } from './riddenRoads';
+import { dedupeRiddenRoads, filterRiddenRoadsToBbox } from './riddenRoads';
 import { fetchCyclingRiddenRoads } from './strava';
-import { RIDDEN_VERSION, TILE, MAX_TILES, decryptJobCreds, ActivityMode } from './riddenRoadsRefresh';
+import { RIDDEN_VERSION, tileBbox, decryptJobCreds, ActivityMode } from './riddenRoadsRefresh';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-const CHECKPOINT_EVERY = 25;
 const STALE_RUNNING_MS = 5 * 60 * 1000;
 
 type Job = NonNullable<Awaited<ReturnType<typeof claimNextJob>>>;
@@ -36,62 +35,63 @@ export async function claimNextJob() {
     return prisma.riddenRoadsJob.findUnique({ where: { key: candidate.key } });
 }
 
+// Padding beyond a tile's own edges to pull in GPS points/OSM ways that cross
+// the boundary -- matches dedupeRiddenRoads's own 50m proximity tolerance so a
+// ridden road right at a tile edge doesn't lose the samples that would prove
+// it was ridden.
+const TILE_MATCH_PADDING_M = 50;
+
 async function processJob(job: Job) {
     const { key, athleteId, mode } = job;
-    console.log(`${ts()} RiddenRoads worker: starting ${key} (resuming from ${job.tilesDone} tiles)`);
+    const pending: string[] = Array.isArray(job.tiles) ? (job.tiles as any) : [];
+    console.log(`${ts()} RiddenRoads worker: starting ${key} (${pending.length} tiles pending)`);
+    if (pending.length === 0) {
+        await prisma.riddenRoadsJob.delete({ where: { key } });
+        return;
+    }
     const creds = decryptJobCreds(job.credsEncrypted);
 
+    // Fetched once per tick, not per tile -- this is proportional to one
+    // rider's own ride count, which is bounded regardless of how many tiles
+    // are being (re)computed this tick.
     const { riddenRoads } = await fetchCyclingRiddenRoads(creds, mode as ActivityMode);
 
-    const tileSet = new Set<string>();
-    for (const poly of riddenRoads) for (const [lat, lon] of poly) tileSet.add(`${Math.floor(lat / TILE)},${Math.floor(lon / TILE)}`);
-    const tileList = Array.from(tileSet).sort();
-    console.log(`${ts()} RiddenRoads worker: ${tileList.length} OSM tiles for ${riddenRoads.length} rides`);
-
-    if (tileList.length > MAX_TILES) {
-        throw new Error(`footprint too large (${tileList.length} tiles > ${MAX_TILES}); skipping precompute`);
-    }
-
-    // Resume from the last checkpoint rather than re-fetching tiles already
-    // accumulated in a previous, interrupted attempt at this same job.
-    const roads: [number, number][][] = Array.isArray(job.partialRoads) ? (job.partialRoads as any) : [];
-    let failed = 0;
-    for (let i = job.tilesDone; i < tileList.length; i++) {
-        const [ty, tx] = tileList[i].split(',').map(Number);
+    let remaining = pending;
+    for (const tile of pending) {
         try {
-            const osm = await fetchOSMData({ south: ty * TILE, west: tx * TILE, north: (ty + 1) * TILE, east: (tx + 1) * TILE });
-            roads.push(...roadsFromOSM(osm));
-        } catch (e: any) {
-            failed++;
-            console.warn(`${ts()} RiddenRoads worker: tile ${tileList[i]} failed: ${e.message}`);
-        }
-        const doneCount = i + 1;
-        if (doneCount % CHECKPOINT_EVERY === 0 || doneCount === tileList.length) {
-            console.log(`${ts()} RiddenRoads worker: fetched ${doneCount}/${tileList.length} tiles (${failed} failed)`);
-            await prisma.riddenRoadsJob.update({
-                where: { key },
-                data: { tilesDone: doneCount, tilesTotal: tileList.length, partialRoads: roads as any },
+            const bbox = tileBbox(tile);
+            const localRidden = filterRiddenRoadsToBbox(riddenRoads, bbox, TILE_MATCH_PADDING_M) ?? [];
+            // Nothing this rider has ever done passes through this tile -- an
+            // empty (but present) cache row still avoids re-fetching OSM data
+            // for it on every future viewport visit.
+            let deduped: [number, number][][] = [];
+            if (localRidden.length > 0) {
+                const osm = await fetchOSMData(bbox);
+                const roads = roadsFromOSM(osm);
+                deduped = dedupeRiddenRoads(localRidden, roads);
+            }
+            await prisma.riddenRoadsTile.upsert({
+                where: { athleteKey_tile: { athleteKey: key, tile } },
+                create: { athleteKey: key, tile, roads: deduped as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
+                update: { roads: deduped as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
             });
+        } catch (e: any) {
+            console.warn(`${ts()} RiddenRoads worker: tile ${tile} failed, will retry next tick: ${e.message}`);
+            continue; // leave it in `remaining` below for the next tick
         }
-        // Small pacing delay — a full recompute (e.g. after a cache-version bump) can hit
-        // hundreds/thousands of tiles back-to-back and trip the Overpass instance's own
-        // rate limit (509), which cascades into blocking interactive routing for everyone
-        // via the shared circuit breaker. This keeps the worker well under that.
+        remaining = remaining.filter(t => t !== tile);
+        await prisma.riddenRoadsJob.update({ where: { key }, data: { tiles: remaining } }).catch(() => {});
+        // Small pacing delay — a big viewport/route area can still be dozens of tiles,
+        // and hitting Overpass back-to-back can trip its own rate limit (509), which
+        // cascades into blocking interactive routing for everyone via the shared
+        // circuit breaker. This keeps the worker well under that.
         await delay(75);
     }
 
-    if (tileList.length > 0 && failed / tileList.length > 0.3) {
-        throw new Error(`too many OSM tile fetches failed (${failed}/${tileList.length}); skipping persist`);
+    console.log(`${ts()} RiddenRoads worker: ${pending.length - remaining.length}/${pending.length} tiles done for ${key}`);
+    if (remaining.length === 0) {
+        await prisma.riddenRoadsJob.delete({ where: { key } });
     }
-
-    const deduped = dedupeRiddenRoads(riddenRoads, roads);
-    await prisma.riddenRoadsCache.upsert({
-        where: { athleteId: key },
-        create: { athleteId: key, roads: deduped as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
-        update: { roads: deduped as any, version: RIDDEN_VERSION, refreshedAt: new Date() },
-    });
-    console.log(`${ts()} RiddenRoads worker: cached ${deduped.length} segments for ${key}`);
-    await prisma.riddenRoadsJob.delete({ where: { key } });
 }
 
 // Claims and fully processes at most one job, then returns. Called

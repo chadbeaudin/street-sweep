@@ -3,7 +3,7 @@ const mockUpdateMany = jest.fn();
 const mockFindUnique = jest.fn();
 const mockUpdate = jest.fn();
 const mockDelete = jest.fn();
-const mockCacheUpsert = jest.fn();
+const mockTileUpsert = jest.fn();
 jest.mock('./prisma', () => ({
     prisma: {
         riddenRoadsJob: {
@@ -13,7 +13,7 @@ jest.mock('./prisma', () => ({
             update: (...args: any[]) => mockUpdate(...args),
             delete: (...args: any[]) => mockDelete(...args),
         },
-        riddenRoadsCache: { upsert: (...args: any[]) => mockCacheUpsert(...args) },
+        riddenRoadsTile: { upsert: (...args: any[]) => mockTileUpsert(...args) },
     },
 }));
 
@@ -24,7 +24,11 @@ const mockRoadsFromOSM = jest.fn();
 jest.mock('./roadsFromOSM', () => ({ roadsFromOSM: (...args: any[]) => mockRoadsFromOSM(...args) }));
 
 const mockDedupe = jest.fn();
-jest.mock('./riddenRoads', () => ({ dedupeRiddenRoads: (...args: any[]) => mockDedupe(...args) }));
+const mockFilterToBbox = jest.fn();
+jest.mock('./riddenRoads', () => ({
+    dedupeRiddenRoads: (...args: any[]) => mockDedupe(...args),
+    filterRiddenRoadsToBbox: (...args: any[]) => mockFilterToBbox(...args),
+}));
 
 const mockFetchCyclingRiddenRoads = jest.fn();
 jest.mock('./strava', () => ({ fetchCyclingRiddenRoads: (...args: any[]) => mockFetchCyclingRiddenRoads(...args) }));
@@ -32,8 +36,10 @@ jest.mock('./strava', () => ({ fetchCyclingRiddenRoads: (...args: any[]) => mock
 const mockDecryptJobCreds = jest.fn();
 jest.mock('./riddenRoadsRefresh', () => ({
     RIDDEN_VERSION: 12,
-    TILE: 0.02,
-    MAX_TILES: 5000,
+    tileBbox: (tile: string) => {
+        const [ty, tx] = tile.split(',').map(Number);
+        return { south: ty * 0.02, north: (ty + 1) * 0.02, west: tx * 0.02, east: (tx + 1) * 0.02 };
+    },
     decryptJobCreds: (...args: any[]) => mockDecryptJobCreds(...args),
 }));
 
@@ -41,7 +47,7 @@ import { claimNextJob, tickRiddenRoadsWorker } from './riddenRoadsWorkerJob';
 
 const baseJob = {
     key: 'athlete1', athleteId: 'athlete1', mode: 'cycling', status: 'queued',
-    tilesDone: 0, tilesTotal: 0, partialRoads: null, credsEncrypted: 'enc', error: null,
+    tiles: ['1,2'], credsEncrypted: 'enc', error: null,
     updatedAt: new Date(),
 };
 
@@ -49,11 +55,13 @@ beforeEach(() => {
     jest.clearAllMocks();
     mockDecryptJobCreds.mockReturnValue({ refreshToken: 'tok' });
     mockFetchCyclingRiddenRoads.mockResolvedValue({ riddenRoads: [[[0, 0], [0.01, 0.01]]] });
+    mockFilterToBbox.mockReturnValue([[[0, 0], [0.01, 0.01]]]);
     mockFetchOSMData.mockResolvedValue({ elements: [] });
     mockRoadsFromOSM.mockReturnValue([]);
     mockDedupe.mockReturnValue([[[0, 0], [0.01, 0.01]]]);
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockUpdate.mockResolvedValue({});
+    mockTileUpsert.mockResolvedValue({});
 });
 
 describe('claimNextJob', () => {
@@ -88,38 +96,47 @@ describe('tickRiddenRoadsWorker', () => {
         expect(mockFetchCyclingRiddenRoads).not.toHaveBeenCalled();
     });
 
-    it('processes a job end to end and deletes it on success', async () => {
+    it('processes every pending tile and deletes the job once none remain', async () => {
         mockFindFirst.mockResolvedValue(baseJob);
         mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
         const result = await tickRiddenRoadsWorker();
         expect(result).toEqual({ processed: true, key: 'athlete1' });
-        expect(mockCacheUpsert).toHaveBeenCalledWith(expect.objectContaining({ where: { athleteId: 'athlete1' } }));
+        expect(mockTileUpsert).toHaveBeenCalledWith(expect.objectContaining({
+            where: { athleteKey_tile: { athleteKey: 'athlete1', tile: '1,2' } },
+        }));
         expect(mockDelete).toHaveBeenCalledWith({ where: { key: 'athlete1' } });
     });
 
-    it('resumes from the last checkpoint instead of re-fetching already-done tiles', async () => {
-        const resumedJob = { ...baseJob, tilesDone: 1, partialRoads: [[[9, 9], [9.1, 9.1]]] };
-        mockFindFirst.mockResolvedValue(resumedJob);
-        mockFindUnique.mockResolvedValue({ ...resumedJob, status: 'running' });
-        // Two tiles total from the ride's bbox; tilesDone=1 means only the second should be fetched.
-        mockFetchCyclingRiddenRoads.mockResolvedValue({ riddenRoads: [[[0, 0], [0.03, 0.03]]] });
+    it('only fetches OSM data for tiles a rider actually has GPS data in, not empty ones', async () => {
+        mockFindFirst.mockResolvedValue(baseJob);
+        mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
+        mockFilterToBbox.mockReturnValue([]); // no ride passes through this tile
         await tickRiddenRoadsWorker();
-        // dedupeRiddenRoads should see the previously-checkpointed road plus whatever this run fetched.
-        const dedupeArgs = mockDedupe.mock.calls[0];
-        expect(dedupeArgs[1]).toEqual(expect.arrayContaining([[[9, 9], [9.1, 9.1]]]));
+        expect(mockFetchOSMData).not.toHaveBeenCalled();
+        expect(mockTileUpsert).toHaveBeenCalledWith(expect.objectContaining({
+            create: expect.objectContaining({ roads: [] }),
+        }));
     });
 
-    it('marks the job failed (not deleted) when too many tile fetches fail, and does not touch the cache', async () => {
+    it('does not fetch OSM data or the rider history at all once every tile is already done', async () => {
+        mockFindFirst.mockResolvedValue({ ...baseJob, tiles: [] });
+        mockFindUnique.mockResolvedValue({ ...baseJob, tiles: [], status: 'running' });
+        const result = await tickRiddenRoadsWorker();
+        expect(result).toEqual({ processed: true, key: 'athlete1' });
+        expect(mockFetchCyclingRiddenRoads).not.toHaveBeenCalled();
+        expect(mockDelete).toHaveBeenCalledWith({ where: { key: 'athlete1' } });
+    });
+
+    it('leaves a failed tile pending for the next tick instead of failing the whole job', async () => {
         mockFindFirst.mockResolvedValue(baseJob);
         mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
         mockFetchOSMData.mockRejectedValue(new Error('overpass down'));
-        await tickRiddenRoadsWorker();
-        expect(mockCacheUpsert).not.toHaveBeenCalled();
+        const result = await tickRiddenRoadsWorker();
+        expect(result).toEqual({ processed: true, key: 'athlete1' });
+        expect(mockTileUpsert).not.toHaveBeenCalled();
         expect(mockDelete).not.toHaveBeenCalled();
-        expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
-            where: { key: 'athlete1' },
-            data: expect.objectContaining({ status: 'failed' }),
-        }));
+        // The job's tile list is untouched -- next tick will retry the same tile.
+        expect(mockUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) }));
     });
 
     it('never throws out of tickRiddenRoadsWorker even when marking the job failed itself errors', async () => {

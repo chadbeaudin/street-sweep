@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities, resolveAthleteId } from '@/lib/strava';
-import { refreshRiddenRoadsInBackground } from '@/lib/riddenRoadsRefresh';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
 export async function POST(req: Request) {
@@ -27,14 +26,11 @@ export async function POST(req: Request) {
 
         if (forceSync) {
             await forceSyncStravaActivities(stravaCredentials);
-            // A manual sync means the user explicitly wants their latest rides
-            // reflected everywhere -- kick the map overlay's own recompute
-            // right now instead of leaving it to catch up on its independent
-            // 24h timer. Fire-and-forget: the overlay is best-effort/eventual,
-            // this response doesn't wait on it.
-            resolveAthleteId(stravaCredentials)
-                .then(athleteId => refreshRiddenRoadsInBackground(athleteId, stravaCredentials, mode))
-                .catch(e => console.warn(`[API/Strava] Could not kick ridden-roads overlay refresh: ${e.message}`));
+            // The matched-road overlay is now recomputed per-viewport (see
+            // /api/ridden-roads), not for a rider's whole history in one shot,
+            // so there's no whole-rider job to kick here -- the client's own
+            // viewport-scoped effect re-requests its current tiles right after
+            // a forced resync (it resets its "already fetched" tracking then).
         }
         const { riddenRoads, activityElevations, activityTypes } = await fetchCyclingRiddenRoads(stravaCredentials, mode);
 

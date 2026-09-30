@@ -9,24 +9,18 @@ jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
 jest.mock('@/lib/strava', () => ({
     fetchCyclingRiddenRoads: jest.fn(),
     forceSyncStravaActivities: jest.fn(),
-    resolveAthleteId: jest.fn().mockResolvedValue('athlete-1'),
 }));
-jest.mock('@/lib/riddenRoadsRefresh', () => ({ refreshRiddenRoadsInBackground: jest.fn() }));
 jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
 
 import { POST } from './route';
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities, resolveAthleteId } from '@/lib/strava';
-import { refreshRiddenRoadsInBackground } from '@/lib/riddenRoadsRefresh';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchCyclingRiddenRoads>;
 const mockedForceSync = forceSyncStravaActivities as jest.MockedFunction<typeof forceSyncStravaActivities>;
-const mockedResolveAthleteId = resolveAthleteId as jest.MockedFunction<typeof resolveAthleteId>;
-const mockedRefreshOverlay = refreshRiddenRoadsInBackground as jest.MockedFunction<typeof refreshRiddenRoadsInBackground>;
 const mockedGetSessionCreds = getSessionStravaCredentials as jest.MockedFunction<typeof getSessionStravaCredentials>;
 
 beforeEach(() => {
-    mockedResolveAthleteId.mockResolvedValue('athlete-1');
     mockedGetSessionCreds.mockResolvedValue(null);
 });
 
@@ -94,7 +88,7 @@ describe('POST /api/strava/activities', () => {
         expect(mockedFetch).toHaveBeenCalledWith(undefined, 'running');
     });
 
-    it('kicks the ridden-roads overlay refresh on a manual sync, so it never silently lags a day behind', async () => {
+    it('force-syncs Strava activities when requested', async () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [], activityElevations: [], activityTypes: [],
             activityDistances: [], activityStartDates: [],
@@ -102,14 +96,10 @@ describe('POST /api/strava/activities', () => {
         });
         const creds = { refreshToken: 'tok' };
         await POST(makeRequest({ stravaCredentials: creds, forceSync: true, activityMode: 'running' }));
-
         expect(mockedForceSync).toHaveBeenCalledWith(creds);
-        await Promise.resolve(); // let the fire-and-forget .then() chain settle
-        expect(mockedResolveAthleteId).toHaveBeenCalledWith(creds);
-        expect(mockedRefreshOverlay).toHaveBeenCalledWith('athlete-1', creds, 'running');
     });
 
-    it('does not touch the overlay refresh when the user did not request a sync', async () => {
+    it('does not force-sync when the user did not request it', async () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [], activityElevations: [], activityTypes: [],
             activityDistances: [], activityStartDates: [],
@@ -117,7 +107,6 @@ describe('POST /api/strava/activities', () => {
         });
         await POST(makeRequest({ stravaCredentials: { refreshToken: 'tok' } }));
         expect(mockedForceSync).not.toHaveBeenCalled();
-        expect(mockedRefreshOverlay).not.toHaveBeenCalled();
     });
 
     it('resolves the refresh token from the session when the client sends none (session-linked sign-in)', async () => {

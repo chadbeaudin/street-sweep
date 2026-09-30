@@ -23,28 +23,34 @@ model GeocodeCache {
   @@map("geocode_cache")
 }
 
-model RiddenRoadsCache {
-  athleteId   String   @id
+// Matched (OSM-snapped) ridden roads, cached per grid tile rather than one
+// blob for a rider's whole ride history -- looking at Colorado shouldn't pull
+// a rider's European trip through OSM matching and into memory. Tiles are
+// computed and evicted independently, keyed by (athleteKey, tile).
+model RiddenRoadsTile {
+  athleteKey  String // riddenRoadsCacheKey(athleteId, mode)
+  tile        String // "ty,tx" grid cell at RIDDEN_TILE degrees (lib/riddenRoadsRefresh.ts)
   roads       Json
   version     Int      @default(1)
   refreshedAt DateTime @default(now())
 
-  @@map("ridden_roads_cache")
+  @@id([athleteKey, tile])
+  @@map("ridden_roads_tiles")
 }
 
-// A queued/checkpointed recompute job, processed by the separate `worker`
-// process (worker.ts) -- never run inline in the web-serving process. This
-// lets an API route enqueue a job (near-instant, cannot block or crash the
-// web tier) and lets a crashed worker resume from its last checkpoint
-// (partialRoads/tilesDone) instead of restarting a large recompute from zero.
+// A queued recompute job, processed by the separate `worker` process
+// (worker.ts) -- never run inline in the web-serving process. This lets an
+// API route enqueue a job (near-instant, cannot block or crash the web tier).
+// `tiles` holds only the still-pending tile keys for this athlete+mode --
+// scoped to whatever bbox(es) a client has actually requested, not their
+// entire ride history -- so a crashed worker resumes from a small remaining
+// list instead of restarting a large recompute from zero.
 model RiddenRoadsJob {
   key             String    @id // riddenRoadsCacheKey(athleteId, mode)
   athleteId       String
   mode            String
   status          String    @default("queued") // queued | running | done | failed
-  tilesDone       Int       @default(0)
-  tilesTotal      Int       @default(0)
-  partialRoads    Json?     // checkpointed accumulated road geometry, mid-fetch
+  tiles           Json      // string[] of pending "ty,tx" tile keys
   credsEncrypted  String    // encrypted JSON of {clientId?,clientSecret?,refreshToken} -- needed to resume fetching without re-enqueueing; encrypted at rest like Account tokens (lib/tokenCrypto.ts)
   error           String?
   createdAt       DateTime  @default(now())

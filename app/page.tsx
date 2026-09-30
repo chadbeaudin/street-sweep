@@ -34,6 +34,7 @@ import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
 import { buildGpxCourse } from '@/lib/gpx';
 import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
+import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles } from '@/lib/roadTiles';
 import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
 
 export default function Home() {
@@ -198,6 +199,9 @@ export default function Home() {
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const fetchedRoadTilesRef = useRef<Set<string>>(new Set());
     const roadTileCacheRef = useRef<[number, number][][]>([]);
+    const fetchedRiddenTilesRef = useRef<Set<string>>(new Set());
+    const riddenTileCacheRef = useRef<[number, number][][]>([]);
+    const riddenAbortControllerRef = useRef<AbortController | null>(null);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped'; computed?: boolean }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
     const historyRef = useRef<RouteSnapshot[]>([]);
@@ -457,63 +461,76 @@ export default function Home() {
         });
     }, [stravaCredentials, stravaRefreshKey, activityMode]);
 
-    // Fetch the server-precomputed, deduped ridden-road overlay. It's
-    // viewport-independent, so the map draws it instantly with no per-pan wait.
-    // This payload can run several MB for a rider with a lot of history, and
-    // the server itself only refreshes it on its own ~24h timer — so it's
-    // cached client-side (IndexedDB) the same way /api/strava/activities
-    // already is, instead of re-fetching the full payload on every page load.
+    // Reset the ridden-road tile accumulator on credential/mode/resync changes
+    // -- a different rider (or a forced resync) invalidates everything we'd
+    // gathered so far, and paint whatever IndexedDB has from last session
+    // instantly while the viewport-scoped effect below fetches fresh tiles.
     useEffect(() => {
+        fetchedRiddenTilesRef.current = new Set();
+        riddenTileCacheRef.current = [];
         if (!hasStravaCreds(stravaCredentials)) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
+        if (stravaRefreshKey > 0) { setPrecomputedRidden(null); return; } // forced resync: don't paint stale cache
+        const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
+        let cancelled = false;
+        getCachedPrecomputedRoads(credentialsKey).then(cachedRoads => {
+            if (cancelled || !cachedRoads) return;
+            riddenTileCacheRef.current = cachedRoads;
+            setPrecomputedRidden(cachedRoads);
+        });
+        return () => { cancelled = true; };
+    }, [stravaCredentials, stravaRefreshKey, activityMode]);
+
+    // Fetch the server's matched (OSM-snapped) ridden-road overlay, scoped to
+    // whatever's actually in view -- not a rider's entire ride history. A ride
+    // in Europe shouldn't cost matching work (or memory, server-side) while
+    // routing in Colorado; it's still shown via the raw stravaRoads overlay
+    // regardless, just never snapped to streets outside where someone's
+    // actually looking. Mirrors the /api/roads viewport-tiling effect above.
+    useEffect(() => {
+        if (!bbox || !hasStravaCreds(stravaCredentials)) return;
+        const missing = missingRiddenTiles(bbox, fetchedRiddenTilesRef.current);
+        if (missing.length === 0) return;
+
+        riddenAbortControllerRef.current?.abort();
+        riddenAbortControllerRef.current = new AbortController();
+        const signal = riddenAbortControllerRef.current.signal;
+        const fetchBbox = riddenBboxForTiles(missing);
+        const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
         let cancelled = false;
         let timer: ReturnType<typeof setTimeout> | null = null;
-        const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
-        const skipCache = stravaRefreshKey > 0;
 
         const fetchFresh = async () => {
             try {
                 const res = await fetch('/api/ridden-roads', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stravaCredentials, activityMode })
+                    body: JSON.stringify({ stravaCredentials, activityMode, bbox: fetchBbox }),
+                    signal,
                 });
                 const data = await res.json();
                 if (cancelled || data.error) { setIsRiddenComputing(false); return; }
                 if (Array.isArray(data.roads) && data.roads.length > 0) {
-                    setPrecomputedRidden(data.roads);
-                    setCachedPrecomputedRoads(data.roads, data.refreshedAt ?? null, credentialsKey);
+                    riddenTileCacheRef.current = riddenTileCacheRef.current.concat(data.roads);
+                    setPrecomputedRidden(riddenTileCacheRef.current);
+                    setCachedPrecomputedRoads(riddenTileCacheRef.current, data.refreshedAt ?? null, credentialsKey);
                 }
                 const stillComputing = !!(data.computing || data.refreshing);
                 setIsRiddenComputing(stillComputing);
-                if (stillComputing && !cancelled) timer = setTimeout(fetchFresh, 8000);
-            } catch { if (!cancelled) setIsRiddenComputing(false); }
+                if (stillComputing) {
+                    if (!cancelled) timer = setTimeout(fetchFresh, 8000);
+                } else {
+                    // Only mark these tiles done once the server confirms nothing's
+                    // still pending for them -- otherwise a pan away and back would
+                    // treat a still-computing area as finished.
+                    for (const t of missing) fetchedRiddenTilesRef.current.add(roadTileKey(t));
+                }
+            } catch (err: any) { if (err.name !== 'AbortError' && !cancelled) setIsRiddenComputing(false); }
         };
 
-        if (skipCache) {
-            setIsRiddenComputing(true);
-            fetchFresh();
-        } else {
-            getCachedPrecomputedRoads(credentialsKey).then(cachedRoads => {
-                if (cancelled) return;
-                if (cachedRoads) {
-                    // Paint the cached copy immediately (no wait), but still revalidate
-                    // against the server in the background -- the server refreshes this
-                    // overlay on its own ~24h timer (or right after a manual Strava sync,
-                    // see #85), and a plain page load / hard refresh has no other way to
-                    // notice a completed recompute. Without this, a rider who synced,
-                    // then reloaded before the background recompute finished, would keep
-                    // seeing the stale pre-sync overlay indefinitely until they clicked
-                    // Sync again -- a hard refresh doesn't touch IndexedDB.
-                    setPrecomputedRidden(cachedRoads);
-                    fetchFresh();
-                } else {
-                    setIsRiddenComputing(true);
-                    fetchFresh();
-                }
-            });
-        }
-        return () => { cancelled = true; if (timer) clearTimeout(timer); };
-    }, [stravaCredentials, stravaRefreshKey, activityMode]);
+        setIsRiddenComputing(true);
+        fetchFresh();
+        return () => { cancelled = true; if (timer) clearTimeout(timer); riddenAbortControllerRef.current?.abort(); };
+    }, [bbox, stravaCredentials, stravaRefreshKey, activityMode]);
 
     const handleBBoxChange = useCallback((newBbox: { south: number; west: number; north: number; east: number }) => {
         setBbox(prev => {
