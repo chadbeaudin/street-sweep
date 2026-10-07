@@ -43,6 +43,54 @@ export function expandBBox(bbox: BBox, fraction: number): BBox {
 // it instead of duplicating its roads.
 export type RiddenTileRoads = Record<string, [number, number][][]>;
 
+// Server-side ridden-roads cache granularity (~2.2km), shared so the client
+// can tell which areas have already been matched.
+export const RIDDEN_TILE = 0.02;
+export const riddenTileKey = (lat: number, lon: number) => `${Math.floor(lat / RIDDEN_TILE)},${Math.floor(lon / RIDDEN_TILE)}`;
+
+// Splits polylines into the runs that fall in tiles not yet matched, keeping
+// the first point inside a matched tile so a run visually meets the matched
+// overlay instead of stopping short of it.
+export function unmatchedRuns(roads: [number, number][][], matched: Set<string>): [number, number][][] {
+    const runs: [number, number][][] = [];
+    for (const road of roads) {
+        let run: [number, number][] = [];
+        for (const pt of road) {
+            const isMatched = matched.has(riddenTileKey(pt[0], pt[1]));
+            if (!isMatched) {
+                run.push(pt);
+            } else if (run.length > 0) {
+                run.push(pt);
+                if (run.length >= 2) runs.push(run);
+                run = [];
+            }
+        }
+        if (run.length >= 2) runs.push(run);
+    }
+    return runs;
+}
+
+// Per-road bounding boxes, computed once per road list so viewport culling
+// on every pan is a cheap box test rather than a pass over every point.
+export interface IndexedRoad { idx: number; road: [number, number][]; south: number; north: number; west: number; east: number }
+
+export function indexRoadBounds(roads: [number, number][][]): IndexedRoad[] {
+    return roads.map((road, idx) => {
+        let south = 90, north = -90, west = 180, east = -180;
+        for (const [lat, lon] of road) {
+            if (lat < south) south = lat;
+            if (lat > north) north = lat;
+            if (lon < west) west = lon;
+            if (lon > east) east = lon;
+        }
+        return { idx, road, south, north, west, east };
+    });
+}
+
+export function roadsIntersecting(index: IndexedRoad[], bbox: BBox): IndexedRoad[] {
+    return index.filter(r => r.north >= bbox.south && r.south <= bbox.north && r.east >= bbox.west && r.west <= bbox.east);
+}
+
 export const flattenRiddenTiles = (tiles: RiddenTileRoads): [number, number][][] => Object.values(tiles).flat();
 
 export const tileKey = (t: TileCoord) => `${t.ty},${t.tx}`;

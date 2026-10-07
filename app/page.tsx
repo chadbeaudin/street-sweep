@@ -54,6 +54,7 @@ export default function Home() {
     const [serviceWarning, setServiceWarning] = useState(false);
     const [stravaRoads, setStravaRoads] = useState<[number, number][][] | null>(null);
     const [precomputedRidden, setPrecomputedRidden] = useState<[number, number][][] | null>(null);
+    const [matchedRiddenTiles, setMatchedRiddenTiles] = useState<Set<string>>(() => new Set());
     const [stravaElevations, setStravaElevations] = useState<number[]>([]);
     const [stravaTypes, setStravaTypes] = useState<string[]>([]);
     const [isStravaLoading, setIsStravaLoading] = useState(false);
@@ -470,6 +471,7 @@ export default function Home() {
     useEffect(() => {
         fetchedRiddenTilesRef.current = new Set();
         riddenTileCacheRef.current = {};
+        setMatchedRiddenTiles(new Set());
         if (!hasStravaCreds(stravaCredentials)) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
         if (stravaRefreshKey > 0) { setPrecomputedRidden(null); return; } // forced resync: don't paint stale cache
         const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
@@ -478,6 +480,7 @@ export default function Home() {
             if (cancelled || !cachedTiles) return;
             riddenTileCacheRef.current = cachedTiles;
             setPrecomputedRidden(flattenRiddenTiles(cachedTiles));
+            setMatchedRiddenTiles(new Set(Object.keys(cachedTiles)));
         });
         return () => { cancelled = true; };
     }, [stravaCredentials, stravaRefreshKey, activityMode]);
@@ -516,6 +519,7 @@ export default function Home() {
                 if (data.tiles && Object.keys(data.tiles).length > 0) {
                     riddenTileCacheRef.current = { ...riddenTileCacheRef.current, ...data.tiles };
                     setPrecomputedRidden(flattenRiddenTiles(riddenTileCacheRef.current));
+                    setMatchedRiddenTiles(new Set(Object.keys(riddenTileCacheRef.current)));
                     setCachedPrecomputedRoads(riddenTileCacheRef.current, data.refreshedAt ?? null, credentialsKey);
                 }
                 const stillComputing = !!(data.computing || data.refreshing);
@@ -2366,6 +2370,7 @@ export default function Home() {
                     hoveredPoint={hoveredPoint}
                     stravaRoads={stravaRoads}
                     precomputedRidden={precomputedRidden}
+                    matchedRiddenTiles={matchedRiddenTiles}
                     startPoint={startPoint}
                     isPickingStart={pickingStart}
                     onStartPick={handleStartPick}

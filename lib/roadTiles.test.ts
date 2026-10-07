@@ -1,4 +1,4 @@
-import { tilesForBBox, tileKey, missingTiles, bboxForTiles, expandBBox, flattenRiddenTiles, ROAD_TILE } from './roadTiles';
+import { tilesForBBox, tileKey, missingTiles, bboxForTiles, expandBBox, flattenRiddenTiles, unmatchedRuns, riddenTileKey, indexRoadBounds, roadsIntersecting, ROAD_TILE } from './roadTiles';
 
 describe('roadTiles', () => {
     const bbox = { south: 40.0, west: -74.0, north: 40.02, east: -73.98 };
@@ -83,5 +83,39 @@ describe('roadTiles', () => {
         cache = { ...cache, ...poll };
         cache = { ...cache, ...poll, '1,3': [[[5, 6]]] as [number, number][][] };
         expect(flattenRiddenTiles(cache)).toEqual([[[1, 2], [3, 4]], [[5, 6]]]);
+    });
+
+    describe('unmatchedRuns', () => {
+        // Points walking east across three 0.02deg ridden tiles: tx 0, 1, 2.
+        const road: [number, number][] = [[0.01, 0.005], [0.01, 0.015], [0.01, 0.025], [0.01, 0.035], [0.01, 0.045], [0.01, 0.055]];
+
+        it('returns every road whole when nothing is matched yet', () => {
+            expect(unmatchedRuns([road], new Set())).toEqual([road]);
+        });
+
+        it('drops points in matched tiles, keeping the first matched point so the run meets the matched overlay', () => {
+            const matched = new Set([riddenTileKey(0.01, 0.025)]); // middle tile
+            expect(unmatchedRuns([road], matched)).toEqual([
+                [[0.01, 0.005], [0.01, 0.015], [0.01, 0.025]],
+                [[0.01, 0.045], [0.01, 0.055]],
+            ]);
+        });
+
+        it('returns nothing once every tile a road crosses is matched', () => {
+            const matched = new Set(road.map(([lat, lon]) => riddenTileKey(lat, lon)));
+            expect(unmatchedRuns([road], matched)).toEqual([]);
+        });
+    });
+
+    describe('roadsIntersecting', () => {
+        const near: [number, number][] = [[40.01, -74.01], [40.015, -73.99]];
+        const far: [number, number][] = [[41.0, -75.0], [41.01, -75.01]];
+        const crossing: [number, number][] = [[39.9, -74.0], [40.1, -74.0]]; // no vertex inside, but spans the box
+
+        it('keeps roads overlapping the bbox, including ones with no vertex inside it, and preserves original indexes', () => {
+            const visible = roadsIntersecting(indexRoadBounds([far, near, crossing]), { south: 40.0, north: 40.02, west: -74.02, east: -73.98 });
+            expect(visible.map(r => r.idx)).toEqual([1, 2]);
+            expect(visible[0].road).toBe(near);
+        });
     });
 });

@@ -1,6 +1,6 @@
 import { prisma } from './prisma';
 import { encryptToken, decryptToken } from './tokenCrypto';
-import type { RiddenTileRoads } from './roadTiles';
+import { RIDDEN_TILE, type RiddenTileRoads } from './roadTiles';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
@@ -19,7 +19,7 @@ export const RIDDEN_VERSION = 12;
 // corrupt/world-scale bbox) -- a real viewport or route-generation area is a
 // handful of tiles, never thousands.
 export const MAX_TILES = Number(process.env.RIDDEN_MAX_TILES ?? 400);
-export const TILE = 0.02; // ~2.2km tiles -- matched-road cache granularity, and the unit fetchOSMData is called per
+export const TILE = RIDDEN_TILE; // ~2.2km tiles -- matched-road cache granularity, and the unit fetchOSMData is called per
 
 export interface BBox { south: number; west: number; north: number; east: number }
 

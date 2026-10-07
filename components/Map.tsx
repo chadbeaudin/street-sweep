@@ -8,6 +8,7 @@ import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
 import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox } from '@/lib/riddenRoads';
 import { bboxFromLatLngs } from '@/lib/selectionBox';
+import { unmatchedRuns, indexRoadBounds, roadsIntersecting } from '@/lib/roadTiles';
 import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 
 // Fix for default marker icon in Leaflet + Next.js
@@ -57,6 +58,7 @@ interface MapProps {
     hoveredPoint: { lat: number; lon: number } | null;
     stravaRoads: [number, number][][] | null;
     precomputedRidden?: [number, number][][] | null;
+    matchedRiddenTiles?: Set<string>;
     startPoint?: { lat: number; lon: number; label: string } | null;
     isPickingStart?: boolean;
     onStartPick?: (lat: number, lon: number) => void;
@@ -478,7 +480,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -578,6 +580,40 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         if (!bbox) return [];
         return filterRiddenRoadsToBbox(snappedStravaRoads, bbox, 1000) ?? [];
     }, [snappedStravaRoads, bbox]);
+
+    // Raw GPS traces for areas the server hasn't matched to streets yet, drawn
+    // faintly so a newly viewed area shows its rides immediately instead of
+    // staying blank until the worker finishes; each tile's run disappears as
+    // its matched roads arrive.
+    const pendingRawRoads = React.useMemo(() => {
+        if (!bbox || !stravaRoads || !matchedRiddenTiles) return [];
+        return unmatchedRuns(filterRiddenRoadsToBbox(stravaRoads, bbox, 1000) ?? [], matchedRiddenTiles);
+    }, [stravaRoads, bbox, matchedRiddenTiles]);
+
+    // allRoads accumulates every street fetched this session, so only give
+    // Leaflet hitboxes for streets near the view -- its canvas renderer
+    // hit-tests every interactive layer on each mouse move.
+    const indexedAllRoads = React.useMemo(() => indexRoadBounds(allRoads ?? []), [allRoads]);
+    const visibleRoadHitboxes = React.useMemo(() => {
+        if (!bbox) return [];
+        const padLat = (bbox.north - bbox.south) * 0.1;
+        const padLon = (bbox.east - bbox.west) * 0.1;
+        return roadsIntersecting(indexedAllRoads, { south: bbox.south - padLat, north: bbox.north + padLat, west: bbox.west - padLon, east: bbox.east + padLon });
+    }, [indexedAllRoads, bbox]);
+
+    // One stable handler object for every hitbox: react-leaflet rebinds a
+    // layer's listeners whenever its eventHandlers identity changes, which on
+    // a fresh inline object meant every hitbox on every render.
+    const roadClickRef = React.useRef({ isAvoidMode, isPickingStart, onAvoidPointAdd, onStartPick, onPointAdd });
+    roadClickRef.current = { isAvoidMode, isPickingStart, onAvoidPointAdd, onStartPick, onPointAdd };
+    const roadHitboxHandlers = React.useMemo(() => ({
+        click: (e: L.LeafletMouseEvent) => {
+            const { isAvoidMode, isPickingStart, onAvoidPointAdd, onStartPick, onPointAdd } = roadClickRef.current;
+            if (isAvoidMode) { onAvoidPointAdd?.({ lat: e.latlng.lat, lon: e.latlng.lng }); return; }
+            if (isPickingStart) { onStartPick?.(e.latlng.lat, e.latlng.lng); return; }
+            onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng });
+        },
+    }), []);
 
     // Fit map whenever an imported route first appears. Only imports — the
     // user hasn't positioned the map for that route's location yet, unlike
@@ -1027,6 +1063,18 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 ))}
 
+                {pendingRawRoads.map((road, idx) => (
+                    <Polyline
+                        key={`strava-pending-${idx}`}
+                        positions={road}
+                        color="#1D4ED8"
+                        weight={2}
+                        opacity={0.35}
+                        dashArray="4 6"
+                        interactive={false}
+                    />
+                ))}
+
                 {/* Strava roads - snapped to OSM geometry */}
                 {/* Activities snapped to road network, so overlapping rides follow exact same path */}
                 {visibleStravaRoads.map((road, idx) => (
@@ -1084,23 +1132,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 ))}
 
                 {/* Invisible interactive layer for cursor and snapping - Rendered AFTER visual lines to be on top of them */}
-                {allRoads && !isSelectionMode && allRoads.map((road, idx) => (
+                {!isSelectionMode && !isEraserMode && visibleRoadHitboxes.map(({ idx, road }) => (
                     <Polyline
                         key={`road-hitbox-${idx}`}
-                        positions={road as [number, number][]}
+                        positions={road}
                         color="#3B82F6"
                         weight={15}
                         opacity={0} // Totally invisible, but interactive
-                        interactive={!isEraserMode}
                         bubblingMouseEvents={true}
                         className="road-hitbox"
-                        eventHandlers={{
-                            click: isEraserMode ? undefined : (e) => {
-                                if (isAvoidMode) { onAvoidPointAdd?.({ lat: e.latlng.lat, lon: e.latlng.lng }); return; }
-                                if (isPickingStart) { onStartPick?.(e.latlng.lat, e.latlng.lng); return; }
-                                onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng });
-                            },
-                        }}
+                        eventHandlers={roadHitboxHandlers}
                     />
                 ))}
 
