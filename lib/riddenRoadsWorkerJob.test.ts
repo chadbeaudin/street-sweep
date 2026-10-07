@@ -4,8 +4,14 @@ const mockFindUnique = jest.fn();
 const mockUpdate = jest.fn();
 const mockDelete = jest.fn();
 const mockTileUpsert = jest.fn();
+const mockTileDeleteMany = jest.fn();
+const mockTileCreateMany = jest.fn();
+const mockTransaction = jest.fn();
+const mockExecuteRaw = jest.fn();
 jest.mock('./prisma', () => ({
     prisma: {
+        $transaction: (...args: any[]) => mockTransaction(...args),
+        $executeRaw: (strings: TemplateStringsArray, ...values: any[]) => mockExecuteRaw(strings.join('?'), ...values),
         riddenRoadsJob: {
             findFirst: (...args: any[]) => mockFindFirst(...args),
             updateMany: (...args: any[]) => mockUpdateMany(...args),
@@ -13,7 +19,11 @@ jest.mock('./prisma', () => ({
             update: (...args: any[]) => mockUpdate(...args),
             delete: (...args: any[]) => mockDelete(...args),
         },
-        riddenRoadsTile: { upsert: (...args: any[]) => mockTileUpsert(...args) },
+        riddenRoadsTile: {
+            upsert: (...args: any[]) => mockTileUpsert(...args),
+            deleteMany: (...args: any[]) => mockTileDeleteMany(...args),
+            createMany: (...args: any[]) => mockTileCreateMany(...args),
+        },
     },
 }));
 
@@ -62,7 +72,11 @@ beforeEach(() => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockUpdate.mockResolvedValue({});
     mockTileUpsert.mockResolvedValue({});
+    mockTransaction.mockResolvedValue([]);
+    mockExecuteRaw.mockResolvedValue(1);
 });
+
+const sqlCalls = (pattern: RegExp) => mockExecuteRaw.mock.calls.filter(([sql]) => pattern.test(sql));
 
 describe('claimNextJob', () => {
     it('returns null when there is nothing to claim', async () => {
@@ -104,18 +118,38 @@ describe('tickRiddenRoadsWorker', () => {
         expect(mockTileUpsert).toHaveBeenCalledWith(expect.objectContaining({
             where: { athleteKey_tile: { athleteKey: 'athlete1', tile: '1,2' } },
         }));
-        expect(mockDelete).toHaveBeenCalledWith({ where: { key: 'athlete1' } });
+        expect(sqlCalls(/UPDATE ridden_roads_jobs\s+SET tiles/)).toEqual([[expect.any(String), ['1,2'], 'athlete1']]);
+        expect(sqlCalls(/DELETE FROM ridden_roads_jobs .* jsonb_array_length\(tiles\) = 0/)).toHaveLength(1);
     });
 
-    it('only fetches OSM data for tiles a rider actually has GPS data in, not empty ones', async () => {
-        mockFindFirst.mockResolvedValue(baseJob);
-        mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
-        mockFilterToBbox.mockReturnValue([]); // no ride passes through this tile
+    it('writes all empty tiles in one batch without fetching OSM data for them', async () => {
+        mockFindFirst.mockResolvedValue({ ...baseJob, tiles: ['1,2', '1,3', '1,4'] });
+        mockFindUnique.mockResolvedValue({ ...baseJob, tiles: ['1,2', '1,3', '1,4'], status: 'running' });
+        mockFilterToBbox.mockReturnValue([]); // no ride passes through these tiles
         await tickRiddenRoadsWorker();
         expect(mockFetchOSMData).not.toHaveBeenCalled();
-        expect(mockTileUpsert).toHaveBeenCalledWith(expect.objectContaining({
-            create: expect.objectContaining({ roads: [] }),
-        }));
+        expect(mockTileUpsert).not.toHaveBeenCalled();
+        expect(mockTileCreateMany).toHaveBeenCalledTimes(1);
+        expect(mockTileCreateMany.mock.calls[0][0].data.map((d: any) => [d.tile, d.roads])).toEqual([['1,2', []], ['1,3', []], ['1,4', []]]);
+        expect(mockTransaction).toHaveBeenCalledTimes(1);
+        expect(sqlCalls(/SET tiles/)).toEqual([[expect.any(String), ['1,2', '1,3', '1,4'], 'athlete1']]);
+    });
+
+    it('fetches tiles with rides concurrently, capped at the configured limit', async () => {
+        const tiles = ['1,1', '1,2', '1,3', '1,4', '1,5', '1,6'];
+        mockFindFirst.mockResolvedValue({ ...baseJob, tiles });
+        mockFindUnique.mockResolvedValue({ ...baseJob, tiles, status: 'running' });
+        let inFlight = 0, maxInFlight = 0;
+        mockFetchOSMData.mockImplementation(async () => {
+            maxInFlight = Math.max(maxInFlight, ++inFlight);
+            await new Promise(r => setTimeout(r, 5));
+            inFlight--;
+            return { elements: [] };
+        });
+        await tickRiddenRoadsWorker();
+        expect(mockFetchOSMData).toHaveBeenCalledTimes(6);
+        expect(maxInFlight).toBe(4);
+        expect(mockTileUpsert).toHaveBeenCalledTimes(6);
     });
 
     it('does not fetch OSM data or the rider history at all once every tile is already done', async () => {
@@ -124,18 +158,18 @@ describe('tickRiddenRoadsWorker', () => {
         const result = await tickRiddenRoadsWorker();
         expect(result).toEqual({ processed: true, key: 'athlete1' });
         expect(mockFetchCyclingRiddenRoads).not.toHaveBeenCalled();
-        expect(mockDelete).toHaveBeenCalledWith({ where: { key: 'athlete1' } });
+        expect(sqlCalls(/DELETE FROM ridden_roads_jobs/)).toHaveLength(1);
     });
 
-    it('leaves a failed tile pending for the next tick instead of failing the whole job', async () => {
+    it('leaves a failed tile pending and requeues the job for the next tick instead of failing it', async () => {
         mockFindFirst.mockResolvedValue(baseJob);
         mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
         mockFetchOSMData.mockRejectedValue(new Error('overpass down'));
         const result = await tickRiddenRoadsWorker();
         expect(result).toEqual({ processed: true, key: 'athlete1' });
         expect(mockTileUpsert).not.toHaveBeenCalled();
-        expect(mockDelete).not.toHaveBeenCalled();
-        // The job's tile list is untouched -- next tick will retry the same tile.
+        expect(sqlCalls(/SET tiles/)).toHaveLength(0);
+        expect(sqlCalls(/SET status = 'queued'/)).toHaveLength(1);
         expect(mockUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ status: 'failed' }) }));
     });
 

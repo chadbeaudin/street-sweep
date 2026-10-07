@@ -240,4 +240,41 @@ describe('fetchCyclingRiddenRoads', () => {
         expect(result.riddenRoads.length).toBe(1);
         expect(result.totalCyclingActivities).toBe(1);
     });
+
+    describe('expired activity cache', () => {
+        const old = mockActivity({ id: 1, start_date: '2024-01-01T00:00:00Z' });
+        const expired = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+        let listUrls: string[];
+
+        beforeEach(() => {
+            listUrls = [];
+            (global.fetch as jest.Mock).mockImplementation((url: string) => {
+                if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+                if (isDetailUrl(url)) return Promise.resolve({ ok: true, json: async () => ({ map: {} }) });
+                if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 777 }) });
+                if (url.includes('/activities')) {
+                    listUrls.push(url);
+                    const page1 = url.includes('page=1&');
+                    return Promise.resolve({ ok: true, json: async () => (page1 ? [mockActivity({ id: 2, start_date: '2024-02-01T00:00:00Z' })] : []) });
+                }
+                throw new Error('unexpected fetch: ' + url);
+            });
+        });
+
+        it('only fetches rides newer than the newest cached one and merges them in', async () => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '777', activities: [old], syncedAt: expired });
+            const result = await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'incremental-refresh' });
+            expect(listUrls.every(u => u.includes(`after=${Date.parse('2024-01-01T00:00:00Z') / 1000}`))).toBe(true);
+            expect(result.riddenRoads).toHaveLength(2);
+            const saved = (prisma.stravaActivityCache.upsert as jest.Mock).mock.calls[0][0].update.activities;
+            expect(saved.map((a: any) => a.id)).toEqual([2, 1]);
+        });
+
+        it('does a full fetch when there is no cached history to build on', async () => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue(null);
+            await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'full-refresh' });
+            expect(listUrls.length).toBeGreaterThan(0);
+            expect(listUrls.some(u => u.includes('after='))).toBe(false);
+        });
+    });
 });

@@ -521,7 +521,7 @@ export default function Home() {
                 const stillComputing = !!(data.computing || data.refreshing);
                 setIsRiddenComputing(stillComputing);
                 if (stillComputing) {
-                    if (!cancelled) timer = setTimeout(fetchFresh, 8000);
+                    if (!cancelled) timer = setTimeout(fetchFresh, 2000);
                 } else {
                     // Only mark these tiles done once the server confirms nothing's
                     // still pending for them -- otherwise a pan away and back would

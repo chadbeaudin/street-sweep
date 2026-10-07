@@ -190,14 +190,16 @@ export async function fetchAllStravaActivities(creds?: { clientId?: string; clie
     return fetchAllStravaActivitiesWithToken(accessToken);
 }
 
-async function fetchAllStravaActivitiesWithToken(accessToken: string): Promise<StravaActivity[]> {
+// `after` (epoch seconds) limits the pull to activities started after it.
+async function fetchAllStravaActivitiesWithToken(accessToken: string, after?: number): Promise<StravaActivity[]> {
     let page = 1;
     const perPage = 200;
     const allActivities: StravaActivity[] = [];
     let hasMore = true;
 
     while (hasMore) {
-        const response = await fetch(`https://www.strava.com/api/v3/athlete/activities?page=${page}&per_page=${perPage}`, {
+        const afterParam = after !== undefined ? `&after=${after}` : '';
+        const response = await fetch(`https://www.strava.com/api/v3/athlete/activities?page=${page}&per_page=${perPage}${afterParam}`, {
             headers: {
                 'Authorization': `Bearer ${accessToken}`
             }
@@ -248,13 +250,22 @@ async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSec
     const athleteId = await resolveAthleteId(creds);
 
     const cached = await prisma.stravaActivityCache.findUnique({ where: { athleteId } }).catch(() => null);
+    const cachedActivities = (cached?.activities ?? []) as unknown as StravaActivity[];
     if (cached && Date.now() - cached.syncedAt.getTime() < ACTIVITY_CACHE_TTL_MS) {
-        console.log(`[Strava] Serving ${(cached.activities as unknown as StravaActivity[]).length} activities from Postgres cache for athlete ${athleteId}`);
-        return cached.activities as unknown as StravaActivity[];
+        console.log(`[Strava] Serving ${cachedActivities.length} activities from Postgres cache for athlete ${athleteId}`);
+        return cachedActivities;
     }
 
+    // An expired cache only pulls rides newer than the newest cached one -- a
+    // full history download is dozens of seconds and pages of rate limit.
+    // Deleted/edited rides are picked up by forceSyncStravaActivities instead.
     const accessToken = await getStravaAccessToken(creds);
-    const activities = await fetchAllStravaActivitiesWithToken(accessToken);
+    const newestStart = Math.max(...cachedActivities.map(a => Date.parse(a.start_date) || 0));
+    const after = newestStart > 0 ? Math.floor(newestStart / 1000) : undefined;
+    const fetched = await fetchAllStravaActivitiesWithToken(accessToken, after);
+    const fetchedIds = new Set(fetched.map(a => a.id));
+    const activities = after === undefined ? fetched : [...fetched, ...cachedActivities.filter(a => !fetchedIds.has(a.id))];
+    console.log(`[Strava] ${after === undefined ? 'Full' : 'Incremental'} activity sync for athlete ${athleteId}: ${fetched.length} fetched, ${activities.length} total`);
     await prisma.stravaActivityCache.upsert({
         where: { athleteId },
         create: { athleteId, activities: activities as any, syncedAt: new Date() },

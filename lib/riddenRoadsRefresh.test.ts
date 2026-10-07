@@ -70,6 +70,14 @@ describe('refreshRiddenRoadsInBackground', () => {
         }));
     });
 
+    it('puts newly requested tiles ahead of an earlier viewport\'s backlog', async () => {
+        mockFindUnique.mockResolvedValue({ status: 'running', updatedAt: new Date(), tiles: ['1,2', '1,3'] });
+        await refreshRiddenRoadsInBackground('athlete1', { refreshToken: 'tok' }, 'cycling', ['5,5', '1,3']);
+        expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            data: expect.objectContaining({ tiles: ['5,5', '1,3', '1,2'] }),
+        }));
+    });
+
     it('does not touch a running job if every requested tile is already pending', async () => {
         mockFindUnique.mockResolvedValue({ status: 'running', updatedAt: new Date(), tiles: ['1,2', '1,3'] });
         await refreshRiddenRoadsInBackground('athlete1', { refreshToken: 'tok' }, 'cycling', ['1,2']);
@@ -236,8 +244,10 @@ describe('capTilesNearCenter', () => {
     const bbox = { south: 43.8, north: 44.7, west: -121.8, east: -120.6 };
     const center = { lat: 44.25, lng: -121.2 };
 
-    it('returns every tile untouched when under the cap', () => {
-        expect(capTilesNearCenter(['1,2', '1,3'], bbox, 400)).toEqual({ tiles: ['1,2', '1,3'], truncated: false });
+    it('keeps every tile, nearest the center first, when under the cap', () => {
+        const near = `${Math.floor(center.lat / TILE)},${Math.floor(center.lng / TILE)}`;
+        const far = `${Math.floor(bbox.south / TILE)},${Math.floor(bbox.west / TILE)}`;
+        expect(capTilesNearCenter([far, near], bbox, 400)).toEqual({ tiles: [near, far], truncated: false });
     });
 
     it('keeps the tiles nearest the bbox center, not the southern edge the grid starts from', () => {

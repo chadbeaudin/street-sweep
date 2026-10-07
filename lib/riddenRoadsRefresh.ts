@@ -46,18 +46,17 @@ export function tilesForBbox(bbox: BBox, paddingMeters = 50): string[] {
     return tiles;
 }
 
-// Keeps the `max` tiles closest to the bbox's center, so a zoomed-out view
-// matches where the user is looking instead of whichever edge the grid
-// happens to enumerate first.
+// Orders tiles nearest the bbox's center first and keeps at most `max`, so
+// the worker matches where the user is looking before the edges, and a
+// zoomed-out view isn't capped to whichever edge the grid enumerates first.
 export function capTilesNearCenter(tiles: string[], bbox: BBox, max: number): { tiles: string[]; truncated: boolean } {
-    if (tiles.length <= max) return { tiles, truncated: false };
     const cy = (bbox.south + bbox.north) / 2 / TILE;
     const cx = (bbox.west + bbox.east) / 2 / TILE;
     const dist = (tile: string) => {
         const [ty, tx] = tile.split(',').map(Number);
         return (ty + 0.5 - cy) ** 2 + (tx + 0.5 - cx) ** 2;
     };
-    return { tiles: [...tiles].sort((a, b) => dist(a) - dist(b)).slice(0, max), truncated: true };
+    return { tiles: [...tiles].sort((a, b) => dist(a) - dist(b)).slice(0, max), truncated: tiles.length > max };
 }
 
 export function tileBbox(tile: string): BBox {
@@ -102,7 +101,9 @@ export async function refreshRiddenRoadsInBackground(athleteId: string, creds: C
         }
         const stale = existing.status === 'running' && Date.now() - existing.updatedAt.getTime() > STALE_RUNNING_MS;
         const existingTiles: string[] = Array.isArray(existing.tiles) ? (existing.tiles as any) : [];
-        const merged = Array.from(new Set([...existingTiles, ...tiles]));
+        // Newly requested tiles go first so the area the user is looking at now
+        // isn't stuck behind a previous viewport's backlog.
+        const merged = Array.from(new Set([...tiles, ...existingTiles]));
         const newTiles = merged.length - existingTiles.length;
         if (existing.status === 'queued' || (existing.status === 'running' && !stale)) {
             if (newTiles === 0) return; // every requested tile is already pending, don't touch the running job
