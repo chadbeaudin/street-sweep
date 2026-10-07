@@ -506,10 +506,12 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               // The density floor assumes urban road grids — it's wrong for legitimately
               // sparse/rural terrain (e.g. high desert), so only apply it to public
               // mirrors; our self-hosted instance (OVERPASS_URL) is full-coverage and
-              // authoritative, so a low count there means the area really is sparse.
+              // authoritative, so a low count there -- even zero, e.g. open plains or
+              // a lake -- means the area really is that sparse. Treating zero as a
+              // failure opened its circuit for 5 minutes on every roadless tile.
               const isSelfHosted = endpoint === process.env.OVERPASS_URL;
               const sparseFloor = Math.min(500, Math.round(bboxArea * 100_000));
-              if (data.elements.length === 0 || (!isSelfHosted && bboxArea > 0.003 && data.elements.length < sparseFloor)) {
+              if (!isSelfHosted && (data.elements.length === 0 || (bboxArea > 0.003 && data.elements.length < sparseFloor))) {
                 console.warn(`${ts()} Mirror ${endpoint} returned ${data.elements.length} elements (floor ${sparseFloor}). Trying next mirror...`);
                 recordFailure(endpoint);
                 continue;

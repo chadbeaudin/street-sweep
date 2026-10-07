@@ -148,4 +148,23 @@ describe('fetchOSMData sparse-floor trust for self-hosted Overpass', () => {
         expect(data).toEqual(sparseButRealResponse);
         expect(global.fetch).toHaveBeenCalledTimes(1); // no cascade to other mirrors
     });
+
+    it('trusts a zero-element response from the self-hosted mirror without opening its circuit', async () => {
+        const { fetchOSMData: fetchWithSelfHosted, resetCircuitBreakers: reset } = require('./overpass');
+        reset();
+
+        const roadless = { elements: [] };
+        const nonEmpty = { elements: [{ type: 'way', id: 2, nodes: [] }] };
+        (global.fetch as jest.Mock)
+            .mockResolvedValueOnce({ ok: true, json: async () => roadless })
+            .mockResolvedValueOnce({ ok: true, json: async () => nonEmpty });
+
+        expect(await fetchWithSelfHosted(largeBBox)).toEqual(roadless);
+        expect(global.fetch).toHaveBeenCalledTimes(1); // no cascade to public mirrors
+
+        // The next request still goes to the self-hosted mirror rather than skipping it.
+        const otherBBox = { south: 45.05, west: -121.35, north: 45.15, east: -121.15 };
+        expect(await fetchWithSelfHosted(otherBBox)).toEqual(nonEmpty);
+        expect((global.fetch as jest.Mock).mock.calls[1][0]).toBe(selfHostedUrl);
+    });
 });
