@@ -34,8 +34,10 @@ import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
 import { buildGpxCourse } from '@/lib/gpx';
 import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
-import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles } from '@/lib/roadTiles';
+import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles, expandBBox, flattenRiddenTiles, type RiddenTileRoads } from '@/lib/roadTiles';
 import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
+
+const RIDDEN_PREFETCH_FRACTION = 0.5;
 
 export default function Home() {
     const { data: session } = useSession();
@@ -200,7 +202,7 @@ export default function Home() {
     const fetchedRoadTilesRef = useRef<Set<string>>(new Set());
     const roadTileCacheRef = useRef<[number, number][][]>([]);
     const fetchedRiddenTilesRef = useRef<Set<string>>(new Set());
-    const riddenTileCacheRef = useRef<[number, number][][]>([]);
+    const riddenTileCacheRef = useRef<RiddenTileRoads>({});
     const riddenAbortControllerRef = useRef<AbortController | null>(null);
     const pointsRef = useRef<{ lat: number; lon: number; id: string; status?: 'pending' | 'snapped'; computed?: boolean }[]>([]);
     const manualRouteRef = useRef<[number, number][][]>([]);
@@ -467,15 +469,15 @@ export default function Home() {
     // instantly while the viewport-scoped effect below fetches fresh tiles.
     useEffect(() => {
         fetchedRiddenTilesRef.current = new Set();
-        riddenTileCacheRef.current = [];
+        riddenTileCacheRef.current = {};
         if (!hasStravaCreds(stravaCredentials)) { setPrecomputedRidden(null); setIsRiddenComputing(false); return; }
         if (stravaRefreshKey > 0) { setPrecomputedRidden(null); return; } // forced resync: don't paint stale cache
         const credentialsKey = JSON.stringify({ ...stravaCredentials, activityMode });
         let cancelled = false;
-        getCachedPrecomputedRoads(credentialsKey).then(cachedRoads => {
-            if (cancelled || !cachedRoads) return;
-            riddenTileCacheRef.current = cachedRoads;
-            setPrecomputedRidden(cachedRoads);
+        getCachedPrecomputedRoads(credentialsKey).then(cachedTiles => {
+            if (cancelled || !cachedTiles) return;
+            riddenTileCacheRef.current = cachedTiles;
+            setPrecomputedRidden(flattenRiddenTiles(cachedTiles));
         });
         return () => { cancelled = true; };
     }, [stravaCredentials, stravaRefreshKey, activityMode]);
@@ -488,7 +490,9 @@ export default function Home() {
     // actually looking. Mirrors the /api/roads viewport-tiling effect above.
     useEffect(() => {
         if (!bbox || !hasStravaCreds(stravaCredentials)) return;
-        const missing = missingRiddenTiles(bbox, fetchedRiddenTilesRef.current);
+        // Prefetch half a viewport beyond each edge so short pans land on
+        // already-matched tiles instead of waiting on the worker.
+        const missing = missingRiddenTiles(expandBBox(bbox, RIDDEN_PREFETCH_FRACTION), fetchedRiddenTilesRef.current);
         if (missing.length === 0) return;
 
         riddenAbortControllerRef.current?.abort();
@@ -509,9 +513,9 @@ export default function Home() {
                 });
                 const data = await res.json();
                 if (cancelled || data.error) { setIsRiddenComputing(false); return; }
-                if (Array.isArray(data.roads) && data.roads.length > 0) {
-                    riddenTileCacheRef.current = riddenTileCacheRef.current.concat(data.roads);
-                    setPrecomputedRidden(riddenTileCacheRef.current);
+                if (data.tiles && Object.keys(data.tiles).length > 0) {
+                    riddenTileCacheRef.current = { ...riddenTileCacheRef.current, ...data.tiles };
+                    setPrecomputedRidden(flattenRiddenTiles(riddenTileCacheRef.current));
                     setCachedPrecomputedRoads(riddenTileCacheRef.current, data.refreshedAt ?? null, credentialsKey);
                 }
                 const stillComputing = !!(data.computing || data.refreshing);
@@ -521,8 +525,9 @@ export default function Home() {
                 } else {
                     // Only mark these tiles done once the server confirms nothing's
                     // still pending for them -- otherwise a pan away and back would
-                    // treat a still-computing area as finished.
-                    for (const t of missing) fetchedRiddenTilesRef.current.add(roadTileKey(t));
+                    // treat a still-computing area as finished. A truncated response
+                    // skipped tiles at the edges, so leave them all for the next pan.
+                    if (!data.truncated) for (const t of missing) fetchedRiddenTilesRef.current.add(roadTileKey(t));
                 }
             } catch (err: any) { if (err.name !== 'AbortError' && !cancelled) setIsRiddenComputing(false); }
         };
@@ -2192,7 +2197,7 @@ export default function Home() {
                             <Loader2 className="w-4 h-4 animate-spin text-[#FC4C02] relative z-10" />
                         </div>
                         <span className="text-sm font-bold text-gray-900 tracking-tight">
-                            Syncing your ride history... this can take 5-10 minutes the first time. You can start creating routes now — they&apos;ll just be missing the ridden-roads overlay until this finishes.
+                            Matching your rides to streets in this area... this usually takes under a minute. You can start creating routes now. Ridden roads will appear as they&apos;re matched.
                         </span>
                     </div>
                 )}

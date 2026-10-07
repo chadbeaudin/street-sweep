@@ -29,6 +29,8 @@ import {
     isRiddenRoadsJobActive,
     getCachedRiddenTiles,
     tilesForBbox,
+    capTilesNearCenter,
+    TILE,
     decryptJobCreds,
     riddenRoadsCacheKey,
     RIDDEN_VERSION,
@@ -152,7 +154,7 @@ describe('getCachedRiddenTiles', () => {
 
     it('returns an empty result for an empty tile list without querying', async () => {
         const result = await getCachedRiddenTiles('athlete1', [], 1000);
-        expect(result).toEqual({ roads: [], refreshedAt: null, missing: [] });
+        expect(result).toEqual({ tiles: {}, refreshedAt: null, missing: [] });
         expect(mockFindMany).not.toHaveBeenCalled();
     });
 
@@ -160,7 +162,7 @@ describe('getCachedRiddenTiles', () => {
         mockFindMany.mockResolvedValue([]);
         const result = await getCachedRiddenTiles('athlete1', ['1,2'], 1000);
         expect(result.missing).toEqual(['1,2']);
-        expect(result.roads).toEqual([]);
+        expect(result.tiles).toEqual({});
     });
 
     it('returns roads for fresh, current-version cached tiles and excludes them from missing', async () => {
@@ -168,7 +170,7 @@ describe('getCachedRiddenTiles', () => {
             { tile: '1,2', roads: [[[1, 2], [3, 4]]], version: RIDDEN_VERSION, refreshedAt: new Date() },
         ]);
         const result = await getCachedRiddenTiles('athlete1', ['1,2'], 1000);
-        expect(result.roads).toEqual([[[1, 2], [3, 4]]]);
+        expect(result.tiles).toEqual({ '1,2': [[[1, 2], [3, 4]]] });
         expect(result.missing).toEqual([]);
         expect(result.refreshedAt).not.toBeNull();
     });
@@ -178,7 +180,7 @@ describe('getCachedRiddenTiles', () => {
             { tile: '1,2', roads: [[[1, 2]]], version: RIDDEN_VERSION, refreshedAt: new Date(Date.now() - 5000) },
         ]);
         const result = await getCachedRiddenTiles('athlete1', ['1,2'], 1000);
-        expect(result.roads).toEqual([[[1, 2]]]);
+        expect(result.tiles).toEqual({ '1,2': [[[1, 2]]] });
         expect(result.missing).toEqual(['1,2']);
     });
 
@@ -188,6 +190,15 @@ describe('getCachedRiddenTiles', () => {
         ]);
         const result = await getCachedRiddenTiles('athlete1', ['1,2'], 1000);
         expect(result.missing).toEqual(['1,2']);
+    });
+
+    it('keys roads by tile so each tile can be replaced rather than appended by the client', async () => {
+        mockFindMany.mockResolvedValue([
+            { tile: '1,2', roads: [[[1, 2]]], version: RIDDEN_VERSION, refreshedAt: new Date() },
+            { tile: '1,3', roads: [[[5, 6]], [[7, 8]]], version: RIDDEN_VERSION, refreshedAt: new Date() },
+        ]);
+        const result = await getCachedRiddenTiles('athlete1', ['1,2', '1,3'], 1000);
+        expect(result.tiles).toEqual({ '1,2': [[[1, 2]]], '1,3': [[[5, 6]], [[7, 8]]] });
     });
 });
 
@@ -217,5 +228,24 @@ describe('riddenRoadsCacheKey', () => {
     });
     it('suffixes running so it never collides with cycling', () => {
         expect(riddenRoadsCacheKey('42', 'running')).toBe('42__running');
+    });
+});
+
+describe('capTilesNearCenter', () => {
+    // Redmond, OR viewed zoomed out: far more tiles than the cap.
+    const bbox = { south: 43.8, north: 44.7, west: -121.8, east: -120.6 };
+    const center = { lat: 44.25, lng: -121.2 };
+
+    it('returns every tile untouched when under the cap', () => {
+        expect(capTilesNearCenter(['1,2', '1,3'], bbox, 400)).toEqual({ tiles: ['1,2', '1,3'], truncated: false });
+    });
+
+    it('keeps the tiles nearest the bbox center, not the southern edge the grid starts from', () => {
+        const all = tilesForBbox(bbox);
+        const { tiles, truncated } = capTilesNearCenter(all, bbox, 400);
+        expect(truncated).toBe(true);
+        expect(tiles).toHaveLength(400);
+        expect(tiles).toContain(`${Math.floor(center.lat / TILE)},${Math.floor(center.lng / TILE)}`);
+        expect(tiles).not.toContain(all[0]);
     });
 });

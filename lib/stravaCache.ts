@@ -1,3 +1,5 @@
+import type { RiddenTileRoads } from './roadTiles';
+
 const DB_NAME = 'streetsweep';
 const STORE_NAME = 'strava_cache';
 const CACHE_KEY = 'ridden_roads';
@@ -96,13 +98,13 @@ export async function clearCachedRoads(): Promise<void> {
 }
 
 interface PrecomputedCacheEntry {
-    roads: [number, number][][];
+    tiles: RiddenTileRoads;
     refreshedAt: string | null;
     cachedAt: number;
     credentialsKey: string;
 }
 
-export async function getCachedPrecomputedRoads(credentialsKey: string): Promise<[number, number][][] | null> {
+export async function getCachedPrecomputedRoads(credentialsKey: string): Promise<RiddenTileRoads | null> {
     try {
         const db = await openDB();
         const entry = await new Promise<PrecomputedCacheEntry | undefined>((resolve, reject) => {
@@ -113,19 +115,19 @@ export async function getCachedPrecomputedRoads(credentialsKey: string): Promise
         });
         if (!entry || entry.credentialsKey !== credentialsKey) return null;
         if (Date.now() - entry.cachedAt > PRECOMPUTED_TTL_MS) return null;
-        return entry.roads;
+        return entry.tiles ?? null; // entries written before per-tile keying have no `tiles`
     } catch {
         return null;
     }
 }
 
-export async function setCachedPrecomputedRoads(roads: [number, number][][], refreshedAt: string | null, credentialsKey: string): Promise<void> {
+export async function setCachedPrecomputedRoads(tiles: RiddenTileRoads, refreshedAt: string | null, credentialsKey: string): Promise<void> {
     try {
         const db = await openDB();
         await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_NAME, 'readwrite');
             const req = tx.objectStore(STORE_NAME).put(
-                { roads, refreshedAt, cachedAt: Date.now(), credentialsKey } satisfies PrecomputedCacheEntry,
+                { tiles, refreshedAt, cachedAt: Date.now(), credentialsKey } satisfies PrecomputedCacheEntry,
                 PRECOMPUTED_CACHE_KEY
             );
             req.onsuccess = () => resolve();

@@ -1,4 +1,4 @@
-import { tilesForBBox, tileKey, missingTiles, bboxForTiles, ROAD_TILE } from './roadTiles';
+import { tilesForBBox, tileKey, missingTiles, bboxForTiles, expandBBox, flattenRiddenTiles, ROAD_TILE } from './roadTiles';
 
 describe('roadTiles', () => {
     const bbox = { south: 40.0, west: -74.0, north: 40.02, east: -73.98 };
@@ -54,5 +54,34 @@ describe('roadTiles', () => {
             west: 2 * ROAD_TILE,
             east: 5 * ROAD_TILE,
         });
+    });
+
+    it('expandBBox grows the bbox by the given fraction on every side', () => {
+        const expanded = expandBBox(bbox, 0.5);
+        expect(expanded.south).toBeCloseTo(39.99);
+        expect(expanded.north).toBeCloseTo(40.03);
+        expect(expanded.west).toBeCloseTo(-74.01);
+        expect(expanded.east).toBeCloseTo(-73.97);
+    });
+
+    it('expandBBox covers tiles adjacent to the viewport', () => {
+        const viewportTiles = new Set(tilesForBBox(bbox).map(tileKey));
+        const prefetchTiles = tilesForBBox(expandBBox(bbox, 0.5));
+        expect(prefetchTiles.length).toBeGreaterThan(viewportTiles.size);
+        for (const t of tilesForBBox(bbox)) expect(prefetchTiles.map(tileKey)).toContain(tileKey(t));
+    });
+
+    it('expandBBox falls back to the original bbox when the expansion would be rejected as too large', () => {
+        const wide = { south: 40.0, west: -74.0, north: 41.5, east: -72.5 };
+        expect(expandBBox(wide, 0.5)).toEqual(wide);
+        expect(tilesForBBox(expandBBox(wide, 0.5)).length).toBeGreaterThan(0);
+    });
+
+    it("flattenRiddenTiles returns each tile's roads once, even after the same tile is received repeatedly", () => {
+        let cache = {};
+        const poll = { '1,2': [[[1, 2], [3, 4]]] as [number, number][][] };
+        cache = { ...cache, ...poll };
+        cache = { ...cache, ...poll, '1,3': [[[5, 6]]] as [number, number][][] };
+        expect(flattenRiddenTiles(cache)).toEqual([[[1, 2], [3, 4]], [[5, 6]]]);
     });
 });

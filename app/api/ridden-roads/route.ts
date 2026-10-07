@@ -5,6 +5,7 @@ import {
     refreshRiddenRoadsInBackground,
     getCachedRiddenTiles,
     tilesForBbox,
+    capTilesNearCenter,
     MAX_TILES,
     ActivityMode,
     BBox,
@@ -32,8 +33,8 @@ export async function POST(request: Request) {
         const athleteId = await resolveAthleteId(stravaCredentials);
         const key = riddenRoadsCacheKey(athleteId, mode);
 
-        const tiles = tilesForBbox(bbox).slice(0, MAX_TILES);
-        const { roads, refreshedAt, missing } = await getCachedRiddenTiles(key, tiles, FRESH_TTL_MS);
+        const { tiles, truncated } = capTilesNearCenter(tilesForBbox(bbox), bbox, MAX_TILES);
+        const { tiles: tileRoads, refreshedAt, missing } = await getCachedRiddenTiles(key, tiles, FRESH_TTL_MS);
 
         // We just (re-)enqueued every missing tile ourselves, so "still
         // refreshing" is exactly "is anything still missing" -- no separate
@@ -42,10 +43,11 @@ export async function POST(request: Request) {
         if (missing.length > 0) refreshRiddenRoadsInBackground(athleteId, stravaCredentials, mode, missing);
 
         return NextResponse.json({
-            roads,
+            tiles: tileRoads,
             refreshedAt,
             refreshing: missing.length > 0,
-            computing: roads.length === 0 && missing.length > 0,
+            truncated,
+            computing: Object.keys(tileRoads).length === 0 && missing.length > 0,
         });
     } catch (e: any) {
         console.error('RiddenRoads route error:', e);

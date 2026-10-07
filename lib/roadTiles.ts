@@ -28,6 +28,23 @@ export function tilesForBBox(bbox: BBox): TileCoord[] {
     return tiles;
 }
 
+// Grows a bbox by `fraction` of its own size on every side. Falls back to the
+// original bbox if growing it would exceed MAX_BBOX_SPAN_DEG, since tilesForBBox
+// would then return no tiles at all.
+export function expandBBox(bbox: BBox, fraction: number): BBox {
+    const dLat = (bbox.north - bbox.south) * fraction;
+    const dLng = (bbox.east - bbox.west) * fraction;
+    const expanded = { south: bbox.south - dLat, north: bbox.north + dLat, west: bbox.west - dLng, east: bbox.east + dLng };
+    const tooBig = expanded.north - expanded.south > MAX_BBOX_SPAN_DEG || expanded.east - expanded.west > MAX_BBOX_SPAN_DEG;
+    return tooBig ? bbox : expanded;
+}
+
+// Ridden-road polylines keyed by server tile, so re-receiving a tile replaces
+// it instead of duplicating its roads.
+export type RiddenTileRoads = Record<string, [number, number][][]>;
+
+export const flattenRiddenTiles = (tiles: RiddenTileRoads): [number, number][][] => Object.values(tiles).flat();
+
 export const tileKey = (t: TileCoord) => `${t.ty},${t.tx}`;
 
 // Given a set of already-fetched tile keys, return the tiles in bbox that

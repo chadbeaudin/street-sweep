@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { encryptToken, decryptToken } from './tokenCrypto';
+import type { RiddenTileRoads } from './roadTiles';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
@@ -43,6 +44,20 @@ export function tilesForBbox(bbox: BBox, paddingMeters = 50): string[] {
         for (let tx = minTx; tx <= maxTx; tx++) tiles.push(`${ty},${tx}`);
     }
     return tiles;
+}
+
+// Keeps the `max` tiles closest to the bbox's center, so a zoomed-out view
+// matches where the user is looking instead of whichever edge the grid
+// happens to enumerate first.
+export function capTilesNearCenter(tiles: string[], bbox: BBox, max: number): { tiles: string[]; truncated: boolean } {
+    if (tiles.length <= max) return { tiles, truncated: false };
+    const cy = (bbox.south + bbox.north) / 2 / TILE;
+    const cx = (bbox.west + bbox.east) / 2 / TILE;
+    const dist = (tile: string) => {
+        const [ty, tx] = tile.split(',').map(Number);
+        return (ty + 0.5 - cy) ** 2 + (tx + 0.5 - cx) ** 2;
+    };
+    return { tiles: [...tiles].sort((a, b) => dist(a) - dist(b)).slice(0, max), truncated: true };
 }
 
 export function tileBbox(tile: string): BBox {
@@ -120,22 +135,22 @@ export async function isRiddenRoadsJobActive(key: string, tiles: string[]): Prom
 // Reads whatever matched-road tiles are already cached for this athlete+mode
 // out of the given tile list -- callers merge these into a viewport's overlay
 // and enqueue a job for whichever tiles weren't found.
-export async function getCachedRiddenTiles(key: string, tiles: string[], freshTtlMs: number): Promise<{ roads: [number, number][][]; refreshedAt: string | null; missing: string[] }> {
-    if (tiles.length === 0) return { roads: [], refreshedAt: null, missing: [] };
+export async function getCachedRiddenTiles(key: string, tiles: string[], freshTtlMs: number): Promise<{ tiles: RiddenTileRoads; refreshedAt: string | null; missing: string[] }> {
+    if (tiles.length === 0) return { tiles: {}, refreshedAt: null, missing: [] };
     const rows = await prisma.riddenRoadsTile.findMany({ where: { athleteKey: key, tile: { in: tiles } } });
     const found = new Set(rows.map(r => r.tile));
     const missing = tiles.filter(t => !found.has(t));
-    const roads: [number, number][][] = [];
+    const tileRoads: RiddenTileRoads = {};
     let oldest: Date | null = null;
     const now = Date.now();
     for (const row of rows) {
         const outdated = (row.version ?? 1) < RIDDEN_VERSION;
         const stale = now - row.refreshedAt.getTime() > freshTtlMs;
-        roads.push(...(row.roads as any)); // still show the stale/outdated overlay while a refresh is enqueued
+        tileRoads[row.tile] = row.roads as [number, number][][]; // still show the stale/outdated overlay while a refresh is enqueued
         if (outdated || stale) missing.push(row.tile);
         else if (!oldest || row.refreshedAt < oldest) oldest = row.refreshedAt;
     }
-    return { roads, refreshedAt: oldest ? oldest.toISOString() : null, missing };
+    return { tiles: tileRoads, refreshedAt: oldest ? oldest.toISOString() : null, missing };
 }
 
 export function decryptJobCreds(credsEncrypted: string): Creds {
