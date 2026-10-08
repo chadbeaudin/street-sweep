@@ -99,7 +99,7 @@ async function processJob(job: Job) {
         await forEachConcurrent(withRides, FETCH_CONCURRENCY, async ({ tile, localRidden }) => {
             try {
                 const osm = await fetchOSMData(tileBbox(tile));
-                const deduped = dedupeRiddenRoads(localRidden, roadsFromOSM(osm));
+                const deduped = dedupeRiddenRoads(localRidden, roadsFromOSM(osm), tileBbox(tile));
                 await prisma.riddenRoadsTile.upsert({
                     where: { athleteKey_tile: { athleteKey: key, tile } },
                     create: { athleteKey: key, tile, roads: deduped as any, version: RIDDEN_VERSION, refreshedAt: new Date() },

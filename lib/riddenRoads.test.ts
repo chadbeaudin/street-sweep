@@ -1,4 +1,4 @@
-import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox } from './riddenRoads';
+import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox, fillUnbranchedGaps } from './riddenRoads';
 
 // ~111320m per degree of latitude, used to build roads/traces at known real-world distances.
 const M_PER_DEG_LAT = 111320;
@@ -148,18 +148,18 @@ describe('dedupeRiddenRoads', () => {
         expect(result.length).toBe(1);
     });
 
-    it('does not bridge a genuine mid-way gap wider than the bridge threshold', () => {
+    it('does not bridge a genuine mid-way gap wider than both the bridge and gap-fill thresholds', () => {
         const road: [number, number][] = [
             [0, 0],
             [0, metersToLatDeg(90)],
-            [0, metersToLatDeg(390)], // 300m genuinely unridden stretch
-            [0, metersToLatDeg(500)],
+            [0, metersToLatDeg(590)], // 500m genuinely unridden stretch, past MAX_GAP_FILL_M
+            [0, metersToLatDeg(700)],
         ];
         // Traces stop well clear (>TOLERANCE_M) of the unridden stretch's own
         // boundary vertices, so a trace's own endpoint can't leak into that
         // segment's coverage via the tolerance/vertex-sharing edge case that a
         // trace ending exactly AT a road vertex would trigger.
-        const result = dedupeRiddenRoads([[[0, 0], [0, metersToLatDeg(20)]], [[0, metersToLatDeg(460)], [0, metersToLatDeg(500)]]], [road]);
+        const result = dedupeRiddenRoads([[[0, 0], [0, metersToLatDeg(20)]], [[0, metersToLatDeg(660)], [0, metersToLatDeg(700)]]], [road]);
         expect(result.length).toBe(2);
     });
 
@@ -307,5 +307,68 @@ describe('filterRiddenRoadsToBbox', () => {
         );
         const result = filterRiddenRoadsToBbox(history, bbox);
         expect(result).toEqual([nearby]);
+    });
+});
+
+describe('fillUnbranchedGaps', () => {
+    // Points in meters east (x) / north (y) of (0, 0); at the equator a degree of
+    // longitude is the same length as a degree of latitude.
+    const p = (x: number, y = 0): [number, number] => [metersToLatDeg(y), metersToLatDeg(x)];
+    const fill = (roads: [number, number][][], ridden: boolean[][], bounds?: { south: number; west: number; north: number; east: number }) => {
+        const edges = ridden.map(r => [...r]);
+        fillUnbranchedGaps(roads, edges, bounds);
+        return edges;
+    };
+
+    it('fills a mid-street gap with no side streets, even across separate OSM ways', () => {
+        const roads = [[p(0), p(100)], [p(100), p(175), p(250)], [p(250), p(350)]];
+        expect(fill(roads, [[true], [false, false], [true]])[1]).toEqual([true, true]);
+    });
+
+    it('does not fill a gap a side street branches off of', () => {
+        const roads = [[p(0), p(100)], [p(100), p(175), p(250)], [p(250), p(350)], [p(175), p(175, 100)]];
+        expect(fill(roads, [[true], [false, false], [true], [false]])[1]).toEqual([false, false]);
+    });
+
+    it('fills from a ridden stretch up to a junction a ridden cross street passes through', () => {
+        // Main street ridden 0-100m, unridden 100-250m to a junction at 250m where a
+        // north-south cross street (ridden north of it) meets it.
+        const roads = [[p(0), p(100)], [p(100), p(250)], [p(250, -100), p(250), p(250, 100)]];
+        expect(fill(roads, [[true], [false], [false, true]])[1]).toEqual([true]);
+    });
+
+    it('does not fill a gap ending at a junction the rider never reached', () => {
+        const roads = [[p(0), p(100)], [p(100), p(250)], [p(250, -100), p(250), p(250, 100)]];
+        expect(fill(roads, [[true], [false], [false, false]])[1]).toEqual([false]);
+    });
+
+    it('does not fill a grid block just because the ridden streets at both of its corners cross it', () => {
+        // Two ridden north-south streets 200m apart; the east-west block between them
+        // was never ridden.
+        const roads = [[p(0, -100), p(0), p(0, 100)], [p(200, -100), p(200), p(200, 100)], [p(0), p(200)]];
+        expect(fill(roads, [[true, true], [true, true], [false]])[2]).toEqual([false]);
+    });
+
+    it('does not fill a gap longer than the cap', () => {
+        const roads = [[p(0), p(100)], [p(100), p(600)], [p(600), p(700)]];
+        expect(fill(roads, [[true], [false], [true]])[1]).toEqual([false]);
+    });
+
+    it('does not fill a loop hanging off a single junction', () => {
+        // Ridden street ending at a junction that a 300m unridden loop starts and ends at.
+        const roads = [[p(0), p(100)], [p(100), p(150, 50), p(200), p(150, -50), p(100)]];
+        expect(fill(roads, [[true], [false, false, false, false]])[1]).toEqual([false, false, false, false]);
+    });
+
+    it('does not trust a gap that leaves the area the roads were fetched for', () => {
+        const roads = [[p(0), p(100)], [p(100), p(175), p(250)], [p(250), p(350)]];
+        const bounds = { south: metersToLatDeg(-50), north: metersToLatDeg(50), west: metersToLatDeg(-10), east: metersToLatDeg(200) };
+        expect(fill(roads, [[true], [false, false], [true]], bounds)[1]).toEqual([false, false]);
+    });
+
+    it('is applied by dedupeRiddenRoads to sparse GPS that only touches both ends of a street', () => {
+        const street: [number, number][] = [p(0), p(100), p(200), p(300)];
+        const result = dedupeRiddenRoads([[p(0), p(60)], [p(240), p(300)]], [street]);
+        expect(result).toEqual([street]);
     });
 });

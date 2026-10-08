@@ -70,9 +70,12 @@ export function filterRiddenRoadsToBbox(
     ));
 }
 
+// `bounds` is the area `roads` was fetched for: junctions outside it may be
+// missing side streets, so gap filling never trusts them.
 export function dedupeRiddenRoads(
     riddenRoads: [number, number][][],
-    roads: [number, number][][]
+    roads: [number, number][][],
+    bounds?: { south: number; west: number; north: number; east: number }
 ): [number, number][][] {
     if (!riddenRoads.length || !roads.length) return [];
 
@@ -221,7 +224,7 @@ export function dedupeRiddenRoads(
     // stop short of each other) -- bridge those too, not just the way's outer ends.
     const GAP_BRIDGE_M = 20;
 
-    const out: [number, number][][] = [];
+    const riddenEdges: boolean[][] = roads.map(road => new Array(Math.max(0, road.length - 1)).fill(false));
     for (let r = 0; r < roads.length; r++) {
         const road = roads[r];
         const cum = [0];
@@ -262,10 +265,112 @@ export function dedupeRiddenRoads(
         }
 
         for (const [startVertex, endVertex] of bridged) {
-            out.push(road.slice(startVertex, endVertex + 1));
+            for (let s = startVertex; s < endVertex; s++) riddenEdges[r][s] = true;
+        }
+    }
+
+    fillUnbranchedGaps(roads, riddenEdges, bounds);
+
+    const out: [number, number][][] = [];
+    for (let r = 0; r < roads.length; r++) {
+        let start: number | null = null;
+        for (let s = 0; s <= riddenEdges[r].length; s++) {
+            if (s < riddenEdges[r].length && riddenEdges[r][s]) {
+                if (start === null) start = s;
+            } else if (start !== null) {
+                out.push(roads[r].slice(start, s + 1));
+                start = null;
+            }
         }
     }
     return out;
+}
+
+const MAX_GAP_FILL_M = 400;
+const CONTINUATION_MAX_TURN_DEG = 35;
+
+// Sparse GPS often misses a stretch of street the rider must have ridden: if
+// an unmatched stretch has no side streets to leave by, and the rider was at
+// both of its ends, they rode it. "Was at" means a matched road touches that
+// end. At least one end must also continue matched riding along the same line
+// (not just cross it), so a grid block between two ridden parallel streets
+// isn't filled merely because both of its corners were visited. Mutates
+// riddenEdges.
+export function fillUnbranchedGaps(
+    roads: [number, number][][],
+    riddenEdges: boolean[][],
+    bounds?: { south: number; west: number; north: number; east: number }
+): void {
+    const nodeKey = (p: [number, number]) => `${p[0]},${p[1]}`;
+    const inBounds = (p: [number, number]) => !bounds || (p[0] >= bounds.south && p[0] <= bounds.north && p[1] >= bounds.west && p[1] <= bounds.east);
+    const edgeLen = (a: [number, number], b: [number, number]) =>
+        Math.hypot((b[0] - a[0]) * M_PER_DEG_LAT, (b[1] - a[1]) * M_PER_DEG_LAT * Math.cos(a[0] * Math.PI / 180));
+
+    // Every edge (road r, segment s) incident to each node.
+    const incident = new Map<string, [number, number][]>();
+    for (let r = 0; r < roads.length; r++) {
+        for (let s = 0; s < roads[r].length - 1; s++) {
+            for (const v of [s, s + 1]) {
+                const k = nodeKey(roads[r][v]);
+                let arr = incident.get(k);
+                if (!arr) { arr = []; incident.set(k, arr); }
+                arr.push([r, s]);
+            }
+        }
+    }
+    const otherEnd = ([r, s]: [number, number], k: string) => nodeKey(roads[r][s]) === k ? roads[r][s + 1] : roads[r][s];
+    const visited = (k: string) => incident.get(k)!.some(([r, s]) => riddenEdges[r][s]);
+    // Does a matched edge at node k head on in roughly the same direction the
+    // gap arrives from (arriving along edge e)?
+    const continues = (k: string, e: [number, number]) => {
+        const node = nodeKey(roads[e[0]][e[1]]) === k ? roads[e[0]][e[1]] : roads[e[0]][e[1] + 1];
+        const from = otherEnd(e, k);
+        const inBearing = bearingDeg(from[0], from[1], node[0], node[1]);
+        return incident.get(k)!.some(([r, s]) => {
+            if (!riddenEdges[r][s]) return false;
+            const to = otherEnd([r, s], k);
+            const outBearing = bearingDeg(node[0], node[1], to[0], to[1]);
+            const turn = Math.abs(((outBearing - inBearing) % 360 + 540) % 360 - 180);
+            return turn <= CONTINUATION_MAX_TURN_DEG;
+        });
+    };
+
+    const seen = new Set<string>();
+    for (let r0 = 0; r0 < roads.length; r0++) {
+        for (let s0 = 0; s0 < riddenEdges[r0].length; s0++) {
+            if (riddenEdges[r0][s0] || seen.has(`${r0}:${s0}`)) continue;
+            // Walk the chain of unmatched edges outward from this one in both
+            // directions, through nodes where only this street passes.
+            const chain: [number, number][] = [[r0, s0]];
+            seen.add(`${r0}:${s0}`);
+            let length = edgeLen(roads[r0][s0], roads[r0][s0 + 1]);
+            let trusted = inBounds(roads[r0][s0]) && inBounds(roads[r0][s0 + 1]);
+            const ends: { node: string; via: [number, number] }[] = [];
+            for (const startNode of [nodeKey(roads[r0][s0]), nodeKey(roads[r0][s0 + 1])]) {
+                let node = startNode;
+                let via: [number, number] = [r0, s0];
+                for (;;) {
+                    const edges = incident.get(node)!;
+                    if (edges.length !== 2) break;
+                    const next = edges.find(([r, s]) => r !== via[0] || s !== via[1])!;
+                    if (riddenEdges[next[0]][next[1]] || seen.has(`${next[0]}:${next[1]}`)) break;
+                    seen.add(`${next[0]}:${next[1]}`);
+                    chain.push(next);
+                    length += edgeLen(roads[next[0]][next[1]], roads[next[0]][next[1] + 1]);
+                    const far = otherEnd(next, node);
+                    if (!inBounds(far)) trusted = false;
+                    node = nodeKey(far);
+                    via = next;
+                }
+                ends.push({ node, via });
+            }
+            if (!trusted || length > MAX_GAP_FILL_M) continue;
+            if (ends[0].node === ends[1].node) continue; // a loop hanging off one junction -- no way to tell it was ridden
+            if (!ends.every(e => visited(e.node))) continue;
+            if (!ends.some(e => continues(e.node, e.via))) continue;
+            for (const [r, s] of chain) riddenEdges[r][s] = true;
+        }
+    }
 }
 
 // Combines the server-precomputed, viewport-independent ridden overlay with a

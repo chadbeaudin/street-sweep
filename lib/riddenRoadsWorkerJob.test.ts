@@ -122,6 +122,13 @@ describe('tickRiddenRoadsWorker', () => {
         expect(sqlCalls(/DELETE FROM ridden_roads_jobs .* jsonb_array_length\(tiles\) = 0/)).toHaveLength(1);
     });
 
+    it('passes the tile bounds to matching so gap filling only trusts junctions inside the fetched area', async () => {
+        mockFindFirst.mockResolvedValue(baseJob);
+        mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
+        await tickRiddenRoadsWorker();
+        expect(mockDedupe).toHaveBeenCalledWith(expect.anything(), expect.anything(), { south: 0.02, north: 0.04, west: 0.04, east: 0.06 });
+    });
+
     it('writes all empty tiles in one batch without fetching OSM data for them', async () => {
         mockFindFirst.mockResolvedValue({ ...baseJob, tiles: ['1,2', '1,3', '1,4'] });
         mockFindUnique.mockResolvedValue({ ...baseJob, tiles: ['1,2', '1,3', '1,4'], status: 'running' });

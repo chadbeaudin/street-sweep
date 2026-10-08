@@ -4,7 +4,10 @@ import { RIDDEN_TILE, type RiddenTileRoads } from './roadTiles';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
-// Bumped: the v11 closest-candidate-only fix used a strict single winner with
+// v13: unmatched stretches with no side streets between two points the rider
+// reached are now filled in (fillUnbranchedGaps), so cached tiles rematch.
+//
+// v12 bump: the v11 closest-candidate-only fix used a strict single winner with
 // no tie margin, which over-corrected -- a long physical road split by OSM
 // into many short way-segments could flip which segment counts as "closest"
 // from one real (off-line, drifting) GPS point to the next at each bend,
@@ -14,7 +17,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 // every candidate within TIE_MARGIN_M of the closest one, not just the single
 // strict minimum, while a genuinely different nearby road (tens of meters
 // farther, not centimeters) still loses outright.
-export const RIDDEN_VERSION = 12;
+export const RIDDEN_VERSION = 13;
 // Guard against one request asking for an absurd number of tiles (e.g. a
 // corrupt/world-scale bbox) -- a real viewport or route-generation area is a
 // handful of tiles, never thousands.
