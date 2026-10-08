@@ -4,6 +4,10 @@ import { RIDDEN_TILE, type RiddenTileRoads } from './roadTiles';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
+// v14: segments are indexed into every grid cell within the match tolerance,
+// so streets running just along a cell line no longer miss GPS points that
+// fall in the neighboring cell.
+//
 // v13: unmatched stretches with no side streets between two points the rider
 // reached are now filled in (fillUnbranchedGaps), so cached tiles rematch.
 //
@@ -17,7 +21,7 @@ const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 // every candidate within TIE_MARGIN_M of the closest one, not just the single
 // strict minimum, while a genuinely different nearby road (tens of meters
 // farther, not centimeters) still loses outright.
-export const RIDDEN_VERSION = 13;
+export const RIDDEN_VERSION = 14;
 // Guard against one request asking for an absurd number of tiles (e.g. a
 // corrupt/world-scale bbox) -- a real viewport or route-generation area is a
 // handful of tiles, never thousands.

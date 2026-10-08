@@ -81,18 +81,26 @@ export function dedupeRiddenRoads(
 
     const cellKey = (lat: number, lon: number) => `${Math.floor(lat / GRID)},${Math.floor(lon / GRID)}`;
 
-    // Index every OSM segment by the cells its endpoints/midpoint fall in.
+    // Index every OSM segment into every cell within TOLERANCE_M of it. Indexing
+    // only the cells its own points fell in missed GPS points just across a cell
+    // line from the street (West 27th Ave in Spokane runs ~2m south of one, and
+    // a ride along it matched 0m because every GPS point landed in the next cell).
     const segGrid = new Map<string, [number, number][]>();
     for (let r = 0; r < roads.length; r++) {
         const road = roads[r];
         for (let s = 0; s < road.length - 1; s++) {
             const a = road[s], b = road[s + 1];
-            const pts: [number, number][] = [a, b, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]];
-            for (const [la, lo] of pts) {
-                const k = cellKey(la, lo);
-                let arr = segGrid.get(k);
-                if (!arr) { arr = []; segGrid.set(k, arr); }
-                arr.push([r, s]);
+            const padLat = TOLERANCE_M / M_PER_DEG_LAT;
+            const padLon = TOLERANCE_M / (M_PER_DEG_LAT * Math.cos(a[0] * Math.PI / 180));
+            const minCy = Math.floor((Math.min(a[0], b[0]) - padLat) / GRID), maxCy = Math.floor((Math.max(a[0], b[0]) + padLat) / GRID);
+            const minCx = Math.floor((Math.min(a[1], b[1]) - padLon) / GRID), maxCx = Math.floor((Math.max(a[1], b[1]) + padLon) / GRID);
+            for (let cy = minCy; cy <= maxCy; cy++) {
+                for (let cx = minCx; cx <= maxCx; cx++) {
+                    const k = `${cy},${cx}`;
+                    let arr = segGrid.get(k);
+                    if (!arr) { arr = []; segGrid.set(k, arr); }
+                    arr.push([r, s]);
+                }
             }
         }
     }

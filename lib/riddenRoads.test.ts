@@ -310,6 +310,16 @@ describe('filterRiddenRoadsToBbox', () => {
     });
 });
 
+describe('dedupeRiddenRoads grid cells', () => {
+    it('matches a street running just south of a grid cell line to GPS just north of it', () => {
+        // Real case: West 27th Ave (Spokane) sits at 47.62998, ~2m south of the
+        // 47.630 cell line; a ride along it, 2-6m north, matched nothing.
+        const street: [number, number][] = [[47.62998, -117.4249], [47.62998, -117.4236], [47.62998, -117.4222]];
+        const ride: [number, number][] = [[47.63002, -117.4222], [47.63004, -117.4229], [47.63001, -117.4236], [47.63003, -117.4243], [47.63002, -117.4249]];
+        expect(dedupeRiddenRoads([ride], [street])).toEqual([street]);
+    });
+});
+
 describe('fillUnbranchedGaps', () => {
     // Points in meters east (x) / north (y) of (0, 0); at the equator a degree of
     // longitude is the same length as a degree of latitude.
