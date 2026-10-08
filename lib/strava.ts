@@ -2,6 +2,8 @@ import polyline from '@mapbox/polyline';
 import { isModeActivity, isModeActivityBroad, ActivityMode } from './stats';
 import { haversineM } from './geometry';
 import { prisma } from './prisma';
+import { riddenTileKey } from './roadTiles';
+import { riddenRoadsCacheKey } from './riddenRoadsRefresh';
 import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
@@ -52,7 +54,10 @@ export interface RiddenActivities {
 // (the other mode, walks/hikes) and tracks that barely move (stationary/
 // indoor trainers) are dropped here so they never reach the map overlay,
 // coverage stats, or the routing ridden-penalty.
-export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }, mode: ActivityMode = 'cycling'): Promise<RiddenActivities> {
+// `fullResolution` swaps in a ride's stored full GPS track where one exists --
+// used by the ridden-roads worker for matching, while the browser keeps the
+// smaller route line.
+export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }, mode: ActivityMode = 'cycling', { fullResolution = false } = {}): Promise<RiddenActivities> {
     const athleteId = await resolveAthleteId(creds);
     const all = await getCachedOrFetchActivities(creds);
     const realCandidates = all.filter(a => isModeActivity(a.sport_type || a.type, mode));
@@ -66,8 +71,25 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
     }).catch(() => [] as { activityId: string; polyline: string }[]);
     const detailByActivity = new Map(detailRows.map(d => [d.activityId, d.polyline]));
 
+    // Before reading stored tracks, so a track fetched (and its tiles
+    // invalidated) on this call is also the one matched on this call.
+    try {
+        await fetchRecentActivityStreams(athleteId, realCandidates, creds);
+    } catch (e: any) {
+        console.warn(`[Strava] Stream fetch skipped: ${e.message}`);
+    }
+    const streamRows = fullResolution
+        ? await prisma.stravaActivityStream.findMany({
+            where: { activityId: { in: realCandidates.map(a => a.id.toString()) }, polyline: { not: '' } },
+        }).catch(() => [] as { activityId: string; polyline: string }[])
+        : [];
+    const streamByActivity = new Map(streamRows.map(s => [s.activityId, s.polyline]));
+
     const real = realCandidates
-        .map(a => ({ a, poly: polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][] }))
+        .map(a => {
+            const id = a.id.toString();
+            return { a, poly: polyline.decode(streamByActivity.get(id) || detailByActivity.get(id) || a.map.summary_polyline) as [number, number][] };
+        })
         .filter(({ poly }) => poly.length >= 2 && trackSpanMeters(poly) >= MIN_TRACK_SPAN_METERS);
 
     // Gradually backfill detail for real rides not yet cached, bounded per call so
@@ -314,6 +336,58 @@ async function backfillActivityDetails(
             console.warn(`[Strava] Detail backfill failed for activity ${activity.id}: ${e.message}`);
         }
     }
+}
+
+// Only rides from the last couple of weeks get a full-resolution track: one
+// Strava call per new ride keeps this cheap, while backfilling a whole history
+// would eat the app-wide rate limit for days. Older rides keep their route line.
+const STREAM_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const STREAM_BATCH_SIZE = 5;
+
+async function fetchRecentActivityStreams(
+    athleteId: string,
+    activities: { id: number; start_date: string }[],
+    creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }
+): Promise<void> {
+    const recent = activities.filter(a => Date.now() - Date.parse(a.start_date) < STREAM_WINDOW_MS);
+    if (recent.length === 0) return;
+    const existing = await prisma.stravaActivityStream.findMany({
+        where: { activityId: { in: recent.map(a => a.id.toString()) } },
+        select: { activityId: true },
+    });
+    const have = new Set(existing.map(e => e.activityId));
+    const missing = recent.filter(a => !have.has(a.id.toString())).slice(0, STREAM_BATCH_SIZE);
+    if (missing.length === 0) return; // steady state: no Strava calls at all
+
+    const accessToken = await getStravaAccessToken(creds);
+    for (const activity of missing) {
+        const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}/streams?keys=latlng&key_by_type=true`, {
+            headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (res.status === 429) break; // rate-limited -- the rest pick up next sync
+        if (!res.ok && res.status !== 404) continue;
+        const streams = res.ok ? await res.json() as { latlng?: { data?: [number, number][] } } : {};
+        // Stored unsimplified: even 1-3m Douglas-Peucker simplification brought back
+        // the corner-cutting gaps on tight loops that the full track exists to fix.
+        const track = streams.latlng?.data ?? [];
+        // An empty row records "no GPS stream" (manual/indoor entry) so it isn't refetched every sync.
+        const encoded = track.length >= 2 ? polyline.encode(track) : '';
+        await prisma.stravaActivityStream.upsert({
+            where: { activityId: activity.id.toString() },
+            create: { activityId: activity.id.toString(), athleteId, polyline: encoded },
+            update: { athleteId, polyline: encoded },
+        });
+        if (track.length >= 2) await invalidateRiddenTilesForTrack(athleteId, track);
+    }
+}
+
+// A new full track changes what the tiles it crosses should match, so drop
+// their cached results; the next view of those areas rematches them.
+async function invalidateRiddenTilesForTrack(athleteId: string, track: [number, number][]) {
+    const tiles = Array.from(new Set(track.map(([lat, lon]) => riddenTileKey(lat, lon))));
+    await prisma.riddenRoadsTile.deleteMany({
+        where: { athleteKey: { in: [riddenRoadsCacheKey(athleteId, 'cycling'), riddenRoadsCacheKey(athleteId, 'running')] }, tile: { in: tiles } },
+    });
 }
 
 // Bypasses the cache TTL check so the UI's "Sync" button can force a fresh pull.

@@ -73,7 +73,7 @@ async function processJob(job: Job) {
         // Fetched once per tick, not per tile -- this is proportional to one
         // rider's own ride count, which is bounded regardless of how many tiles
         // are being (re)computed this tick.
-        const { riddenRoads } = await fetchCyclingRiddenRoads(creds, mode as ActivityMode);
+        const { riddenRoads } = await fetchCyclingRiddenRoads(creds, mode as ActivityMode, { fullResolution: true });
 
         const empty: string[] = [];
         const withRides: { tile: string; localRidden: [number, number][][] }[] = [];

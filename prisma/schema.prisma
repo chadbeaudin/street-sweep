@@ -126,6 +126,16 @@ model StravaActivityDetail {
   @@map("strava_activity_detail")
 }
 
+model StravaActivityStream {
+  activityId String   @id
+  athleteId  String
+  polyline   String   // full-resolution latlng stream, encoded; empty when the activity has no GPS stream
+  fetchedAt  DateTime @default(now())
+
+  @@index([athleteId])
+  @@map("strava_activity_stream")
+}
+
 model FtpReadingCache {
   athleteId   String   @id
   readings    Json

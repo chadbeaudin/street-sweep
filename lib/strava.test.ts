@@ -8,6 +8,13 @@ jest.mock('./prisma', () => ({
             findMany: jest.fn().mockResolvedValue([]),
             upsert: jest.fn().mockResolvedValue({}),
         },
+        stravaActivityStream: {
+            findMany: jest.fn().mockResolvedValue([]),
+            upsert: jest.fn().mockResolvedValue({}),
+        },
+        riddenRoadsTile: {
+            deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        },
     },
 }));
 
@@ -51,6 +58,9 @@ describe('fetchCyclingRiddenRoads', () => {
         (prisma.stravaActivityCache.upsert as jest.Mock).mockResolvedValue({});
         (prisma.stravaActivityDetail.findMany as jest.Mock).mockResolvedValue([]);
         (prisma.stravaActivityDetail.upsert as jest.Mock).mockResolvedValue({});
+        (prisma.stravaActivityStream.findMany as jest.Mock).mockResolvedValue([]);
+        (prisma.stravaActivityStream.upsert as jest.Mock).mockResolvedValue({});
+        (prisma.riddenRoadsTile.deleteMany as jest.Mock).mockResolvedValue({ count: 0 });
         global.fetch = jest.fn((url: string) => {
             if (url.includes('oauth/token')) {
                 return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
@@ -275,6 +285,69 @@ describe('fetchCyclingRiddenRoads', () => {
             await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'full-refresh' });
             expect(listUrls.length).toBeGreaterThan(0);
             expect(listUrls.some(u => u.includes('after='))).toBe(false);
+        });
+    });
+
+    describe('full-resolution tracks for recent rides', () => {
+        const recentStart = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+        // A tight curve: a quarter circle of ~60m radius sampled every degree.
+        const curve: [number, number][] = Array.from({ length: 91 }, (_, i) => {
+            const a = (i * Math.PI) / 180;
+            return [47.632 + (60 * Math.sin(a)) / 111320, -117.392 + (60 * (1 - Math.cos(a))) / (111320 * Math.cos(47.632 * Math.PI / 180))];
+        });
+        let streamUrls: string[];
+
+        beforeEach(() => {
+            streamUrls = [];
+            (global.fetch as jest.Mock).mockImplementation((url: string) => {
+                if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+                if (url.includes('/streams')) {
+                    streamUrls.push(url);
+                    if (url.includes('/activities/404/')) return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+                    return Promise.resolve({ ok: true, status: 200, json: async () => ({ latlng: { data: curve } }) });
+                }
+                if (isDetailUrl(url)) return Promise.resolve({ ok: true, json: async () => ({ map: {} }) });
+                if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 555 }) });
+                throw new Error('unexpected fetch: ' + url);
+            });
+        });
+
+        it('fetches and stores the full track for a recent ride, and invalidates the tiles it crosses', async () => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '555', activities: [mockActivity({ id: 10, start_date: recentStart })], syncedAt: new Date() });
+            await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'streams-refresh' });
+            expect(streamUrls).toEqual([expect.stringContaining('/activities/10/streams?keys=latlng')]);
+            const saved = (prisma.stravaActivityStream.upsert as jest.Mock).mock.calls[0][0].create;
+            const decoded = require('@mapbox/polyline').decode(saved.polyline);
+            expect(decoded).toHaveLength(curve.length);
+            expect(prisma.riddenRoadsTile.deleteMany).toHaveBeenCalledWith({
+                where: { athleteKey: { in: ['555', '555__running'] }, tile: { in: expect.arrayContaining(['2381,-5870']) } },
+            });
+        });
+
+        it('never fetches tracks for historical rides', async () => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '555', activities: [mockActivity({ id: 11, start_date: '2024-01-01T00:00:00Z' })], syncedAt: new Date() });
+            await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'streams-refresh' });
+            expect(streamUrls).toEqual([]);
+        });
+
+        it('records a ride with no GPS stream as empty so it is not refetched', async () => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '555', activities: [mockActivity({ id: 404, start_date: recentStart })], syncedAt: new Date() });
+            await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'streams-refresh' });
+            expect((prisma.stravaActivityStream.upsert as jest.Mock).mock.calls[0][0].create.polyline).toBe('');
+            expect(prisma.riddenRoadsTile.deleteMany).not.toHaveBeenCalled();
+        });
+
+        it('matches with the stored track only when fullResolution is requested', async () => {
+            // Wide enough (300m radius) to clear the 250m stationary-ride filter.
+            const wide: [number, number][] = curve.map(([lat, lon]) => [47.632 + (lat - 47.632) * 5, -117.392 + (lon + 117.392) * 5]);
+            const stored = require('@mapbox/polyline').encode(wide);
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '555', activities: [mockActivity({ id: 12, start_date: recentStart })], syncedAt: new Date() });
+            (prisma.stravaActivityStream.findMany as jest.Mock).mockImplementation(async (args: any) =>
+                args.select ? [{ activityId: '12' }] : [{ activityId: '12', polyline: stored }]);
+            const browser = await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'streams-refresh' });
+            const worker = await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'streams-refresh' }, 'cycling', { fullResolution: true });
+            expect(browser.riddenRoads[0]).toEqual(require('@mapbox/polyline').decode(REAL_POLYLINE)); // the summary route line
+            expect(worker.riddenRoads[0]).toHaveLength(wide.length);
         });
     });
 });
