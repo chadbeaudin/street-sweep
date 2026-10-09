@@ -36,6 +36,7 @@ import { buildGpxCourse } from '@/lib/gpx';
 import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, tileKey as roadTileKey } from '@/lib/roadTiles';
 import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles, expandBBox, flattenRiddenTiles, type RiddenTileRoads } from '@/lib/roadTiles';
 import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
+import { listKeyAction } from '@/lib/listNavigation';
 
 const RIDDEN_PREFETCH_FRACTION = 0.5;
 
@@ -125,6 +126,7 @@ export default function Home() {
     const [addressInput, setAddressInput] = useState('');
     const [addressLoading, setAddressLoading] = useState(false);
     const [addressResults, setAddressResults] = useState<{ lat: number; lon: number; label: string }[]>([]);
+    const [addressActiveIndex, setAddressActiveIndex] = useState(-1);
     const [pickingStart, setPickingStart] = useState(false);
     const pickingStartRef = useRef(false);
     const [showHowTo, setShowHowTo] = useState(false);
@@ -289,7 +291,10 @@ export default function Home() {
                     body: JSON.stringify({ address: q, limit: 5 })
                 });
                 const data = await res.json();
-                if (!cancelled) setAddressResults(Array.isArray(data.results) ? data.results : []);
+                if (!cancelled) {
+                    setAddressResults(Array.isArray(data.results) ? data.results : []);
+                    setAddressActiveIndex(-1);
+                }
             } catch {
                 if (!cancelled) setAddressResults([]);
             } finally {
@@ -1740,6 +1745,14 @@ export default function Home() {
                                                             <input
                                                                 value={addressInput}
                                                                 onChange={e => setAddressInput(e.target.value)}
+                                                                onKeyDown={e => {
+                                                                    const action = listKeyAction(e.key, addressActiveIndex, addressResults.length);
+                                                                    if (!action) return;
+                                                                    e.preventDefault();
+                                                                    if (action.type === 'move') setAddressActiveIndex(action.index);
+                                                                    else if (action.type === 'select') chooseStart(addressResults[action.index]);
+                                                                    else setAddressResults([]);
+                                                                }}
                                                                 placeholder="Search address…"
                                                                 className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400"
                                                             />
@@ -1751,7 +1764,9 @@ export default function Home() {
                                                                     <li key={i}>
                                                                         <button
                                                                             onClick={() => chooseStart(r)}
-                                                                            className="w-full text-left px-2 py-1.5 text-xs text-gray-700 hover:bg-indigo-50 truncate"
+                                                                            ref={el => { if (i === addressActiveIndex) el?.scrollIntoView({ block: 'nearest' }); }}
+                                                                            onMouseEnter={() => setAddressActiveIndex(i)}
+                                                                            className={`w-full text-left px-2 py-1.5 text-xs text-gray-700 hover:bg-indigo-50 truncate ${i === addressActiveIndex ? 'bg-indigo-50' : ''}`}
                                                                             title={r.label}
                                                                         >
                                                                             {r.label}
