@@ -1579,7 +1579,18 @@ export class StreetGraph {
         return bestId;
     }
 
-    public findClosestPointOnEdge(lat: number, lon: number): { lat: number, lon: number, u: string, v: string } | null {
+    // Snaps to the closest point on an edge the route can actually reach from
+    // fromId. Clicks on an isolated fragment (e.g. a footpath that isn't joined
+    // to any street in OSM) otherwise have no path, and falling back to "any
+    // nearby node" picked fromId itself, drawing a straight line to the click.
+    public findClosestReachablePointOnEdge(fromId: string, lat: number, lon: number, maxCells: number): { lat: number, lon: number, u: string, v: string } | null {
+        const nearby = this.findNodeIdsNearPoint(lat, lon, maxCells);
+        const reachable = new Set(this.findAllTargetWeights(fromId, nearby, 1).keys());
+        reachable.add(fromId);
+        return this.findClosestPointOnEdge(lat, lon, (u, v) => reachable.has(u) && reachable.has(v));
+    }
+
+    public findClosestPointOnEdge(lat: number, lon: number, acceptEdge?: (u: string, v: string) => boolean): { lat: number, lon: number, u: string, v: string } | null {
         if (!this.edgeIndex) this.buildEdgeIndex();
 
         const centerLat = Math.floor(lat / GRID_DEG);
@@ -1593,6 +1604,7 @@ export class StreetGraph {
             seen.add(link);
             // Don't snap to ramps — they're not visible on the map
             if (link.data.highway === 'trunk' || link.data.highway === 'motorway_link' || link.data.highway === 'trunk_link') return;
+            if (acceptEdge && !acceptEdge(link.fromId.toString(), link.toId.toString())) return;
             const u = this.graph.getNode(link.fromId);
             const v = this.graph.getNode(link.toId);
             if (!u || !v) return;

@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: `Could not snap point to road network (${nodeCount} nodes loaded). Overpass API may be unavailable — try again shortly.` }, { status: 404 });
         }
 
-        const snappedPoint = { lat: snappedData.lat, lon: snappedData.lon };
+        let endSnap = snappedData;
         let pathCoords: [number, number][] = [];
 
         if (lastPoint) {
@@ -116,26 +116,27 @@ export async function POST(req: NextRequest) {
                     if (r) { pathResult = r; usedStartId = sid; break; }
                 }
 
-                // Fallback: snap-edge targets are disconnected — try all nodes within ~550m of
-                // the click point so Dijkstra can route to the nearest reachable node instead.
+                // Fallback: the click's snap edge is disconnected from the start, so move
+                // the waypoint onto the closest street within ~550m that the start can reach.
                 if (!pathResult) {
-                    const broadTargets = graph.findNodeIdsNearPoint(point.lat, point.lon, 10);
                     for (const sid of startOptions) {
-                        const r = graph.findClosestTargetCapped(sid, broadTargets, penalizedLinks);
-                        if (r) { pathResult = r; usedStartId = sid; break; }
+                        const reachableSnap = graph.findClosestReachablePointOnEdge(sid, point.lat, point.lon, 10);
+                        if (!reachableSnap) continue;
+                        const r = graph.findClosestTargetCapped(sid, new Set([reachableSnap.u, reachableSnap.v]), penalizedLinks);
+                        if (r) { pathResult = r; usedStartId = sid; endSnap = reachableSnap; break; }
                     }
                 }
 
                 if (!pathResult || !usedStartId) {
                     console.warn(`[Step] No path found from [${startOptions.join(',')}] to [${[...endTargets].join(',')}] — graph may be disconnected here.`);
                 } else {
-                    pathCoords = buildStepPathCoords(prevSnappedData, snappedData, usedStartId, pathResult.targetId, pathResult.path, id => graph.graph.getNode(id)?.data);
+                    pathCoords = buildStepPathCoords(prevSnappedData, endSnap, usedStartId, pathResult.targetId, pathResult.path, id => graph.graph.getNode(id)?.data);
                 }
             }
         }
 
         return NextResponse.json({
-            snappedPoint,
+            snappedPoint: { lat: endSnap.lat, lon: endSnap.lon },
             path: pathCoords
         });
 
