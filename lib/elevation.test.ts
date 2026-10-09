@@ -171,6 +171,24 @@ describe('densifyElevationProfile', () => {
         expect(dense.length).toBeGreaterThan(1000);
     });
 
+    it('subdivides long vertex-free segments so hover points stay close together', () => {
+        // Two vertices ~0.24 mi apart, like a long straight street.
+        const straight: [number, number][] = [[0, 0], [0.0056, 0]];
+        const sparse = calculateElevationProfile(straight, [100, 200]);
+        const dense = densifyElevationProfile(straight, sparse, 6000);
+        for (let i = 1; i < dense.length; i++) {
+            expect(dense[i].distance - dense[i - 1].distance).toBeLessThanOrEqual(0.026);
+        }
+        expect(dense[0].elevation).toBe(sparse[0].elevation);
+        expect(dense[dense.length - 1].elevation).toBe(sparse[1].elevation);
+        const mid = dense[Math.floor(dense.length / 2)];
+        expect(mid.elevation).toBeGreaterThan(sparse[0].elevation);
+        expect(mid.elevation).toBeLessThan(sparse[1].elevation);
+        expect(mid.lat).toBe(0);
+        expect(mid.lon).toBeGreaterThan(0);
+        expect(mid.lon).toBeLessThan(0.0056);
+    });
+
     it('falls back to the sparse profile when there is no route geometry', () => {
         const sparse = calculateElevationProfile([routeCoords[0], routeCoords[10]], [100, 200]);
         expect(densifyElevationProfile([], sparse)).toBe(sparse);

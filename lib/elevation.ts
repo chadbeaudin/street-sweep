@@ -216,6 +216,8 @@ export function calculateElevationProfile(coords: [number, number][], elevations
  * tracking the route. This produces a much denser set of hoverable
  * positions using geometry already in memory, with no extra network calls.
  */
+const MIN_HOVER_GAP_MILES = 0.025;
+
 export function densifyElevationProfile(
     routeCoords: [number, number][], // [lon, lat], full resolution
     sparseProfile: ElevationPoint[], // ascending distance (miles), from calculateElevationProfile
@@ -232,13 +234,20 @@ export function densifyElevationProfile(
     const lastCoord = routeCoords[routeCoords.length - 1];
     if (strided[strided.length - 1] !== lastCoord) strided.push(lastCoord);
 
-    let cumulative = 0;
+    const segLengths: number[] = [0];
+    let totalLength = 0;
+    for (let i = 1; i < strided.length; i++) {
+        const d = distance(point(strided[i - 1]), point(strided[i]), { units: 'miles' });
+        segLengths.push(d);
+        totalLength += d;
+    }
+    // Long straight streets have no vertices mid-block, so subdivide them or
+    // hovering the chart skips hundreds of feet at a time.
+    const maxGap = Math.max(MIN_HOVER_GAP_MILES, totalLength / maxPoints);
+
     let sparseIdx = 0; // two-pointer into sparseProfile, monotonic non-decreasing
     const dense: ElevationPoint[] = [];
-    for (let i = 0; i < strided.length; i++) {
-        if (i > 0) {
-            cumulative += distance(point(strided[i - 1]), point(strided[i]), { units: 'miles' });
-        }
+    const pushAt = (lon: number, lat: number, cumulative: number) => {
         while (sparseIdx < sparseProfile.length - 2 && sparseProfile[sparseIdx + 1].distance <= cumulative) {
             sparseIdx++;
         }
@@ -249,9 +258,25 @@ export function densifyElevationProfile(
         dense.push({
             distance: parseFloat(cumulative.toFixed(3)),
             elevation: Math.round(a.elevation + (b.elevation - a.elevation) * t),
-            lat: strided[i][1],
-            lon: strided[i][0],
+            lat,
+            lon,
         });
+    };
+
+    let cumulative = 0;
+    for (let i = 0; i < strided.length; i++) {
+        if (i > 0) {
+            const [lon0, lat0] = strided[i - 1];
+            const [lon1, lat1] = strided[i];
+            const segLength = segLengths[i];
+            const pieces = Math.ceil(segLength / maxGap);
+            for (let k = 1; k < pieces; k++) {
+                const f = k / pieces;
+                pushAt(lon0 + (lon1 - lon0) * f, lat0 + (lat1 - lat0) * f, cumulative + segLength * f);
+            }
+            cumulative += segLength;
+        }
+        pushAt(strided[i][0], strided[i][1], cumulative);
     }
     // The route's own cumulative distance can drift slightly from the sparse
     // profile's independently-summed total (different point spacing), which
