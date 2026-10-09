@@ -3,6 +3,7 @@ import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { z } from 'zod';
 import { LatLon, BBox, PolylineList, RoutingOptions, parseBody } from '@/lib/validation';
+import { buildStepPathCoords } from '@/lib/stepPath';
 
 const Body = z.object({
     point: LatLon,
@@ -128,55 +129,7 @@ export async function POST(req: NextRequest) {
                 if (!pathResult || !usedStartId) {
                     console.warn(`[Step] No path found from [${startOptions.join(',')}] to [${[...endTargets].join(',')}] — graph may be disconnected here.`);
                 } else {
-                    const path = pathResult.path;
-                    const endId = pathResult.targetId;
-                    const startId = usedStartId;
-
-                    // Start of the path: [prevSnappedPoint, startNode]
-                    pathCoords.push([prevSnappedData.lon, prevSnappedData.lat]);
-
-                    const startNode = graph.graph.getNode(startId);
-                    if (startNode && (startNode.data.lat !== prevSnappedData.lat || startNode.data.lon !== prevSnappedData.lon)) {
-                        pathCoords.push([startNode.data.lon, startNode.data.lat]);
-                    }
-
-                    // Middle of the path: the nodes in-between.
-                    //
-                    // Special case for the final hop: if the path's last edge
-                    // is the snap edge containing snappedPoint, and we are
-                    // approaching endId from the OTHER endpoint of that edge
-                    // (i.e., from snappedData.u when endId === snappedData.v,
-                    // or vice versa), then pushing endId before snappedPoint
-                    // would overshoot the user's click — the polyline would
-                    // travel the full edge to endId, then backtrack to
-                    // snappedPoint. Instead, skip endId and let the path end
-                    // exactly at snappedPoint mid-edge.
-                    const otherSnapEnd =
-                        endId === snappedData.u ? snappedData.v :
-                        endId === snappedData.v ? snappedData.u : null;
-
-                    for (let i = 0; i < path.length; i++) {
-                        const segment = path[i];
-                        const isLast = i === path.length - 1;
-                        const skipEndOvershoot =
-                            isLast &&
-                            otherSnapEnd !== null &&
-                            segment.idNext === endId &&
-                            segment.id === otherSnapEnd;
-
-                        if (skipEndOvershoot) break;
-
-                        const n = graph.graph.getNode(segment.idNext);
-                        if (n) pathCoords.push([n.data.lon, n.data.lat]);
-                    }
-
-                    // End of the path: [..., currentSnappedPoint]
-                    if (pathCoords.length > 0) {
-                        const lastInPath = pathCoords[pathCoords.length - 1];
-                        if (lastInPath[0] !== snappedPoint.lon || lastInPath[1] !== snappedPoint.lat) {
-                            pathCoords.push([snappedPoint.lon, snappedPoint.lat]);
-                        }
-                    }
+                    pathCoords = buildStepPathCoords(prevSnappedData, snappedData, usedStartId, pathResult.targetId, pathResult.path, id => graph.graph.getNode(id)?.data);
                 }
             }
         }
