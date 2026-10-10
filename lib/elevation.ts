@@ -56,6 +56,54 @@ const SelfHostedOpenTopoProvider: ElevationProvider = {
 
 const PROVIDERS = [SelfHostedOpenTopoProvider, OpenMeteoProvider];
 
+// Every added waypoint regenerates the whole route, so without this each click
+// re-fetched elevation for every point already drawn. Keyed by provider so a
+// fallback provider's values never mix into another's profile.
+const ELEVATION_CACHE_MAX = 200_000;
+const elevationCache = new Map<string, number>();
+// Measured: the Nastromo Open Topo Data server takes ~5s per 100-location request
+// but serves 8 at once in ~6s total, so batches are worth running side by side.
+const SELF_HOSTED_CONCURRENCY = 8;
+
+function cacheElevation(key: string, elevation: number) {
+    elevationCache.delete(key);
+    elevationCache.set(key, elevation);
+    if (elevationCache.size > ELEVATION_CACHE_MAX) {
+        elevationCache.delete(elevationCache.keys().next().value!);
+    }
+}
+
+export function clearElevationCache() {
+    elevationCache.clear();
+}
+
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
+
+async function fetchBatchWithRetry(provider: ElevationProvider, lats: string[], lons: string[]): Promise<number[]> {
+    for (let retries = 0; retries < 3; retries++) {
+        try {
+            return await provider.fetch(lats, lons);
+        } catch (err: any) {
+            if (!err.message.includes('429')) throw err;
+            const waitTime = Math.pow(2, retries) * 2000;
+            console.warn(`${ts()} ${provider.name} rate limited (429). Retrying in ${waitTime}ms...`);
+            await delay(waitTime);
+        }
+    }
+    throw new Error(`Failed to fetch current batch from ${provider.name}`);
+}
+
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>) {
+    let next = 0;
+    const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) {
+            const i = next++;
+            await worker(items[i], i);
+        }
+    });
+    await Promise.all(lanes);
+}
+
 /**
  * Fetches elevation data for a list of coordinates using multiple fallback providers.
  */
@@ -88,49 +136,23 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
     const lats = sampledCoords.map(c => c[1].toFixed(6));
     const lons = sampledCoords.map(c => c[0].toFixed(6));
 
-    const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
-
     for (const provider of PROVIDERS) {
         try {
             console.log(`${ts()} Attempting elevation fetch with ${provider.name}...`);
-            const finalElevations: number[] = [];
+            const keys = lats.map((lat, i) => `${provider.name}|${lat},${lons[i]}`);
+            const missing = [...new Set(keys.filter(k => !elevationCache.has(k)))];
+            const batches: string[][] = [];
+            for (let i = 0; i < missing.length; i += provider.batchSize) batches.push(missing.slice(i, i + provider.batchSize));
 
-            for (let i = 0; i < sampledCoords.length; i += provider.batchSize) {
-                const batchLats = lats.slice(i, i + provider.batchSize);
-                const batchLons = lons.slice(i, i + provider.batchSize);
+            await runWithConcurrency(batches, provider.selfHosted ? SELF_HOSTED_CONCURRENCY : 1, async (batch, i) => {
+                const coords = batch.map(k => k.slice(k.indexOf('|') + 1).split(','));
+                const elevations = await fetchBatchWithRetry(provider, coords.map(c => c[0]), coords.map(c => c[1]));
+                batch.forEach((k, j) => cacheElevation(k, elevations[j]));
+                if (!provider.selfHosted && i < batches.length - 1) await delay(500);
+            });
 
-                let success = false;
-                let retries = 0;
-                const maxRetries = 3;
-
-                while (!success && retries < maxRetries) {
-                    try {
-                        const elevations = await provider.fetch(batchLats, batchLons);
-                        finalElevations.push(...elevations);
-                        success = true;
-                    } catch (err: any) {
-                        if (err.message.includes('429')) {
-                            const waitTime = Math.pow(2, retries) * 2000;
-                            console.warn(`${ts()} ${provider.name} rate limited (429). Retrying in ${waitTime}ms...`);
-                            await delay(waitTime);
-                            retries++;
-                        } else {
-                            throw err;
-                        }
-                    }
-                }
-
-                if (!success) {
-                    throw new Error(`Failed to fetch current batch from ${provider.name}`);
-                }
-
-                if (!provider.selfHosted && i + provider.batchSize < sampledCoords.length) {
-                    await delay(500);
-                }
-            }
-
-            console.log(`${ts()} Successfully fetched elevation from ${provider.name}`);
-            return { elevations: finalElevations, sampledCoords };
+            console.log(`${ts()} Successfully fetched elevation from ${provider.name} (${missing.length}/${keys.length} looked up, rest cached)`);
+            return { elevations: keys.map(k => elevationCache.get(k)!), sampledCoords };
         } catch (err: any) {
             console.warn(`${ts()} ${provider.name} failed: ${err.message}. Trying fallback...`);
         }

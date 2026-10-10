@@ -1,4 +1,4 @@
-import { fetchElevationData, calculateElevationProfile, calculateElevationGainLoss, densifyElevationProfile } from './elevation';
+import { fetchElevationData, calculateElevationProfile, calculateElevationGainLoss, densifyElevationProfile, clearElevationCache } from './elevation';
 
 describe('calculateElevationGainLoss', () => {
     it('ignores noise below the threshold', () => {
@@ -42,6 +42,7 @@ describe('calculateElevationGainLoss', () => {
 describe('elevation library robustness', () => {
     beforeEach(() => {
         global.fetch = jest.fn();
+        clearElevationCache();
     });
 
     afterEach(() => {
@@ -115,6 +116,60 @@ describe('elevation library robustness', () => {
         expect(result.sampledCoords.length).toBeGreaterThan(1000);
         expect(result.sampledCoords.length).toBeLessThanOrEqual(2000);
     }, 15000);
+
+    // Echoes each requested location's latitude back as its elevation, so tests can
+    // check every returned value lines up with the coordinate it was asked for.
+    const echoLatitude = async (url: string) => ({
+        ok: true,
+        json: async () => {
+            const locations = new URL(url).searchParams.get('locations')!.split('|');
+            return { results: locations.map(l => ({ elevation: Number(l.split(',')[0]) })) };
+        }
+    });
+
+    it('only looks up points it has not already fetched when the route grows', async () => {
+        (global.fetch as jest.Mock).mockImplementation(echoLatitude);
+        const first: [number, number][] = [[-105.0, 40.0], [-105.0, 40.001], [-105.0, 40.002]];
+        await fetchElevationData(first);
+        (global.fetch as jest.Mock).mockClear();
+
+        const grown: [number, number][] = [...first, [-105.0, 40.003], [-105.0, 40.004]];
+        const result = await fetchElevationData(grown);
+
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+        const requested = new URL((global.fetch as jest.Mock).mock.calls[0][0]).searchParams.get('locations')!.split('|');
+        expect(requested).toEqual(['40.003000,-105.000000', '40.004000,-105.000000']);
+        expect(result.elevations).toEqual([40, 40.001, 40.002, 40.003, 40.004]);
+    });
+
+    it('makes no requests at all for a route it has already fetched', async () => {
+        (global.fetch as jest.Mock).mockImplementation(echoLatitude);
+        await fetchElevationData(mockCoords);
+        (global.fetch as jest.Mock).mockClear();
+
+        const result = await fetchElevationData(mockCoords);
+        expect(global.fetch).not.toHaveBeenCalled();
+        expect(result.elevations).toEqual([40, 40.1]);
+    });
+
+    it('runs self-hosted batches concurrently and keeps elevations in route order', async () => {
+        let inFlight = 0, maxInFlight = 0;
+        (global.fetch as jest.Mock).mockImplementation(async (url: string) => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise(r => setTimeout(r, 10));
+            inFlight--;
+            return echoLatitude(url);
+        });
+        // 1000 distinct points over ~7mi -> 10 batches of 100.
+        const route: [number, number][] = Array.from({ length: 1000 }, (_, i) => [-105.0, 40.0 + i * 0.0001]);
+        const result = await fetchElevationData(route);
+
+        expect(global.fetch).toHaveBeenCalledTimes(10);
+        expect(maxInFlight).toBeGreaterThan(1);
+        expect(maxInFlight).toBeLessThanOrEqual(8);
+        result.sampledCoords.forEach((c, i) => expect(result.elevations[i]).toBeCloseTo(Number(c[1].toFixed(6)), 6));
+    });
 
     it('calculates profile correctly with unit conversion', () => {
         const coords: [number, number][] = [[-105.0, 40.0], [-105.001, 40.001]];
