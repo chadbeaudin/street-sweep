@@ -1765,7 +1765,8 @@ export class StreetGraph {
                 bridgeSource = { lat: last[1], lon: last[0] };
             }
 
-            // Prefer fresh streets over already-ridden ones when bridging into/out of the area.
+            // Prefer fresh streets over already-ridden ones when bridging into/out of the area,
+            // but capped like point-to-point steps so the penalty can't force a multi-mile loop.
             const bridgePenalty = this.buildRiddenPenaltyMap(riddenPenalty);
 
             const areaEntryNodeId = this.findClosestNode(areaPath[0].lat, areaPath[0].lon);
@@ -1789,7 +1790,7 @@ export class StreetGraph {
                     usedEntryStartId = areaEntryNodeId;
                 } else {
                     for (const candidateId of entryStartCandidates) {
-                        const p = this.findPath(candidateId, areaEntryNodeId, undefined, bridgePenalty);
+                        const p = this.findClosestTargetCapped(candidateId, new Set([areaEntryNodeId]), bridgePenalty)?.path ?? [];
                         if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
                     }
                     // The snap-edge nodes can land on a small disconnected fragment (e.g. a trail
@@ -1800,7 +1801,7 @@ export class StreetGraph {
                         const broadCandidates = this.findNodeIdsNearPoint(bridgeSource.lat, bridgeSource.lon, 10);
                         for (const candidateId of broadCandidates) {
                             if (entryStartCandidates.includes(candidateId)) continue;
-                            const p = this.findPath(candidateId, areaEntryNodeId, undefined, bridgePenalty);
+                            const p = this.findClosestTargetCapped(candidateId, new Set([areaEntryNodeId]), bridgePenalty)?.path ?? [];
                             if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
                         }
                     }
@@ -1866,7 +1867,7 @@ export class StreetGraph {
                         usedExitStartId = areaEndNodeId;
                     } else {
                         for (const candidateId of exitStartCandidates) {
-                            const p = this.findPath(areaEndNodeId, candidateId, undefined, bridgePenalty);
+                            const p = this.findClosestTargetCapped(areaEndNodeId, new Set([candidateId]), bridgePenalty)?.path ?? [];
                             if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
                         }
                         // See the identical broad fallback on the entry bridge above.
@@ -1874,7 +1875,7 @@ export class StreetGraph {
                             const broadCandidates = this.findNodeIdsNearPoint(bridgeTarget.lat, bridgeTarget.lon, 10);
                             for (const candidateId of broadCandidates) {
                                 if (exitStartCandidates.includes(candidateId)) continue;
-                                const p = this.findPath(areaEndNodeId, candidateId, undefined, bridgePenalty);
+                                const p = this.findClosestTargetCapped(areaEndNodeId, new Set([candidateId]), bridgePenalty)?.path ?? [];
                                 if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
                             }
                         }

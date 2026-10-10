@@ -70,3 +70,36 @@ describe('mixed point+area routing (#26 diagonal lines)', () => {
         expect(missing).toBe(0);
     });
 });
+
+describe('mixed point+area routing: exit bridge detours (#107)', () => {
+    const setRidden = (g: StreetGraph, a: [number, number], b: [number, number], ridden: boolean) => {
+        const link = g.graph.getLink(String(nodeId(...a)), String(nodeId(...b))) ?? g.graph.getLink(String(nodeId(...b)), String(nodeId(...a)));
+        link!.data.isRidden = ridden;
+    };
+
+    it('takes the short ridden way to the next waypoint instead of a long unridden loop', () => {
+        const g = buildGrid();
+        // Everything starts ridden; only a long loop out to the west edge stays fresh.
+        g.graph.forEachLink((link: any) => { link.data.isRidden = true; });
+        const freshLoop: [number, number][] = [[2, 2], [2, 1], [2, 0], [1, 0], [0, 0], [0, 1], [0, 2], [0, 3]];
+        for (let k = 1; k < freshLoop.length; k++) setRidden(g, freshLoop[k - 1], freshLoop[k], false);
+        // The box sweep itself and the approach into it are fresh too.
+        for (const [a, b] of [[[2, 2], [2, 3]], [[3, 2], [3, 3]], [[2, 2], [3, 2]], [[2, 3], [3, 3]], [[3, 1], [3, 2]]] as [number, number][][]) {
+            setRidden(g, a, b, false);
+        }
+
+        const box = { south: coord(2, 2).lat - 0.0005, north: coord(3, 3).lat + 0.0005, west: coord(2, 2).lon - 0.0005, east: coord(3, 3).lon + 0.0005 };
+        const start = coord(3, 1), next = coord(0, 3);
+        const path = g.solveCPP(
+            start, next,
+            [[start.lon, start.lat], [next.lon, next.lat]], [box],
+            [[next.lon, next.lat]], undefined,
+        );
+
+        // Straight down column 3 is two blocks; the fresh loop is eight. Ridden
+        // avoidance may stretch the bridge, but not past the 1.3x step cap.
+        expect(path.some(p => p.lon === coord(0, 0).lon)).toBe(false);
+        expect(path[path.length - 1].lat).toBeCloseTo(next.lat, 6);
+        expect(path[path.length - 1].lon).toBeCloseTo(next.lon, 6);
+    });
+});
