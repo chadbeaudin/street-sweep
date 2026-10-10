@@ -1,8 +1,18 @@
+# The pre-commit hook bumps the version in package.json/package-lock.json on
+# every commit, which would bust the npm ci layer cache every build. Install
+# from copies with the version zeroed so that layer only rebuilds when
+# dependencies actually change.
+FROM node:20-slim AS manifest
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN node -e "const fs = require('fs'); for (const f of ['package.json', 'package-lock.json']) { const j = JSON.parse(fs.readFileSync(f, 'utf8')); j.version = '0.0.0'; if (j.packages && j.packages['']) j.packages[''].version = '0.0.0'; fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\\n'); }"
+
 # Install dependencies only when needed
 FROM node:20-slim AS deps
 RUN apt-get update && apt-get install -y libc6-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package.json package-lock.json prisma.config.ts ./
+COPY --from=manifest /app/package.json /app/package-lock.json ./
+COPY prisma.config.ts ./
 COPY prisma ./prisma
 RUN npm ci
 
@@ -32,8 +42,6 @@ ENV NODE_ENV production
 # large ridden-roads recompute); cap explicitly at 1536MB, leaving ~512MB
 # headroom for non-heap overhead (native buffers, the OS, etc.).
 ENV NODE_OPTIONS="--max-old-space-size=1536"
-
-LABEL net.unraid.docker.icon="https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/public/icon.png"
 
 RUN groupadd --system --gid 1001 nodejs
 RUN useradd --system --uid 1001 nextjs
