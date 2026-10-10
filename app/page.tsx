@@ -240,7 +240,10 @@ export default function Home() {
         stravaRoadsRef.current = precomputedRidden && precomputedRidden.length > 0
             ? [...(stravaRoads ?? []), ...precomputedRidden]
             : stravaRoads;
-        riddenFingerprintRef.current = polylineSetFingerprint(stravaRoadsRef.current);
+        // Fingerprint only the Strava activities: precomputedRidden is loaded per map
+        // tile as the user pans, so including it would change the fingerprint (and
+        // defeat the server's step-graph reuse) on nearly every pan.
+        riddenFingerprintRef.current = polylineSetFingerprint(stravaRoads);
     }, [stravaRoads, precomputedRidden]);
 
     useEffect(() => {

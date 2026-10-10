@@ -340,9 +340,9 @@ export class StreetGraph {
     private avoidedIndex: Map<string, [number, number, number][]> | null = null;
 
     // Identifies everything besides the bbox that shapes a graph. riddenFingerprint
-    // is the page's fingerprint of the rider's full ridden list: each request's
-    // riddenRoads is filtered to the viewport, so panning changes that subset even
-    // though the rider's data didn't change.
+    // is the page's fingerprint of the rider's Strava activities, which stay fixed
+    // while they pan; each request's riddenRoads is filtered to the viewport and
+    // padded with per-tile precomputed data, so it changes with nearly every pan.
     public static reuseKey(riddenFingerprint: string, options?: RoutingOptions): string {
         return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${riddenFingerprint}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
     }
