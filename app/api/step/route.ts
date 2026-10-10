@@ -4,6 +4,7 @@ import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { z } from 'zod';
 import { LatLon, BBox, PolylineList, RoutingOptions, parseBody } from '@/lib/validation';
 import { buildStepPathCoords } from '@/lib/stepPath';
+import { polylineSetFingerprint } from '@/lib/riddenRoads';
 
 const Body = z.object({
     point: LatLon,
@@ -11,6 +12,7 @@ const Body = z.object({
     bbox: BBox,
     manualRoute: PolylineList.optional().nullable(),
     riddenRoads: PolylineList.optional().nullable(),
+    riddenFingerprint: z.string().max(64).optional(),
     routingOptions: RoutingOptions,
 });
 
@@ -18,7 +20,7 @@ export async function POST(req: NextRequest) {
     try {
         const parsed = await parseBody(req, Body);
         if ('error' in parsed) return parsed.error;
-        const { point, lastPoint, bbox, manualRoute, riddenRoads, routingOptions } = parsed.data;
+        const { point, lastPoint, bbox, manualRoute, riddenRoads, riddenFingerprint, routingOptions } = parsed.data;
 
         const BUFFER = 0.01; // small buffer beyond the union area for edge connectivity
         const GRID = 0.01;   // Snap to 1km grid for caching
@@ -59,7 +61,8 @@ export async function POST(req: NextRequest) {
         // Use the cached graph for speed. We now apply penalties dynamically
         // during pathfinding instead of mutating the graph weights. A graph cached
         // for an earlier viewport is reused as long as it still spans both clicks.
-        const reuseKey = StreetGraph.reuseKey(riddenRoads as [number, number][][] | undefined, routingOptions);
+        // Without the page's fingerprint, fall back to the (viewport-filtered) list itself.
+        const reuseKey = StreetGraph.reuseKey(riddenFingerprint ?? polylineSetFingerprint(riddenRoads as [number, number][][] | undefined), routingOptions);
         const clicksArea = {
             south: Math.min(point.lat, lastPoint?.lat ?? point.lat) - BUFFER,
             west: Math.min(point.lon, lastPoint?.lon ?? point.lon) - BUFFER,

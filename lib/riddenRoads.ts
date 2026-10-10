@@ -52,6 +52,23 @@ function bearingDeg(lat1: number, lon1: number, lat2: number, lon2: number): num
 // down to that before the click handler serializes anything. Mirrors
 // filterRiddenRoadsToBbox in lib/graph.ts (kept separate so this file, used by
 // the client bundle, doesn't pull in graph.ts's ngraph dependency).
+// Cheap identity for a whole set of polylines (point count + rolling hash of each
+// line's first point). The page sends this for the rider's full ridden list so the
+// server can tell two requests come from the same data even though each request's
+// riddenRoads is filtered to a different viewport.
+export function polylineSetFingerprint(lines: [number, number][][] | null | undefined): string {
+    let hash = 0;
+    let pointCount = 0;
+    for (const line of lines ?? []) {
+        pointCount += line.length;
+        if (line.length > 0) {
+            const [lat, lon] = line[0];
+            hash = (hash * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
+        }
+    }
+    return `${pointCount}:${hash}`;
+}
+
 export function filterRiddenRoadsToBbox(
     riddenRoads: [number, number][][] | null | undefined,
     bbox: { north: number, south: number, east: number, west: number },

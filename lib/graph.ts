@@ -6,6 +6,7 @@ import path from 'ngraph.path';
 import { OSMWay, OSMNode, OverpassResponse } from './types';
 import { isRoutableHighway } from './highwayFilter';
 import { haversineM } from './geometry';
+import { polylineSetFingerprint } from './riddenRoads';
 
 interface NodeData {
     lat: number;
@@ -71,19 +72,6 @@ function setCachedGraph(key: string, entry: GraphCacheEntry) {
         if (oldestKey === undefined) break;
         GRAPH_CACHE.delete(oldestKey);
     }
-}
-
-function polylineSetKey(lines: [number, number][][] | null | undefined): string {
-    let hash = 0;
-    let pointCount = 0;
-    for (const line of lines ?? []) {
-        pointCount += line.length;
-        if (line.length > 0) {
-            const [lat, lon] = line[0];
-            hash = (hash * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
-        }
-    }
-    return `${pointCount}:${hash}`;
 }
 
 // Exposed for tests — lets a test assert eviction without reaching into module state.
@@ -351,11 +339,12 @@ export class StreetGraph {
     private riddenIndex: Map<string, [number, number, number][]> | null = null;
     private avoidedIndex: Map<string, [number, number, number][]> | null = null;
 
-    // Identifies everything besides the bbox that shapes a graph, computed from the
-    // caller's full (unfiltered) ridden list so graphs built for different bboxes
-    // from the same inputs share it.
-    public static reuseKey(riddenRoads: [number, number][][] | null | undefined, options?: RoutingOptions): string {
-        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${polylineSetKey(riddenRoads)}|A${polylineSetKey(options?.avoidedRoads)}`;
+    // Identifies everything besides the bbox that shapes a graph. riddenFingerprint
+    // is the page's fingerprint of the rider's full ridden list: each request's
+    // riddenRoads is filtered to the viewport, so panning changes that subset even
+    // though the rider's data didn't change.
+    public static reuseKey(riddenFingerprint: string, options?: RoutingOptions): string {
+        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${riddenFingerprint}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
     }
 
     // Panning between clicks changes the viewport-derived bbox, so an exact-key
@@ -389,7 +378,7 @@ export class StreetGraph {
         // (see lib/fetchRegions.ts). Including the source and element count keeps a
         // corridor graph from being served for a full-rect request, and vice versa.
         const dataKey = `|D${data.generator === 'StreetSweep regions' ? 'c' : 'f'}${data.elements.length}`;
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetKey(riddenRoads)}|A${polylineSetKey(options?.avoidedRoads)}`;
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
         const now = Date.now();
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {

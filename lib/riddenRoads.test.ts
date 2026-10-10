@@ -1,4 +1,4 @@
-import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox, fillUnbranchedGaps } from './riddenRoads';
+import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox, fillUnbranchedGaps, polylineSetFingerprint } from './riddenRoads';
 
 // ~111320m per degree of latitude, used to build roads/traces at known real-world distances.
 const M_PER_DEG_LAT = 111320;
@@ -380,5 +380,22 @@ describe('fillUnbranchedGaps', () => {
         const street: [number, number][] = [p(0), p(100), p(200), p(300)];
         const result = dedupeRiddenRoads([[p(0), p(60)], [p(240), p(300)]], [street]);
         expect(result).toEqual([street]);
+    });
+});
+
+describe('polylineSetFingerprint', () => {
+    const a: [number, number][] = [[47.63, -117.42], [47.631, -117.42]];
+    const b: [number, number][] = [[47.64, -117.41], [47.641, -117.41], [47.642, -117.41]];
+
+    it('is the same for the same data', () => {
+        expect(polylineSetFingerprint([a, b])).toBe(polylineSetFingerprint([a.slice(), b.slice()]));
+    });
+
+    it('changes when a ride is added or removed', () => {
+        expect(polylineSetFingerprint([a, b])).not.toBe(polylineSetFingerprint([a]));
+    });
+
+    it('treats missing data as an empty set', () => {
+        expect(polylineSetFingerprint(null)).toBe(polylineSetFingerprint([]));
     });
 });

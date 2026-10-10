@@ -1,6 +1,7 @@
 import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, getPolygonBounds, trimBridgeOverlap, applyEndpointSnap, filterRiddenRoadsToBbox, graphCacheSize } from './graph';
 import { isRoutableHighway } from './highwayFilter';
 import { OverpassResponse } from './types';
+import { polylineSetFingerprint } from './riddenRoads';
 
 describe('StreetGraph', () => {
     let graph: StreetGraph;
@@ -1409,36 +1410,47 @@ describe('StreetGraph', () => {
             ],
         });
         const ridden: [number, number][][] = [[[30, 0], [30, 0.001]]];
-        const options = { avoidTrails: true };
+        const fingerprint = polylineSetFingerprint(ridden);
         const viewport = { south: 29.9, north: 30.1, west: -0.1, east: 0.1 };
 
         test('reuses a graph built for a different, larger viewport that still covers both clicks', () => {
-            const key = StreetGraph.reuseKey(ridden, options);
-            const built = StreetGraph.getCachedGraph(viewport, data(30), ridden, options, key);
+            const key = StreetGraph.reuseKey(fingerprint, { avoidTrails: true });
+            const built = StreetGraph.getCachedGraph(viewport, data(30), ridden, { avoidTrails: true }, key);
             const clicks = { south: 29.99, north: 30.01, west: -0.01, east: 0.01 };
             expect(StreetGraph.findCachedGraphCovering(clicks, key)).toBe(built);
         });
 
+        test('reuses it after a pan changes which rides are in view, since the full-list fingerprint is unchanged', () => {
+            const allRidden: [number, number][][] = [...ridden, [[31, 0], [31, 0.001]]];
+            const key = StreetGraph.reuseKey(polylineSetFingerprint(allRidden), { avoidHighways: true });
+            // First request saw only the ride in its viewport.
+            const built = StreetGraph.getCachedGraph(viewport, data(30), ridden, { avoidHighways: true }, key);
+            // After panning, a different subset is in view, but it's the same rider's data.
+            const panned = StreetGraph.reuseKey(polylineSetFingerprint(allRidden), { avoidHighways: true });
+            const clicks = { south: 29.99, north: 30.01, west: -0.01, east: 0.01 };
+            expect(StreetGraph.findCachedGraphCovering(clicks, panned)).toBe(built);
+        });
+
         test('does not reuse a graph that only partly covers the clicks', () => {
-            const key = StreetGraph.reuseKey(ridden, { avoidTrails: false });
+            const key = StreetGraph.reuseKey(fingerprint, { avoidTrails: false });
             StreetGraph.getCachedGraph(viewport, data(30), ridden, { avoidTrails: false }, key);
             const clicks = { south: 30.05, north: 30.2, west: -0.01, east: 0.01 };
             expect(StreetGraph.findCachedGraphCovering(clicks, key)).toBeNull();
         });
 
-        test('does not reuse a graph built with different ridden roads or options', () => {
-            const key = StreetGraph.reuseKey(ridden, { avoidGravel: true });
+        test('does not reuse a graph built from different ridden data or options', () => {
+            const key = StreetGraph.reuseKey(fingerprint, { avoidGravel: true });
             StreetGraph.getCachedGraph(viewport, data(30), ridden, { avoidGravel: true }, key);
             const clicks = { south: 29.99, north: 30.01, west: -0.01, east: 0.01 };
             const moreRidden: [number, number][][] = [...ridden, [[30.05, 0], [30.05, 0.001]]];
-            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(moreRidden, { avoidGravel: true }))).toBeNull();
-            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(ridden, { avoidGravel: false }))).toBeNull();
+            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(polylineSetFingerprint(moreRidden), { avoidGravel: true }))).toBeNull();
+            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(fingerprint, { avoidGravel: false }))).toBeNull();
         });
 
         test('never matches graphs cached without a reuse key (generate/snap/path)', () => {
             StreetGraph.getCachedGraph({ south: 39.9, north: 40.1, west: -0.1, east: 0.1 }, data(40));
             const clicks = { south: 39.99, north: 40.01, west: -0.01, east: 0.01 };
-            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(null, undefined))).toBeNull();
+            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(polylineSetFingerprint(null)))).toBeNull();
         });
     });
 

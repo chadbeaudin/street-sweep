@@ -21,7 +21,7 @@ import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
-import { filterRiddenRoadsToBbox } from '@/lib/riddenRoads';
+import { filterRiddenRoadsToBbox, polylineSetFingerprint } from '@/lib/riddenRoads';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
     ssr: false,
@@ -217,6 +217,7 @@ export default function Home() {
     const historyIndexRef = useRef(-1);
     const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
     const stravaRoadsRef = useRef<[number, number][][] | null>(null);
+    const riddenFingerprintRef = useRef(polylineSetFingerprint(null));
     const routingOptionsRef = useRef(routingOptions);
 
     // Keep refs in sync with state for use in stable callbacks
@@ -239,6 +240,7 @@ export default function Home() {
         stravaRoadsRef.current = precomputedRidden && precomputedRidden.length > 0
             ? [...(stravaRoads ?? []), ...precomputedRidden]
             : stravaRoads;
+        riddenFingerprintRef.current = polylineSetFingerprint(stravaRoadsRef.current);
     }, [stravaRoads, precomputedRidden]);
 
     useEffect(() => {
@@ -1176,6 +1178,7 @@ export default function Home() {
                         // Pass context so the step pathfinder avoids already-traversed streets
                         manualRoute: manualRouteRef.current,
                         riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                        riddenFingerprint: riddenFingerprintRef.current,
                         routingOptions: routingOptionsRef.current
                     })
                 });
@@ -1260,6 +1263,7 @@ export default function Home() {
                         point: newLatLng,
                         bbox: currentBbox,
                         riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                        riddenFingerprint: riddenFingerprintRef.current,
                         routingOptions: routingOptionsRef.current
                     })
                 });
@@ -1291,6 +1295,7 @@ export default function Home() {
                             // When moving a point, only penalize segments that aren't being recalculated
                             manualRoute: updatedSegments.filter((_, i) => !affectedIndices.includes(i)),
                             riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                            riddenFingerprint: riddenFingerprintRef.current,
                             routingOptions: routingOptionsRef.current
                         })
                     });
@@ -1369,6 +1374,7 @@ export default function Home() {
                         bbox: currentBbox,
                         manualRoute: newRoute.filter((_, i) => i !== segmentToRoute),
                         riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                        riddenFingerprint: riddenFingerprintRef.current,
                         routingOptions: routingOptionsRef.current
                     })
                 });
@@ -1422,6 +1428,7 @@ export default function Home() {
                         point: rawPoint,
                         bbox: currentBbox,
                         riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                        riddenFingerprint: riddenFingerprintRef.current,
                         routingOptions: routingOptionsRef.current,
                     }),
                 });
@@ -1452,6 +1459,7 @@ export default function Home() {
                             bbox: currentBbox,
                             manualRoute: excludeForPenalty,
                             riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                            riddenFingerprint: riddenFingerprintRef.current,
                             routingOptions: routingOptionsRef.current,
                         }),
                     });
@@ -1471,6 +1479,7 @@ export default function Home() {
                             bbox: currentBbox,
                             manualRoute: excludeForPenalty,
                             riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, currentBbox),
+                            riddenFingerprint: riddenFingerprintRef.current,
                             routingOptions: routingOptionsRef.current,
                         }),
                     });
