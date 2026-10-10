@@ -56,11 +56,18 @@ export async function POST(req: NextRequest) {
             east: roundToGrid(maxLon + BUFFER, false)
         };
 
-        const osmData = await fetchOSMData(bufferedBbox);
-
         // Use the cached graph for speed. We now apply penalties dynamically
-        // during pathfinding instead of mutating the graph weights.
-        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads as [number, number][][] | undefined, bufferedBbox), routingOptions);
+        // during pathfinding instead of mutating the graph weights. A graph cached
+        // for an earlier viewport is reused as long as it still spans both clicks.
+        const reuseKey = StreetGraph.reuseKey(riddenRoads as [number, number][][] | undefined, routingOptions);
+        const clicksArea = {
+            south: Math.min(point.lat, lastPoint?.lat ?? point.lat) - BUFFER,
+            west: Math.min(point.lon, lastPoint?.lon ?? point.lon) - BUFFER,
+            north: Math.max(point.lat, lastPoint?.lat ?? point.lat) + BUFFER,
+            east: Math.max(point.lon, lastPoint?.lon ?? point.lon) + BUFFER,
+        };
+        const graph = StreetGraph.findCachedGraphCovering(clicksArea, reuseKey)
+            ?? StreetGraph.getCachedGraph(bufferedBbox, await fetchOSMData(bufferedBbox), filterRiddenRoadsToBbox(riddenRoads as [number, number][][] | undefined, bufferedBbox), routingOptions, reuseKey);
 
         // Get link IDs that should be penalized: already traversed in the current
         // session (avoid backtracking) and already ridden per Strava (prefer new

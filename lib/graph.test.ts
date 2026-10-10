@@ -1397,6 +1397,51 @@ describe('StreetGraph', () => {
         });
     });
 
+    describe('findCachedGraphCovering (#110)', () => {
+        const data = (lat: number): OverpassResponse => ({
+            version: 0.6,
+            generator: 'test',
+            osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat, lon: 0 },
+                { type: 'node', id: 2, lat, lon: 0.001 },
+                { type: 'way', id: 100, nodes: [1, 2], tags: { highway: 'residential' } },
+            ],
+        });
+        const ridden: [number, number][][] = [[[30, 0], [30, 0.001]]];
+        const options = { avoidTrails: true };
+        const viewport = { south: 29.9, north: 30.1, west: -0.1, east: 0.1 };
+
+        test('reuses a graph built for a different, larger viewport that still covers both clicks', () => {
+            const key = StreetGraph.reuseKey(ridden, options);
+            const built = StreetGraph.getCachedGraph(viewport, data(30), ridden, options, key);
+            const clicks = { south: 29.99, north: 30.01, west: -0.01, east: 0.01 };
+            expect(StreetGraph.findCachedGraphCovering(clicks, key)).toBe(built);
+        });
+
+        test('does not reuse a graph that only partly covers the clicks', () => {
+            const key = StreetGraph.reuseKey(ridden, { avoidTrails: false });
+            StreetGraph.getCachedGraph(viewport, data(30), ridden, { avoidTrails: false }, key);
+            const clicks = { south: 30.05, north: 30.2, west: -0.01, east: 0.01 };
+            expect(StreetGraph.findCachedGraphCovering(clicks, key)).toBeNull();
+        });
+
+        test('does not reuse a graph built with different ridden roads or options', () => {
+            const key = StreetGraph.reuseKey(ridden, { avoidGravel: true });
+            StreetGraph.getCachedGraph(viewport, data(30), ridden, { avoidGravel: true }, key);
+            const clicks = { south: 29.99, north: 30.01, west: -0.01, east: 0.01 };
+            const moreRidden: [number, number][][] = [...ridden, [[30.05, 0], [30.05, 0.001]]];
+            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(moreRidden, { avoidGravel: true }))).toBeNull();
+            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(ridden, { avoidGravel: false }))).toBeNull();
+        });
+
+        test('never matches graphs cached without a reuse key (generate/snap/path)', () => {
+            StreetGraph.getCachedGraph({ south: 39.9, north: 40.1, west: -0.1, east: 0.1 }, data(40));
+            const clicks = { south: 39.99, north: 40.01, west: -0.01, east: 0.01 };
+            expect(StreetGraph.findCachedGraphCovering(clicks, StreetGraph.reuseKey(null, undefined))).toBeNull();
+        });
+    });
+
     describe('findAllTargetWeights', () => {
         function buildTestGraph(): StreetGraph {
             // A loop with a spur and an alternate longer route, so several

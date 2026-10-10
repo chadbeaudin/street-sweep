@@ -46,7 +46,9 @@ const USER_AVOIDED_PENALTY = 100;
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
-const GRAPH_CACHE = new Map<string, { graph: StreetGraph; timestamp: number }>();
+type BBox = { south: number; west: number; north: number; east: number };
+interface GraphCacheEntry { graph: StreetGraph; timestamp: number; bbox: BBox; reuseKey?: string }
+const GRAPH_CACHE = new Map<string, GraphCacheEntry>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
 
 // A cached StreetGraph is big — a large selection holds ~100k edges plus the
@@ -61,14 +63,27 @@ const GRAPH_CACHE_MAX_ENTRIES = 4;
 // `timestamp` is the graph's original build time, not its last use: passing it
 // through on a cache hit keeps the TTL measured from when the data was fetched,
 // so refreshing recency for eviction can't keep a stale graph alive forever.
-function setCachedGraph(key: string, graph: StreetGraph, timestamp: number = Date.now()) {
+function setCachedGraph(key: string, entry: GraphCacheEntry) {
     GRAPH_CACHE.delete(key);
-    GRAPH_CACHE.set(key, { graph, timestamp });
+    GRAPH_CACHE.set(key, entry);
     while (GRAPH_CACHE.size > GRAPH_CACHE_MAX_ENTRIES) {
         const oldestKey = GRAPH_CACHE.keys().next().value;
         if (oldestKey === undefined) break;
         GRAPH_CACHE.delete(oldestKey);
     }
+}
+
+function polylineSetKey(lines: [number, number][][] | null | undefined): string {
+    let hash = 0;
+    let pointCount = 0;
+    for (const line of lines ?? []) {
+        pointCount += line.length;
+        if (line.length > 0) {
+            const [lat, lon] = line[0];
+            hash = (hash * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
+        }
+    }
+    return `${pointCount}:${hash}`;
 }
 
 // Exposed for tests — lets a test assert eviction without reaching into module state.
@@ -336,57 +351,59 @@ export class StreetGraph {
     private riddenIndex: Map<string, [number, number, number][]> | null = null;
     private avoidedIndex: Map<string, [number, number, number][]> | null = null;
 
-    public static getCachedGraph(bbox: { south: number; west: number; north: number; east: number }, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions): StreetGraph {
+    // Identifies everything besides the bbox that shapes a graph, computed from the
+    // caller's full (unfiltered) ridden list so graphs built for different bboxes
+    // from the same inputs share it.
+    public static reuseKey(riddenRoads: [number, number][][] | null | undefined, options?: RoutingOptions): string {
+        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${polylineSetKey(riddenRoads)}|A${polylineSetKey(options?.avoidedRoads)}`;
+    }
+
+    // Panning between clicks changes the viewport-derived bbox, so an exact-key
+    // lookup missed and every /api/step re-fetched OSM data and rebuilt the graph
+    // even though the previous graph already covered both clicks (#110).
+    public static findCachedGraphCovering(need: BBox, reuseKey: string): StreetGraph | null {
+        const now = Date.now();
+        for (const [key, entry] of GRAPH_CACHE) {
+            if (entry.reuseKey !== reuseKey || now - entry.timestamp >= CACHE_TTL) continue;
+            const b = entry.bbox;
+            if (b.south <= need.south && b.west <= need.west && b.north >= need.north && b.east >= need.east) {
+                console.log(`${ts()} Reusing cached StreetGraph ${key} (covers requested area)`);
+                setCachedGraph(key, entry);
+                return entry.graph;
+            }
+        }
+        return null;
+    }
+
+    public static getCachedGraph(bbox: BBox, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions, reuseKey?: string): StreetGraph {
         const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
         // riddenRoads affects which edges get marked isRidden during buildFromOSM,
         // so it must be part of the cache key — otherwise a graph built for this
         // bbox with different (or no) ridden data gets silently reused for up to
         // an hour, and required-edge selection for area boxes never reflects the
         // rider's actual ridden roads.
-        let riddenKey = 0;
-        let riddenPointCount = 0;
-        if (riddenRoads) {
-            for (const activity of riddenRoads) {
-                riddenPointCount += activity.length;
-                if (activity.length > 0) {
-                    const [lat, lon] = activity[0];
-                    riddenKey = (riddenKey * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
-                }
-            }
-        }
         // avoidedRoads (issue #45) affects isUserAvoided/weight the same way riddenRoads
         // affects isRidden, so it must also be part of the cache key.
-        let avoidedKey = 0;
-        let avoidedPointCount = 0;
-        if (options?.avoidedRoads) {
-            for (const road of options.avoidedRoads) {
-                avoidedPointCount += road.length;
-                if (road.length > 0) {
-                    const [lat, lon] = road[0];
-                    avoidedKey = (avoidedKey * 31 + Math.round(lat * 1e4) + Math.round(lon * 1e4)) | 0;
-                }
-            }
-        }
         // The same bbox can now be backed by two very different datasets: the full
         // enclosing rectangle, or a corridor-only subset fetched as disjoint regions
         // (see lib/fetchRegions.ts). Including the source and element count keeps a
         // corridor graph from being served for a full-rect request, and vice versa.
         const dataKey = `|D${data.generator === 'StreetSweep regions' ? 'c' : 'f'}${data.elements.length}`;
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${riddenPointCount}:${riddenKey}|A${avoidedPointCount}:${avoidedKey}`;
+        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetKey(riddenRoads)}|A${polylineSetKey(options?.avoidedRoads)}`;
         const now = Date.now();
         const cached = GRAPH_CACHE.get(key);
         if (cached && (now - cached.timestamp < CACHE_TTL)) {
             console.log(`${ts()} Returning cached StreetGraph for ${key}`);
             // Re-insert so this counts as the most recently used entry and the
             // eviction below drops a genuinely cold graph instead of this one.
-            setCachedGraph(key, cached.graph, cached.timestamp);
+            setCachedGraph(key, cached);
             return cached.graph;
         }
         const newGraph = new StreetGraph();
         newGraph.buildFromOSM(data, riddenRoads, options);
         // Don't cache empty graphs — OSM data may have been transiently unavailable
         if (newGraph.graph.getNodesCount() > 0) {
-            setCachedGraph(key, newGraph);
+            setCachedGraph(key, { graph: newGraph, timestamp: Date.now(), bbox, reuseKey });
         }
         return newGraph;
     }
