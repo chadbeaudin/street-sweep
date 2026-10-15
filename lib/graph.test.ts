@@ -1143,6 +1143,58 @@ describe('StreetGraph', () => {
         // showed the same pattern with a wider gap, so it was raised to 50m to
         // match the tolerance checkIfRidden's own proximity match already
         // allows for a single point.)
+        // NW 59th St (Redmond, OR): the matched overlay showed the street ridden to its
+        // ends, but 5-18m OSM edges next to the intersections failed checkIfRidden's
+        // endpoint-exclusion window and were left "required".
+        test('credits a short edge at a way end when the matched overlay follows its exact vertices', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },   // ~100m east of 1
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.41858 }, // ~9m east of 2, way end
+                    { type: 'way', id: 600, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                ]
+            };
+            graph.buildFromOSM(mockData, [[[47.65, -117.42], [47.65, -117.4187], [47.65, -117.41858]]]);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(true);
+        });
+
+        test('a raw GPS trace near a short way-end edge, without its exact vertices, does not credit it', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.4187 },
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.41858 },
+                    { type: 'way', id: 601, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+                ]
+            };
+            graph.buildFromOSM(mockData, [[[47.65002, -117.42], [47.65002, -117.41871]]]);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(false);
+        });
+
+        test('an overlay vertex pair that is not an OSM edge credits nothing extra', () => {
+            const graph = new StreetGraph();
+            const mockData: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.65, lon: -117.41858 },
+                    { type: 'node', id: 3, lat: 47.6501, lon: -117.41858 }, // ~11m north of 2
+                    { type: 'way', id: 602, nodes: [1, 2], tags: { highway: 'residential' } },
+                    { type: 'way', id: 603, nodes: [2, 3], tags: { highway: 'residential' } },
+                ]
+            };
+            // Jumps straight from node 1 to node 3: neither consecutive pair is an OSM edge.
+            graph.buildFromOSM(mockData, [[[47.65, -117.42], [47.6501, -117.41858]]]);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(false);
+        });
+
         test('bridges a short (<=50m) unridden gap fully sandwiched between two ridden edges on the same way', () => {
             const graph = new StreetGraph();
             // Four collinear nodes along one way: 1-2 ridden (100m), 2-3 the short
@@ -1881,6 +1933,39 @@ describe('Point-in-Polygon Functions', () => {
                 circuit.some(p => Math.abs(p.lat - lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9);
             expect(visits(0.001, 0.02)).toBe(true);  // node 5
             expect(visits(0.0012, 0.02)).toBe(true); // node 6
+        });
+
+        test('an area route does not ride down an overlay-ridden street to cover a short sliver at its end', () => {
+            const mockData: OverpassResponse = {
+                version: 0.6,
+                generator: 'test',
+                osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    // Unridden loop the area route must cover.
+                    { type: 'node', id: 1, lat: 0, lon: 0 },
+                    { type: 'node', id: 2, lat: 0, lon: 0.001 },
+                    { type: 'node', id: 3, lat: 0.001, lon: 0.001 },
+                    { type: 'node', id: 4, lat: 0.001, lon: 0 },
+                    { type: 'way', id: 100, nodes: [1, 2, 3, 4, 1], tags: { highway: 'residential' } },
+                    // Already-ridden dead-end street off node 2, ending in an ~8m OSM edge.
+                    { type: 'node', id: 7, lat: 0, lon: 0.003 },
+                    { type: 'node', id: 8, lat: 0, lon: 0.00307 },
+                    { type: 'way', id: 200, nodes: [2, 7, 8], tags: { highway: 'residential' } },
+                ]
+            };
+            const overlay: [number, number][][] = [[[0, 0.001], [0, 0.003], [0, 0.00307]]];
+
+            const graph = new StreetGraph();
+            graph.buildFromOSM(mockData, overlay);
+            expect(graph.graph.getLink('7', '8')!.data.isRidden).toBe(true);
+
+            const selectionBoxes = [{ north: 0.002, south: -0.001, east: 0.004, west: -0.001 }];
+            const circuit = graph.solveCPP(undefined, undefined, undefined, selectionBoxes);
+
+            const visits = (lat: number, lon: number) =>
+                circuit.some(p => Math.abs(p.lat - lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9);
+            expect(visits(0, 0.00307)).toBe(false); // node 8
+            expect(visits(0.001, 0.001)).toBe(true); // node 3, the loop is still covered
         });
     });
 });

@@ -94,6 +94,11 @@ const MATCHING_RIDDEN_PENALTY = 4;
 // within a 1-2 ring expansion.
 const GRID_DEG = 0.0005;
 
+function edgeCoordKey(u: { lat: number, lon: number }, v: { lat: number, lon: number }): string {
+    const a = `${u.lat},${u.lon}`, b = `${v.lat},${v.lon}`;
+    return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
 // Cache polygon bounding boxes for faster rejection
 const polygonBounds = new globalThis.Map<number, { minLat: number; maxLat: number; minLon: number; maxLon: number }>();
 
@@ -438,6 +443,8 @@ export class StreetGraph {
             }
         }
 
+        const overlayRiddenEdges = this.findOverlayRiddenEdges(data, nodesMap, riddenRoads);
+
         // 2. Second pass: Process ways
         for (const elem of data.elements) {
             if (elem.type === 'way') {
@@ -535,7 +542,7 @@ export class StreetGraph {
                     if (!uCoord || !vCoord) { wayEdges.push({ dist: 0, isRidden: false }); continue; }
                     wayEdges.push({
                         dist: this.haversine(uCoord.lat, uCoord.lon, vCoord.lat, vCoord.lon),
-                        isRidden: this.checkIfRidden(uCoord, vCoord, riddenRoads),
+                        isRidden: overlayRiddenEdges.has(edgeCoordKey(uCoord, vCoord)) || this.checkIfRidden(uCoord, vCoord, riddenRoads),
                     });
                 }
                 {
@@ -634,6 +641,35 @@ export class StreetGraph {
                 }
             }
         }
+    }
+
+    // The matched ridden overlay (lib/riddenRoads.ts) follows OSM geometry vertex for
+    // vertex, and the client sends it along with the raw GPS. An OSM edge whose exact
+    // vertex pair appears consecutively in it is ridden by definition -- no proximity
+    // guess needed. checkIfRidden alone can't credit very short edges (its endpoint
+    // exclusion leaves almost no match window), which left 5-20m slivers at street ends
+    // "required" and pulled area routes down already-ridden streets to cover them.
+    private findOverlayRiddenEdges(data: OverpassResponse, nodesMap: Map<number, { lat: number, lon: number }>, riddenRoads: [number, number][][] | null): Set<string> {
+        const matched = new Set<string>();
+        if (!riddenRoads || riddenRoads.length === 0) return matched;
+        const osmEdges = new Set<string>();
+        for (const elem of data.elements) {
+            if (elem.type !== 'way') continue;
+            const way = elem as OSMWay;
+            if (!way.nodes) continue;
+            for (let i = 0; i < way.nodes.length - 1; i++) {
+                const u = way.geometry?.[i] || nodesMap.get(way.nodes[i]);
+                const v = way.geometry?.[i + 1] || nodesMap.get(way.nodes[i + 1]);
+                if (u && v) osmEdges.add(edgeCoordKey(u, v));
+            }
+        }
+        for (const line of riddenRoads) {
+            for (let i = 0; i < line.length - 1; i++) {
+                const key = edgeCoordKey({ lat: line[i][0], lon: line[i][1] }, { lat: line[i + 1][0], lon: line[i + 1][1] });
+                if (osmEdges.has(key)) matched.add(key);
+            }
+        }
+        return matched;
     }
 
     private buildRiddenIndex(riddenRoads: [number, number][][]): void {
