@@ -226,6 +226,33 @@ describe('Integration: server logs', () => {
         }, 90000);
     });
 
+    describe('Step routing — one-way streets (#82)', () => {
+        // South Manito Blvd (Spokane) is a divided boulevard: the west carriageway
+        // (lon ~-117.41134) is southbound only, the east one (~-117.41116) northbound.
+        const onWestCarriageway = (p: [number, number]) =>
+            Math.abs(p[0] - -117.41134) < 0.00004 && p[1] > 47.6177 && p[1] < 47.6219;
+
+        it('never rides north up the southbound carriageway between two clicks on it', async () => {
+            const res = await post('/api/step', {
+                lastPoint: { lat: 47.6185, lon: -117.41134 },
+                point: { lat: 47.6203, lon: -117.41134 },
+                bbox: { south: 47.612, north: 47.628, west: -117.42, east: -117.40 },
+                manualRoute: [],
+                riddenRoads: null,
+                routingOptions: { avoidGravel: false, avoidHighways: false, avoidTrails: false },
+            });
+            const data = await res.json();
+            if (res.status !== 200 || data.error || !data.path?.length) {
+                console.warn('Skipping one-way step test: Overpass unavailable or no path', data.error);
+                return;
+            }
+            const path: [number, number][] = data.path;
+            const northboundOnWest = path.slice(1).filter((p, i) =>
+                onWestCarriageway(path[i]) && onWestCarriageway(p) && p[1] > path[i][1] + 1e-6);
+            expect(northboundOnWest).toEqual([]);
+        }, 90000);
+    });
+
     // ── Route generation — elevation in coordinates ────────────────────────────
 
     describe('Route generate — elevation in response', () => {

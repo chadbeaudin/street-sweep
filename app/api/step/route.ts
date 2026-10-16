@@ -3,7 +3,7 @@ import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { z } from 'zod';
 import { LatLon, BBox, PolylineList, RoutingOptions, parseBody } from '@/lib/validation';
-import { buildStepPathCoords } from '@/lib/stepPath';
+import { buildStepPathCoords, legalSnapEnds, sameOnewayEdgePath } from '@/lib/stepPath';
 import { polylineSetFingerprint } from '@/lib/riddenRoads';
 
 const Body = z.object({
@@ -108,7 +108,8 @@ export async function POST(req: NextRequest) {
                 // Try all combinations of start/end snap-edge endpoints to find any valid path.
                 // Sorting by proximity to the click points means we try the "natural" pair first
                 // and fall back to alternatives only when the graph is disconnected at those nodes.
-                const startOptions = [prevSnappedData.u, prevSnappedData.v].sort((a, b) => {
+                const hasLink = (a: string, b: string) => !!graph.graph.getLink(a, b);
+                const startOptions = legalSnapEnds(prevSnappedData, hasLink).exits.sort((a, b) => {
                     const na = graph.graph.getNode(a);
                     const nb = graph.graph.getNode(b);
                     if (!na || !nb) return 0;
@@ -116,31 +117,37 @@ export async function POST(req: NextRequest) {
                     const db = (nb.data.lat - lastPoint.lat) ** 2 + (nb.data.lon - lastPoint.lon) ** 2;
                     return da - db;
                 });
-                const endTargets = new Set([snappedData.u, snappedData.v]);
+                const endTargets = new Set(legalSnapEnds(snappedData, hasLink).entries);
 
-                let pathResult: { path: { id: string, idNext: string, weight: number }[], targetId: string } | null = null;
-                let usedStartId: string | null = null;
-
-                for (const sid of startOptions) {
-                    const r = graph.findClosestTargetCapped(sid, endTargets, penalizedLinks);
-                    if (r) { pathResult = r; usedStartId = sid; break; }
-                }
-
-                // Fallback: the click's snap edge is disconnected from the start, so move
-                // the waypoint onto the closest street within ~550m that the start can reach.
-                if (!pathResult) {
-                    for (const sid of startOptions) {
-                        const reachableSnap = graph.findClosestReachablePointOnEdge(sid, point.lat, point.lon, 10);
-                        if (!reachableSnap) continue;
-                        const r = graph.findClosestTargetCapped(sid, new Set([reachableSnap.u, reachableSnap.v]), penalizedLinks);
-                        if (r) { pathResult = r; usedStartId = sid; endSnap = reachableSnap; break; }
-                    }
-                }
-
-                if (!pathResult || !usedStartId) {
-                    console.warn(`[Step] No path found from [${startOptions.join(',')}] to [${[...endTargets].join(',')}] — graph may be disconnected here.`);
+                // Two clicks on the same one-way edge join directly instead of via its endpoints.
+                const direct = sameOnewayEdgePath(prevSnappedData, snappedData, id => graph.graph.getNode(id)?.data, hasLink);
+                if (direct) {
+                    pathCoords = direct;
                 } else {
-                    pathCoords = buildStepPathCoords(prevSnappedData, endSnap, usedStartId, pathResult.targetId, pathResult.path, id => graph.graph.getNode(id)?.data);
+                    let pathResult: { path: { id: string, idNext: string, weight: number }[], targetId: string } | null = null;
+                    let usedStartId: string | null = null;
+
+                    for (const sid of startOptions) {
+                        const r = graph.findClosestTargetCapped(sid, endTargets, penalizedLinks);
+                        if (r) { pathResult = r; usedStartId = sid; break; }
+                    }
+
+                    // Fallback: the click's snap edge is disconnected from the start, so move
+                    // the waypoint onto the closest street within ~550m that the start can reach.
+                    if (!pathResult) {
+                        for (const sid of startOptions) {
+                            const reachableSnap = graph.findClosestReachablePointOnEdge(sid, point.lat, point.lon, 10);
+                            if (!reachableSnap) continue;
+                            const r = graph.findClosestTargetCapped(sid, new Set(legalSnapEnds(reachableSnap, hasLink).entries), penalizedLinks);
+                            if (r) { pathResult = r; usedStartId = sid; endSnap = reachableSnap; break; }
+                        }
+                    }
+
+                    if (!pathResult || !usedStartId) {
+                        console.warn(`[Step] No path found from [${startOptions.join(',')}] to [${[...endTargets].join(',')}] — graph may be disconnected here.`);
+                    } else {
+                        pathCoords = buildStepPathCoords(prevSnappedData, endSnap, usedStartId, pathResult.targetId, pathResult.path, id => graph.graph.getNode(id)?.data);
+                    }
                 }
             }
         }

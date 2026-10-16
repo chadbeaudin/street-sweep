@@ -45,3 +45,29 @@ export function buildStepPathCoords(
     push(snap.lon, snap.lat);
     return coords;
 }
+
+type HasLink = (from: string, to: string) => boolean;
+
+// From a mid-edge click, the edge endpoints a rider may legally ride toward (exits)
+// and legally arrive from (entries). Both ends for a two-way street, one for a one-way.
+export function legalSnapEnds(snap: EdgeSnap, hasLink: HasLink): { exits: string[]; entries: string[] } {
+    const exits: string[] = [], entries: string[] = [];
+    if (hasLink(snap.u, snap.v)) { exits.push(snap.v); entries.push(snap.u); }
+    if (hasLink(snap.v, snap.u)) { exits.push(snap.u); entries.push(snap.v); }
+    return { exits, entries };
+}
+
+// Two clicks on the same one-way edge, in its legal direction, are joined directly;
+// routing via the edge's endpoints would otherwise send the rider around the block.
+export function sameOnewayEdgePath(prevSnap: EdgeSnap, snap: EdgeSnap, getNode: NodeLookup, hasLink: HasLink): [number, number][] | null {
+    const sameEdge = (prevSnap.u === snap.u && prevSnap.v === snap.v) || (prevSnap.u === snap.v && prevSnap.v === snap.u);
+    if (!sameEdge) return null;
+    const forward = hasLink(snap.u, snap.v), backward = hasLink(snap.v, snap.u);
+    if (forward === backward) return null;
+    const u = getNode(snap.u);
+    if (!u) return null;
+    const fromU = (p: { lat: number; lon: number }) => (p.lat - u.lat) ** 2 + (p.lon - u.lon) ** 2;
+    const headingToV = fromU(snap) > fromU(prevSnap);
+    if (headingToV !== forward) return null;
+    return [[prevSnap.lon, prevSnap.lat], [snap.lon, snap.lat]];
+}
