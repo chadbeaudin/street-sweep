@@ -1677,7 +1677,9 @@ export default function Home() {
                 </a>
 
 
-                <div className="hidden md:flex items-center gap-3">
+                {/* Fixed buttons sit right after the logo; mr-auto keeps them from shifting
+                    when the route-dependent group on the right grows. */}
+                <div className="hidden md:flex items-center gap-3 ml-6 mr-auto">
                     {/* Redundant once signed in via Strava (#87) -- that login already
                         grants activity:read and drives stravaCredentials itself (see the
                         session-sync effect above), so a separate connect button here would
@@ -1760,7 +1762,7 @@ export default function Home() {
                         </button>
                     )}
 
-                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                    <div className="flex items-center gap-1">
                         <button
                             onClick={() => setShowOptions(true)}
                             className={`flex items-center gap-1 px-2 py-1.5 rounded-md text-sm font-medium transition-colors border shadow-sm ${showOptions
@@ -1976,7 +1978,9 @@ export default function Home() {
                             </div>
                         )}
                     </div>
+                </div>
 
+                <div className="hidden md:flex items-center gap-3">
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <button
                             onClick={handleUndo}
