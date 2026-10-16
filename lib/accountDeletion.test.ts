@@ -11,6 +11,7 @@ jest.mock('./prisma', () => ({
         stravaActivityDetail: { deleteMany: jest.fn() },
         stravaActivityStream: { deleteMany: jest.fn() },
         ftpReadingCache: { deleteMany: jest.fn() },
+        stravaSyncEvent: { deleteMany: jest.fn() },
         $transaction: jest.fn(),
     },
 }));
@@ -61,6 +62,7 @@ describe('deleteAccount', () => {
         expect(prisma.stravaActivityDetail.deleteMany).toHaveBeenCalledWith({ where: { athleteId: '42' } });
         expect(prisma.stravaActivityStream.deleteMany).toHaveBeenCalledWith({ where: { athleteId: '42' } });
         expect(prisma.ftpReadingCache.deleteMany).toHaveBeenCalledWith({ where: { athleteId: '42' } });
+        expect(prisma.stravaSyncEvent.deleteMany).toHaveBeenCalledWith({ where: { athleteId: '42' } });
         expect(prisma.user.delete).toHaveBeenCalledWith({ where: { id: 'user-1' } });
         expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });

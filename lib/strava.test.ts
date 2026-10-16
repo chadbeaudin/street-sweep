@@ -18,8 +18,11 @@ jest.mock('./prisma', () => ({
     },
 }));
 
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from './strava';
+jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
+
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity } from './strava';
 import { prisma } from './prisma';
+import { enqueueAthleteSync } from './athleteSyncQueue';
 
 const creds = { clientId: 'id', clientSecret: 'secret', refreshToken: 'refresh' };
 
@@ -280,6 +283,26 @@ describe('fetchCyclingRiddenRoads', () => {
             expect(saved.map((a: any) => a.id)).toEqual([2, 1]);
         });
 
+        it('queues a stats recompute when the sync found new rides (#118)', async () => {
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '777', activities: [old], syncedAt: expired });
+            const c = { ...creds, refreshToken: 'enqueue-refresh' };
+            await fetchCyclingRiddenRoads(c);
+            expect(enqueueAthleteSync).toHaveBeenCalledWith('777', 'recompute', { creds: c });
+        });
+
+        it('does not queue a recompute when nothing new came back', async () => {
+            const newest = mockActivity({ id: 2, start_date: '2024-02-01T00:00:00Z' });
+            (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '777', activities: [newest, old], syncedAt: expired });
+            (global.fetch as jest.Mock).mockImplementation((url: string) => {
+                if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+                if (isDetailUrl(url)) return Promise.resolve({ ok: true, json: async () => ({ map: {} }) });
+                if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 777 }) });
+                return Promise.resolve({ ok: true, json: async () => [] });
+            });
+            await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'no-change-refresh' });
+            expect(enqueueAthleteSync).not.toHaveBeenCalled();
+        });
+
         it('does a full fetch when there is no cached history to build on', async () => {
             (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue(null);
             await fetchCyclingRiddenRoads({ ...creds, refreshToken: 'full-refresh' });
@@ -349,5 +372,60 @@ describe('fetchCyclingRiddenRoads', () => {
             expect(browser.riddenRoads[0]).toEqual(require('@mapbox/polyline').decode(REAL_POLYLINE)); // the summary route line
             expect(worker.riddenRoads[0]).toHaveLength(wide.length);
         });
+    });
+});
+
+describe('forceSyncStravaActivities (#118)', () => {
+    const listed = [mockActivity({ id: 1 })];
+    beforeEach(() => {
+        (prisma.stravaActivityCache.upsert as jest.Mock).mockResolvedValue({});
+        global.fetch = jest.fn((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token' }) });
+            if (url.includes('/athlete/activities')) return Promise.resolve({ ok: true, json: async () => (url.includes('page=1&') ? listed : []) });
+            if (url.includes('/athlete')) return Promise.resolve({ ok: true, json: async () => ({ id: 321 }) });
+            throw new Error('unexpected fetch: ' + url);
+        }) as any;
+    });
+
+    it('records a full sync and queues a recompute when the list changed', async () => {
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '321', activities: [], syncedAt: new Date() });
+        await forceSyncStravaActivities(creds);
+        const { update } = (prisma.stravaActivityCache.upsert as jest.Mock).mock.calls[0][0];
+        expect(update.fullSyncedAt).toBeInstanceOf(Date);
+        expect(enqueueAthleteSync).toHaveBeenCalledWith('321', 'recompute', { creds });
+    });
+
+    it('skips the recompute when the full pull matches the cache', async () => {
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '321', activities: listed, syncedAt: new Date() });
+        await forceSyncStravaActivities(creds);
+        expect(enqueueAthleteSync).not.toHaveBeenCalled();
+    });
+});
+
+describe('fetchStravaActivity (#118)', () => {
+    const respond = (status: number, body: unknown = {}) => {
+        global.fetch = jest.fn().mockResolvedValue({ ok: status < 300, status, json: async () => body }) as any;
+    };
+
+    it('maps a detailed activity onto the cached list shape and returns its full track', async () => {
+        respond(200, { id: 5, name: 'Lunch', start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', comment_count: 0, kudos_count: 3, map: { summary_polyline: 'abc', polyline: 'full' } });
+        expect(await fetchStravaActivity('token', '5')).toEqual({
+            activity: { id: 5, name: 'Lunch', map: { summary_polyline: 'abc' }, start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', comment_count: 0 },
+            fullPolyline: 'full',
+        });
+    });
+
+    it('treats a missing or no-longer-visible activity, or one with no GPS track, as gone', async () => {
+        respond(404);
+        expect(await fetchStravaActivity('token', '5')).toBeNull();
+        respond(403);
+        expect(await fetchStravaActivity('token', '5')).toBeNull();
+        respond(200, { id: 5, map: { summary_polyline: '' } });
+        expect(await fetchStravaActivity('token', '5')).toBeNull();
+    });
+
+    it('throws on rate limits and server errors so the event is retried', async () => {
+        respond(429);
+        await expect(fetchStravaActivity('token', '5')).rejects.toThrow('429');
     });
 });

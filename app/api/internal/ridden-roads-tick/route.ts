@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { tickRiddenRoadsWorker } from '@/lib/riddenRoadsWorkerJob';
+import { tickAthleteSyncWorker } from '@/lib/athleteSyncWorker';
 
 // Only ever called by the `worker` Fly machine's own self-ticking loop over
 // loopback (see fly.toml [processes].worker) -- this same compiled code also
@@ -15,8 +16,10 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     try {
-        const result = await tickRiddenRoadsWorker();
-        return NextResponse.json(result);
+        // Also drives the Strava webhook queue (#118), so one worker loop covers both.
+        const riddenRoads = await tickRiddenRoadsWorker();
+        const athleteSync = await tickAthleteSyncWorker();
+        return NextResponse.json({ ...riddenRoads, athleteSync });
     } catch (e: any) {
         console.error('ridden-roads-tick error:', e);
         return NextResponse.json({ error: e.message || 'Internal Server Error' }, { status: 500 });
