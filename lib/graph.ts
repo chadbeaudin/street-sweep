@@ -881,6 +881,125 @@ export class StreetGraph {
         return diff;
     }
 
+    /** Min-weight perfect matching of odd nodes: greedy plus random starts, each refined with 2-opt. */
+    private matchOddNodes(oddArray: string[], distMatrix: Map<string, Map<string, number>>): { matching: { u: string, v: string, weight: number }[], totalWeight: number, attempts: number } {
+        // Greedy alone can get stuck in local minima; try multiple starts to find better matchings
+        const allPairs: { u: string, v: string, weight: number }[] = [];
+        for (let i = 0; i < oddArray.length; i++) {
+            for (let j = i + 1; j < oddArray.length; j++) {
+                const u = oddArray[i];
+                const v = oddArray[j];
+                const weight = distMatrix.get(u)?.get(v);
+                if (weight !== undefined) {
+                    allPairs.push({ u, v, weight });
+                }
+            }
+        }
+
+        let bestMatching: { u: string, v: string, weight: number }[] | null = null;
+        let bestTotalWeight = Infinity;
+
+        // Try greedy + multiple random starts to escape local minima
+        const numStartAttempts = Math.min(5, Math.ceil(oddArray.length / 2));
+
+        for (let attempt = 0; attempt < numStartAttempts; attempt++) {
+            let currentMatches: { u: string, v: string, weight: number }[] = [];
+
+            if (attempt === 0) {
+                // First: greedy by edge weight
+                allPairs.sort((a, b) => a.weight - b.weight);
+                const unmatched = new Set(oddArray);
+                for (const pair of allPairs) {
+                    if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
+                        unmatched.delete(pair.u);
+                        unmatched.delete(pair.v);
+                        currentMatches.push({ u: pair.u, v: pair.v, weight: pair.weight });
+                    }
+                }
+            } else {
+                // Random attempts: shuffle and greedily match from randomized order
+                const shuffled = allPairs.slice().sort(() => Math.random() - 0.5);
+                const unmatched = new Set(oddArray);
+                for (const pair of shuffled) {
+                    if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
+                        unmatched.delete(pair.u);
+                        unmatched.delete(pair.v);
+                        currentMatches.push({ u: pair.u, v: pair.v, weight: pair.weight });
+                    }
+                }
+            }
+
+            // 3. Apply 2-opt refinement to this matching
+            let improved = true;
+            let iterations = 0;
+            while (improved && iterations < 200) {
+                improved = false;
+                iterations++;
+                for (let i = 0; i < currentMatches.length; i++) {
+                    for (let j = i + 1; j < currentMatches.length; j++) {
+                        const m1 = currentMatches[i];
+                        const m2 = currentMatches[j];
+
+                        const currentWeight = m1.weight + m2.weight;
+
+                        // Option A: Pair (m1.u, m2.u) and (m1.v, m2.v)
+                        const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u) ?? Infinity;
+                        const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v) ?? Infinity;
+                        const sumA = w_u1u2 + w_v1v2;
+
+                        // Option B: Pair (m1.u, m2.v) and (m1.v, m2.u)
+                        const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v) ?? Infinity;
+                        const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u) ?? Infinity;
+                        const sumB = w_u1v2 + w_v1u2;
+
+                        // Compare and swap if better
+                        if (sumA < currentWeight && sumA <= sumB) {
+                            currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2 };
+                            currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2 };
+                            improved = true;
+                            break;
+                        } else if (sumB < currentWeight) {
+                            currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2 };
+                            currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2 };
+                            improved = true;
+                            break;
+                        }
+                    }
+                    if (improved) break;
+                }
+            }
+
+            const totalWeight = currentMatches.reduce((sum, m) => sum + m.weight, 0);
+            if (totalWeight < bestTotalWeight) {
+                bestTotalWeight = totalWeight;
+                bestMatching = currentMatches;
+            }
+        }
+
+        return { matching: bestMatching ?? [], totalWeight: bestTotalWeight, attempts: numStartAttempts };
+    }
+
+    // With no fixed end, picks where the trail should finish when the rider then heads
+    // to `toward`: the node whose pairing with `toward` gives the cheapest matching,
+    // which counts both the doubling the end choice causes and the ride there. Uses
+    // plain distance rather than the ridden-weighted matching cost, since this is about
+    // how far the rider goes; the route's own matching still runs with its usual
+    // weights once the end is fixed.
+    private chooseEndTowardReturn(oddNodes: Set<string>, startNode: string, toward: { lat: number, lon: number }): string | null {
+        const towardNode = this.findClosestNode(toward.lat, toward.lon);
+        if (!towardNode || towardNode === startNode) return null;
+        const odd = new Set(oddNodes);
+        for (const n of [startNode, towardNode]) if (odd.has(n)) odd.delete(n); else odd.add(n);
+        // towardNode was already an odd node of the area itself: finishing there costs nothing extra.
+        if (!odd.has(towardNode)) return towardNode;
+        const oddArray = Array.from(odd);
+        const dist = new Map<string, Map<string, number>>();
+        for (const u of oddArray) dist.set(u, this.findAllTargetWeights(u, odd, 1));
+        const pair = this.matchOddNodes(oddArray, dist).matching.find(m => m.u === towardNode || m.v === towardNode);
+        if (!pair) return null;
+        return pair.u === towardNode ? pair.v : pair.u;
+    }
+
     private buildGeographicEulerianTrail(edges: { u: string, v: string, data: any }[], startNodeId: string | null): string[] {
         const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
         const adj = new Map<string, { id: number, target: string, isConnector: boolean }[]>();
@@ -1708,7 +1827,7 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
-    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null, boxElasticityMeters = 0, preferNaturalEndpoint = false): { lat: number, lon: number, hasConstruction?: boolean }[] {
+    public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null, boxElasticityMeters = 0, returnTowardPoint?: { lat: number, lon: number }): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
         // Mixed mode: point route is fixed, area coverage is appended.
@@ -1736,60 +1855,25 @@ export class StreetGraph {
                 ? { lat: approachRoute[approachRoute.length - 1][1], lon: approachRoute[approachRoute.length - 1][0] }
                 : approachStart;
 
-            // If the caller already knows where the route goes after the area (a real
-            // subsequent waypoint / exitRoute, or an explicit endPoint), target the
-            // coverage trail's end AT that real destination instead of an arbitrary
-            // geometric corner — this directly minimizes the exit bridge's distance
-            // (and thus its risk of retracing the trail's own tail, see #64). Only
-            // fall back to the "farthest corner from approach" heuristic when there's
-            // no real destination to aim for (a one-shot sweep that ends wherever).
+            // Where the route goes after the area: the first post-area waypoint, or an
+            // explicit endPoint.
             const realExitTarget = (exitRoute && exitRoute.length > 0)
                 ? { lat: exitRoute[0][1], lon: exitRoute[0][0] }
                 : endPoint;
 
-            let farCorner: { lat: number; lon: number };
-            if (realExitTarget) {
-                farCorner = realExitTarget;
-            } else {
-                // Find the corner of the selection area farthest from approachStart.
-                // Passing it as endPoint forces the CPP to produce an open Euler path
-                // (entry → cover all streets → far corner) instead of a circuit.
-                // Consider both box corners and polygon (lasso) vertices so lasso areas
-                // get the same open-path treatment as boxes.
-                const areaCorners: { lat: number; lon: number }[] = [];
-                for (const box of (selectionBoxes ?? [])) {
-                    areaCorners.push(
-                        { lat: box.north, lon: box.west }, { lat: box.north, lon: box.east },
-                        { lat: box.south, lon: box.west }, { lat: box.south, lon: box.east },
-                    );
-                }
-                for (const poly of (selectionPolygons ?? [])) {
-                    for (const [lat, lon] of poly) areaCorners.push({ lat, lon });
-                }
-                farCorner = { lat: 0, lon: 0 };
-                let maxCornerDist = -Infinity;
-                for (const c of areaCorners) {
-                    const d = this.haversine(areaEntryReference.lat, areaEntryReference.lon, c.lat, c.lon);
-                    if (d > maxCornerDist) { maxCornerDist = d; farCorner = c; }
-                }
-            }
-
-            // preferNaturalEndpoint should only apply to the synthetic "farthest corner"
-            // fallback (no real destination to aim for) — see its own doc comment above
-            // findEndpointNode: "Real user-chosen points... should always snap to the
-            // literal nearest node". farCorner is a real user-chosen point whenever
-            // realExitTarget was available, so forcing the natural-odd-node search there
-            // let the trail's open end snap to some unrelated pre-existing odd junction
-            // up to 400m away from the actual requested destination instead of literally
-            // the closest point to it, then charged a separate, avoidable exit-bridge
-            // detour (often back through ground the area trail's own parity matching had
-            // already crossed) to reach the real target from there.
-            const areaPreferNatural = !realExitTarget;
-            let areaPath = this.solveCPP(areaEntryReference, farCorner, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, areaPreferNatural);
+            // With a real destination after the area, end the coverage trail at it (this
+            // directly minimizes the exit bridge, see #64). Without one, the rider is most
+            // likely heading back toward where the route started, so let the solver pick
+            // the end that minimizes area doubling plus the ride back to the start. The
+            // old "corner farthest from the entry" target ignored that ride entirely and
+            // could finish the sweep on the far side of the area from home.
+            const areaEnd = realExitTarget ?? undefined;
+            const returnToward = realExitTarget ? undefined : approachStart;
+            let areaPath = this.solveCPP(areaEntryReference, areaEnd, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, returnToward);
             if (areaPath.length === 0) {
                 // All area streets already ridden — re-solve including ridden roads so the
                 // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(areaEntryReference, farCorner, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, areaPreferNatural);
+                areaPath = this.solveCPP(areaEntryReference, areaEnd, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, returnToward);
             }
             if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
 
@@ -2239,27 +2323,34 @@ export class StreetGraph {
         // explicit request to cover everything inside it, and a street vanishing from
         // the route with no visible indication (previously logged as "skipping" and
         // otherwise unmentioned) was worse than an occasional longer detour.
-        for (let i = 1; i < components.length; i++) {
-            const island = components[i];
-            const islandSet = new Set(island);
-
-            // Single multi-source Dijkstra from every island node finds the closest
-            // (island, reachable) pair in one pass. When connecting islands we allow
-            // using ANY link in the graph (no allowedLinks restriction).
-            const bestResult = this.findClosestTargetMultiSource(islandSet, reachableNodes, undefined, riddenPenaltyMap);
-            if (bestResult) {
-                island.forEach(n => reachableNodes.add(n));
-                bestResult.path.forEach((p: any) => {
-                    const link = this.graph.getLink(p.id, p.idNext);
-                    if (link) {
-                        edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
-                        reachableNodes.add(p.id);
-                        reachableNodes.add(p.idNext);
-                    }
-                });
-            } else {
-                console.warn(`${ts()} Warning: Could not bridge component of size ${island.length}. Some roads may be omitted.`);
+        // Connect the nearest island first (Prim-style), not the largest. Bridging a big
+        // island first can route its bridge straight over a small, not-yet-connected
+        // island's required edges, which then get ridden twice: once as the bridge, once
+        // as required coverage. Each step is one multi-source Dijkstra from everything
+        // reachable so far to every remaining island node, using ANY link in the graph.
+        const islandOf = new Map<string, string[]>();
+        for (let i = 1; i < components.length; i++) for (const n of components[i]) islandOf.set(n, components[i]);
+        while (islandOf.size > 0) {
+            const bestResult = this.findClosestTargetMultiSource(reachableNodes, new Set(islandOf.keys()), undefined, riddenPenaltyMap);
+            if (!bestResult) {
+                for (const island of new Set(islandOf.values())) {
+                    console.warn(`${ts()} Warning: Could not bridge component of size ${island.length}. Some roads may be omitted.`);
+                }
+                break;
             }
+            const island = islandOf.get(bestResult.targetId)!;
+            for (const n of island) {
+                reachableNodes.add(n);
+                islandOf.delete(n);
+            }
+            bestResult.path.forEach((p: any) => {
+                const link = this.graph.getLink(p.id, p.idNext);
+                if (link) {
+                    edgesInFinalGraph.push({ u: p.id, v: p.idNext, data: { ...link.data, isVirtual: true } });
+                    reachableNodes.add(p.id);
+                    reachableNodes.add(p.idNext);
+                }
+            });
         }
 
         requiredEdges.forEach(re => {
@@ -2277,43 +2368,13 @@ export class StreetGraph {
         const nodesToFlip = new Set<string>();
         for (const [n, d] of dMap.entries()) if (d % 2 !== 0) nodesToFlip.add(n);
 
-        // A forced endPoint that's a geometric proxy rather than a real user-chosen
-        // point (e.g. the "far corner" of a drawn area in mixed mode — see #64) has no
-        // relationship to the street graph. Snapping it to the literal nearest node
-        // forces that node's parity, which, if it wasn't already a natural odd-degree
-        // node, creates an artificial detour to fix up a junction with no real need to
-        // be a terminus. When preferNaturalEndpoint is set, prefer the nearest node
-        // that's ALREADY odd-degree (a natural candidate to be a trail endpoint) when
-        // one exists reasonably close by, falling back to the literal nearest node
-        // otherwise. Real user-chosen points (explicit pins, home address) should
-        // always snap to the literal nearest node, so this only applies when opted in.
-        const NATURAL_ENDPOINT_SEARCH_RADIUS_M = 400;
-        const findEndpointNode = (point: { lat: number; lon: number }, preferNatural: boolean): string | null => {
-            const literalNearest = this.findClosestNode(point.lat, point.lon, reachableNodes);
-            if (!preferNatural) return literalNearest;
-            const oddReachable = new Set([...nodesToFlip].filter(n => reachableNodes.has(n)));
-            if (oddReachable.size === 0) return literalNearest;
-            const naturalNearest = this.findClosestNode(point.lat, point.lon, oddReachable);
-            if (!naturalNearest) return literalNearest;
-            const naturalNode = this.graph.getNode(naturalNearest);
-            if (!naturalNode) return literalNearest;
-            const distToNatural = this.haversine(point.lat, point.lon, naturalNode.data.lat, naturalNode.data.lon);
-            return distToNatural <= NATURAL_ENDPOINT_SEARCH_RADIUS_M ? naturalNearest : literalNearest;
-        };
-
-        // Both start and end get natural-node preference when opted in. Moving the
-        // start away from the literal-nearest node would normally just relocate a
-        // backtrack into the mixed-mode entry bridge (which snaps independently) —
-        // that's handled by trimBridgeOverlap in the mixed-mode branch, which trims
-        // the bridge's redundant overlap with this solve's actual start, so the net
-        // effect is fewer forced-parity detours with no new backtrack. See #64.
         // Prefer the node the manual route's own endpoint already snapped to (see
         // manualRouteStartNode/manualRouteEndNode above) over an independent re-snap of
         // startPoint/endPoint, so the parity toggle below always cancels the manual
         // route's actual odd endpoint instead of a nearby node that happens to be
         // literal-nearest to the raw click coordinate.
-        const startNode = manualRouteStartNode ?? (startPoint ? findEndpointNode(startPoint, preferNaturalEndpoint) : null);
-        const endNode = manualRouteEndNode ?? (endPoint ? findEndpointNode(endPoint, preferNaturalEndpoint) : null);
+        const startNode = manualRouteStartNode ?? (startPoint ? this.findClosestNode(startPoint.lat, startPoint.lon, reachableNodes) : null);
+        const endNode = manualRouteEndNode ?? (endPoint ? this.findClosestNode(endPoint.lat, endPoint.lon, reachableNodes) : null);
 
         if (startNode && endNode && startNode !== endNode) {
             if (nodesToFlip.has(startNode)) nodesToFlip.delete(startNode); else nodesToFlip.add(startNode);
@@ -2354,6 +2415,14 @@ export class StreetGraph {
             throw new Error(`This selection is too large or fragmented to route (${remainingOdd.size} disconnected junctions across a ${graphSize}-edge road network). If you drew more than one area, "Clear Workspace" and try a single, smaller selection -- separate areas that are far apart make routing exponentially more expensive.`);
         }
 
+        // No fixed end, but the rider heads back toward returnTowardPoint afterwards.
+        if (!endNode && startNode && returnTowardPoint) {
+            const end = this.chooseEndTowardReturn(remainingOdd, startNode, returnTowardPoint);
+            if (end && end !== startNode) {
+                for (const n of [startNode, end]) if (remainingOdd.has(n)) remainingOdd.delete(n); else remainingOdd.add(n);
+            }
+        }
+
         console.log(`${ts()} Matching ${remainingOdd.size} odd nodes using APSP + 2-opt approach...`);
         
         const oddArray = Array.from(remainingOdd);
@@ -2371,98 +2440,7 @@ export class StreetGraph {
         }
 
         // 2. Multiple random initial matchings with 2-opt refinement
-        // Greedy alone can get stuck in local minima; try multiple starts to find better matchings
-        const allPairs: { u: string, v: string, weight: number }[] = [];
-        for (let i = 0; i < oddArray.length; i++) {
-            for (let j = i + 1; j < oddArray.length; j++) {
-                const u = oddArray[i];
-                const v = oddArray[j];
-                const weight = distMatrix.get(u)?.get(v);
-                if (weight !== undefined) {
-                    allPairs.push({ u, v, weight });
-                }
-            }
-        }
-
-        let bestMatching: { u: string, v: string, weight: number }[] | null = null;
-        let bestTotalWeight = Infinity;
-
-        // Try greedy + multiple random starts to escape local minima
-        const numStartAttempts = Math.min(5, Math.ceil(oddArray.length / 2));
-
-        for (let attempt = 0; attempt < numStartAttempts; attempt++) {
-            let currentMatches: { u: string, v: string, weight: number }[] = [];
-
-            if (attempt === 0) {
-                // First: greedy by edge weight
-                allPairs.sort((a, b) => a.weight - b.weight);
-                const unmatched = new Set(oddArray);
-                for (const pair of allPairs) {
-                    if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
-                        unmatched.delete(pair.u);
-                        unmatched.delete(pair.v);
-                        currentMatches.push({ u: pair.u, v: pair.v, weight: pair.weight });
-                    }
-                }
-            } else {
-                // Random attempts: shuffle and greedily match from randomized order
-                const shuffled = allPairs.slice().sort(() => Math.random() - 0.5);
-                const unmatched = new Set(oddArray);
-                for (const pair of shuffled) {
-                    if (unmatched.has(pair.u) && unmatched.has(pair.v)) {
-                        unmatched.delete(pair.u);
-                        unmatched.delete(pair.v);
-                        currentMatches.push({ u: pair.u, v: pair.v, weight: pair.weight });
-                    }
-                }
-            }
-
-            // 3. Apply 2-opt refinement to this matching
-            let improved = true;
-            let iterations = 0;
-            while (improved && iterations < 200) {
-                improved = false;
-                iterations++;
-                for (let i = 0; i < currentMatches.length; i++) {
-                    for (let j = i + 1; j < currentMatches.length; j++) {
-                        const m1 = currentMatches[i];
-                        const m2 = currentMatches[j];
-
-                        const currentWeight = m1.weight + m2.weight;
-
-                        // Option A: Pair (m1.u, m2.u) and (m1.v, m2.v)
-                        const w_u1u2 = distMatrix.get(m1.u)?.get(m2.u) ?? Infinity;
-                        const w_v1v2 = distMatrix.get(m1.v)?.get(m2.v) ?? Infinity;
-                        const sumA = w_u1u2 + w_v1v2;
-
-                        // Option B: Pair (m1.u, m2.v) and (m1.v, m2.u)
-                        const w_u1v2 = distMatrix.get(m1.u)?.get(m2.v) ?? Infinity;
-                        const w_v1u2 = distMatrix.get(m1.v)?.get(m2.u) ?? Infinity;
-                        const sumB = w_u1v2 + w_v1u2;
-
-                        // Compare and swap if better
-                        if (sumA < currentWeight && sumA <= sumB) {
-                            currentMatches[i] = { u: m1.u, v: m2.u, weight: w_u1u2 };
-                            currentMatches[j] = { u: m1.v, v: m2.v, weight: w_v1v2 };
-                            improved = true;
-                            break;
-                        } else if (sumB < currentWeight) {
-                            currentMatches[i] = { u: m1.u, v: m2.v, weight: w_u1v2 };
-                            currentMatches[j] = { u: m1.v, v: m2.u, weight: w_v1u2 };
-                            improved = true;
-                            break;
-                        }
-                    }
-                    if (improved) break;
-                }
-            }
-
-            const totalWeight = currentMatches.reduce((sum, m) => sum + m.weight, 0);
-            if (totalWeight < bestTotalWeight) {
-                bestTotalWeight = totalWeight;
-                bestMatching = currentMatches;
-            }
-        }
+        const { matching: bestMatching, totalWeight: bestTotalWeight, attempts: numStartAttempts } = this.matchOddNodes(oddArray, distMatrix);
 
         // Now that the pairing is settled, reconstruct paths for just these
         // pairs. Grouped by source so each source costs one Dijkstra regardless

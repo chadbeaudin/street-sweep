@@ -522,7 +522,7 @@ describe('StreetGraph', () => {
         });
     });
 
-    test('mixed mode (manualRoute + selectionBox) produces open path ending at far corner, not back at entry', () => {
+    test('mixed mode with no point after the area ends where doubling plus the ride back to the start is least', () => {
         // 3x3 grid — approach from outside the NW corner, selection box covers all 9 nodes.
         // NW=1(0.002,0) - 2(0.002,0.001) - NE=3(0.002,0.002)
         //      |                |                    |
@@ -571,15 +571,16 @@ describe('StreetGraph', () => {
         expect(result[0].lat).toBeCloseTo(0.003, 4);
         expect(result[0].lon).toBeCloseTo(0, 4);
 
-        // Must end near the SE corner (node 9: lat=0, lon=0.002) —
-        // the corner farthest from the NW approach start.
-        const end = result[result.length - 1];
-        expect(end.lat).toBeCloseTo(0, 2);
-        expect(end.lon).toBeCloseTo(0.002, 2);
+        // Every grid node is covered.
+        for (const [lat, lon] of [[0.002, 0], [0.002, 0.002], [0, 0], [0, 0.002], [0.001, 0.001]]) {
+            expect(result.some(p => Math.abs(p.lat - lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9)).toBe(true);
+        }
 
-        // Must NOT end back near the entry point (would indicate a closed circuit bug).
-        const distFromEntry = Math.hypot(end.lat - 0.003, end.lon - 0);
-        expect(distFromEntry).toBeGreaterThan(0.001);
+        // Ending at the far SE corner doubles as much grid as finishing back at the NW
+        // entry, plus a ride back across the whole area -- so it finishes at NW.
+        const end = result[result.length - 1];
+        expect(end.lat).toBeCloseTo(0.002, 6);
+        expect(end.lon).toBeCloseTo(0, 6);
     });
 
     test('mixed mode far-corner target is relative to the point actually entering the area, not the route\'s original first click', () => {
@@ -640,50 +641,6 @@ describe('StreetGraph', () => {
 
         const distFromEntry = Math.hypot(end.lat - 0.002, end.lon - 0);
         expect(distFromEntry).toBeGreaterThan(0.001);
-    });
-
-    test('#64: mixed-mode area endpoint prefers a nearby natural odd-degree node over the literal-nearest even one, avoiding an artificial backtrack', () => {
-        // Straight line A-B-C: endpoints A and C are naturally odd-degree (1),
-        // interior node B is naturally even-degree (2). The geometric "far corner"
-        // of the drawn box is closer to B than to C, but forcing the open path to
-        // end exactly at B (even) requires an artificial parity fix — duplicating
-        // an edge to create a backtrack — where ending at C (already odd, a
-        // natural terminus) needs none.
-        const mockData: OverpassResponse = {
-            version: 0.6,
-            generator: 'test',
-            osm3s: { timestamp_osm_base: '', copyright: '' },
-            elements: [
-                { type: 'node', id: 1, lat: 0, lon: 0 },       // A — approach entry, odd
-                { type: 'node', id: 2, lat: 0, lon: 0.001 },   // B — interior, even
-                { type: 'node', id: 3, lat: 0, lon: 0.002 },   // C — far end, odd
-                { type: 'way', id: 10, nodes: [1, 2, 3], tags: { highway: 'residential' } },
-            ]
-        };
-
-        graph.buildFromOSM(mockData);
-
-        const manualRoute: [number, number][] = [
-            [0, -0.001], // approach start, outside the box
-            [0, 0],      // arrives at A
-        ];
-        // Box's far corner (from A) is B's longitude (0.001), not C's (0.002) —
-        // literal-nearest-node would pick B; natural-endpoint search should still
-        // find C within the search radius and prefer it.
-        const selectionBoxes = [{ north: 0.0001, south: -0.0001, east: 0.0011, west: 0 }];
-
-        const result = graph.solveCPP(undefined, undefined, manualRoute, selectionBoxes);
-
-        // No backtrack: the route should visit each of A, B, C exactly once in order
-        // (open path A→B→C), not double back over any edge to fix an artificial
-        // parity requirement at B.
-        const coords = result.map(p => `${p.lat.toFixed(4)},${p.lon.toFixed(4)}`);
-        const visitsOfB = coords.filter(c => c === '0.0000,0.0010').length;
-        expect(visitsOfB).toBe(1);
-
-        const end = result[result.length - 1];
-        expect(end.lat).toBeCloseTo(0, 4);
-        expect(end.lon).toBeCloseTo(0.002, 4); // ends at C, not B
     });
 
     test('#64 (entry side): mixed-mode area entry also prefers a natural odd-degree node, with the redundant bridge overlap trimmed', () => {
@@ -1933,6 +1890,90 @@ describe('Point-in-Polygon Functions', () => {
                 circuit.some(p => Math.abs(p.lat - lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9);
             expect(visits(0.001, 0.02)).toBe(true);  // node 5
             expect(visits(0.0012, 0.02)).toBe(true); // node 6
+        });
+
+        // Redmond, OR lasso: with no point placed after the area, the sweep used to end
+        // at the corner farthest from the entry -- the far side from home -- leaving a
+        // long ride back. It now ends where area doubling plus the ride back is least.
+        test('with no point after the area, the sweep ends on the side the route started from', () => {
+            const mockData: OverpassResponse = {
+                version: 0.6,
+                generator: 'test',
+                osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 0, lon: -0.003 },     // home
+                    { type: 'node', id: 2, lat: 0, lon: 0 },          // W, where the route enters
+                    { type: 'node', id: 3, lat: 0.001, lon: 0.001 },  // N
+                    { type: 'node', id: 4, lat: 0, lon: 0.002 },      // E, the far corner
+                    { type: 'node', id: 5, lat: -0.001, lon: 0.001 }, // S
+                    { type: 'way', id: 100, nodes: [1, 2], tags: { highway: 'residential' } },
+                    { type: 'way', id: 200, nodes: [2, 3, 4, 5, 2], tags: { highway: 'residential' } },
+                ]
+            };
+            const graph = new StreetGraph();
+            graph.buildFromOSM(mockData, [[[0, -0.003], [0, 0]]]);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+
+            const approach: [number, number][] = [[-0.003, 0], [0, 0]];
+            const selectionBoxes = [{ north: 0.002, south: -0.002, east: 0.0025, west: -0.0005 }];
+            const circuit = graph.solveCPP({ lat: 0, lon: -0.003 }, undefined, approach, selectionBoxes, [], approach);
+
+            const visits = (lat: number, lon: number) =>
+                circuit.some(p => Math.abs(p.lat - lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9);
+            expect(visits(0, 0.002)).toBe(true); // the far corner is still covered
+            const end = circuit[circuit.length - 1];
+            expect(end.lat).toBeCloseTo(0, 9);
+            expect(end.lon).toBeCloseTo(0, 9); // ends back at W, not at E
+        });
+
+        // Helmholtz Way (Redmond, OR): a large pocket was bridged before a small one
+        // that sat on its shortest connection, so the bridge ran over the small pocket's
+        // required street and it was ridden 3x. Islands now connect nearest-first.
+        test('bridges the nearest pocket first so a later bridge does not re-ride its required street', () => {
+            const mockData: OverpassResponse = {
+                version: 0.6,
+                generator: 'test',
+                osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    // Largest unridden loop (5 nodes), reachable set to start from.
+                    { type: 'node', id: 1, lat: 0, lon: 0 },
+                    { type: 'node', id: 11, lat: 0.001, lon: 0 },
+                    { type: 'node', id: 12, lat: 0.001, lon: -0.001 },
+                    { type: 'node', id: 13, lat: 0.0005, lon: -0.0015 },
+                    { type: 'node', id: 14, lat: 0, lon: -0.001 },
+                    { type: 'way', id: 100, nodes: [1, 11, 12, 13, 14, 1], tags: { highway: 'residential' } },
+                    // Ridden connector -> small unridden pocket (one ~200m street) -> ridden connector.
+                    { type: 'node', id: 2, lat: 0, lon: 0.0002 },
+                    { type: 'node', id: 3, lat: 0, lon: 0.002 },
+                    { type: 'node', id: 4, lat: 0, lon: 0.0022 },
+                    { type: 'way', id: 200, nodes: [1, 2], tags: { highway: 'residential' } },
+                    { type: 'way', id: 201, nodes: [2, 3], tags: { highway: 'residential' } },
+                    { type: 'way', id: 202, nodes: [3, 4], tags: { highway: 'residential' } },
+                    // Mid-sized unridden loop (4 nodes) only reachable through the small pocket.
+                    { type: 'node', id: 41, lat: 0.001, lon: 0.0022 },
+                    { type: 'node', id: 42, lat: 0.001, lon: 0.0032 },
+                    { type: 'node', id: 43, lat: 0, lon: 0.0032 },
+                    { type: 'way', id: 300, nodes: [4, 41, 42, 43, 4], tags: { highway: 'residential' } },
+                ]
+            };
+            const overlay: [number, number][][] = [[[0, 0], [0, 0.0002]], [[0, 0.002], [0, 0.0022]]];
+
+            const graph = new StreetGraph();
+            graph.buildFromOSM(mockData, overlay);
+            expect(graph.graph.getLink('1', '2')!.data.isRidden).toBe(true);
+            expect(graph.graph.getLink('2', '3')!.data.isRidden).toBe(false);
+            expect(graph.graph.getLink('3', '4')!.data.isRidden).toBe(true);
+
+            const selectionBoxes = [{ north: 0.0015, south: -0.0005, east: 0.004, west: -0.002 }];
+            const circuit = graph.solveCPP({ lat: 0, lon: 0 }, { lat: 0, lon: 0.0022 }, undefined, selectionBoxes);
+
+            const at = (p: { lat: number, lon: number }, lon: number) => Math.abs(p.lat) < 1e-9 && Math.abs(p.lon - lon) < 1e-9;
+            let pocketTraversals = 0;
+            for (let i = 1; i < circuit.length; i++) {
+                const a = circuit[i - 1], b = circuit[i];
+                if ((at(a, 0.0002) && at(b, 0.002)) || (at(a, 0.002) && at(b, 0.0002))) pocketTraversals++;
+            }
+            expect(pocketTraversals).toBe(1);
         });
 
         test('an area route does not ride down an overlay-ridden street to cover a short sliver at its end', () => {
