@@ -49,7 +49,7 @@ export function StravaCreditToggle({ className = '' }: { className?: string }) {
         <button
             onClick={toggle}
             className={itemClass}
-            title='Adds "Route created by StreetSweep" to the description of a Strava ride that follows a route you exported'
+            title='Adds "🚲 Route created by StreetSweep" to the description of a Strava ride that follows a route you exported'
         >
             <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${settings.creditRoutesOnStrava ? 'bg-indigo-600 border-indigo-600' : 'border-gray-400'}`}>
                 {settings.creditRoutesOnStrava && <Check className="w-3 h-3 text-white" />}

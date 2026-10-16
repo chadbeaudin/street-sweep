@@ -5,6 +5,7 @@ import { getStravaAccessToken, type StravaActivity } from './strava';
 import { haversineM } from './geometry';
 
 export const CREDIT_TEXT = 'Route created by StreetSweep';
+export const CREDIT_LINE = `🚲 ${CREDIT_TEXT}`;
 export const STRAVA_WRITE_SCOPE = 'activity:write';
 
 const MATCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -62,7 +63,7 @@ export function routeCoverage(route: LatLon[], track: LatLon[]): number {
 export function appendCredit(description: string | null | undefined): string | null {
     const existing = description?.trim() ?? '';
     if (existing.includes(CREDIT_TEXT)) return null;
-    return existing ? `${existing}\n\n${CREDIT_TEXT}` : CREDIT_TEXT;
+    return existing ? `${existing}\n\n${CREDIT_LINE}` : CREDIT_LINE;
 }
 
 export async function recordExportedRoute(userId: string, route: LatLon[]): Promise<void> {

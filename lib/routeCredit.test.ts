@@ -13,7 +13,7 @@ jest.mock('./prisma', () => ({
 jest.mock('./tokenCrypto', () => ({ decryptToken: jest.fn() }));
 jest.mock('./strava', () => ({ getStravaAccessToken: jest.fn() }));
 
-import { appendCredit, creditMatchingActivities, recordExportedRoute, routeCoverage, CREDIT_TEXT } from './routeCredit';
+import { appendCredit, creditMatchingActivities, recordExportedRoute, routeCoverage, CREDIT_LINE, CREDIT_TEXT } from './routeCredit';
 import { prisma } from './prisma';
 import { getStravaAccessToken } from './strava';
 import { decryptToken } from './tokenCrypto';
@@ -78,15 +78,20 @@ describe('routeCoverage', () => {
 
 describe('appendCredit', () => {
     it('adds the credit after an existing description', () => {
-        expect(appendCredit('Windy')).toBe(`Windy\n\n${CREDIT_TEXT}`);
+        expect(appendCredit('Windy')).toBe(`Windy\n\n${CREDIT_LINE}`);
     });
 
     it('uses the credit alone for an empty description', () => {
-        expect(appendCredit(null)).toBe(CREDIT_TEXT);
-        expect(appendCredit('  ')).toBe(CREDIT_TEXT);
+        expect(appendCredit(null)).toBe(CREDIT_LINE);
+        expect(appendCredit('  ')).toBe(CREDIT_LINE);
     });
 
-    it('returns null when the credit is already there', () => {
+    it('leads the credit with a bicycle', () => {
+        expect(CREDIT_LINE).toBe('🚲 Route created by StreetSweep');
+    });
+
+    it('returns null when the credit is already there, with or without the icon', () => {
+        expect(appendCredit(`Windy\n\n${CREDIT_LINE}`)).toBeNull();
         expect(appendCredit(`Windy\n\n${CREDIT_TEXT}`)).toBeNull();
     });
 });
@@ -106,7 +111,7 @@ describe('creditMatchingActivities', () => {
         expect(putCalls()).toHaveLength(1);
         const [url, init] = putCalls()[0];
         expect(url).toBe('https://www.strava.com/api/v3/activities/1');
-        expect(JSON.parse(init.body)).toEqual({ description: `Morning loop\n\n${CREDIT_TEXT}` });
+        expect(JSON.parse(init.body)).toEqual({ description: `Morning loop\n\n${CREDIT_LINE}` });
         expect(getStravaAccessToken).toHaveBeenCalledWith({ refreshToken: 'refresh-123' });
         expect(prisma.exportedRoute.update).toHaveBeenCalledWith({ where: { id: 'r1' }, data: { creditedActivityId: '1' } });
     });
