@@ -2010,3 +2010,79 @@ describe('Point-in-Polygon Functions', () => {
         });
     });
 });
+
+describe('one-way streets (#82)', () => {
+    // A ~110m square block 1-2-3-4, plus node 5 east of 2 and node 6 between 5 and 1's
+    // latitude, giving a second loop 1-2-5-6-1 for the boulevard case.
+    const N: Record<number, { lat: number; lon: number }> = {
+        1: { lat: 0, lon: 0 }, 2: { lat: 0, lon: 0.001 }, 3: { lat: 0.001, lon: 0.001 }, 4: { lat: 0.001, lon: 0 },
+        5: { lat: 0, lon: 0.002 }, 6: { lat: -0.001, lon: 0.001 },
+    };
+    const way = (id: number, ids: number[], tags: Record<string, string> = {}) => ({
+        type: 'way', id, nodes: ids, geometry: ids.map(i => N[i]), tags: { highway: 'residential', ...tags },
+    });
+    const build = (...ways: ReturnType<typeof way>[]) => {
+        const g = new StreetGraph();
+        g.buildFromOSM({ version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' }, elements: ways } as unknown as OverpassResponse);
+        return g;
+    };
+    const block = (tags: Record<string, string>) => build(way(10, [1, 2], tags), way(11, [2, 3, 4, 1]));
+    const nodeIds = (g: StreetGraph, path: { id: string; idNext: string }[]) => [path[0].id, ...path.map(p => p.idNext)];
+
+    test('a one-way way only gets a link in its legal direction', () => {
+        const g = block({ oneway: 'yes' });
+        expect(g.graph.getLink('1', '2')).toBeTruthy();
+        expect(g.graph.getLink('2', '1')).toBeFalsy();
+
+        const reversed = block({ oneway: '-1' });
+        expect(reversed.graph.getLink('2', '1')).toBeTruthy();
+        expect(reversed.graph.getLink('1', '2')).toBeFalsy();
+
+        const exempt = block({ oneway: 'yes', 'oneway:bicycle': 'no' });
+        expect(exempt.graph.getLink('1', '2')).toBeTruthy();
+        expect(exempt.graph.getLink('2', '1')).toBeTruthy();
+    });
+
+    test('pathfinding goes around the block instead of against a one-way', () => {
+        const g = block({ oneway: 'yes' });
+        expect(nodeIds(g, g.findPath('1', '2'))).toEqual(['1', '2']);
+        expect(nodeIds(g, g.findPath('2', '1'))).toEqual(['2', '3', '4', '1']);
+    });
+
+    test('an area sweep covers a one-way street only in its legal direction', () => {
+        const g = block({ oneway: 'yes' });
+        const box = { north: 0.0015, south: -0.0005, east: 0.0015, west: -0.0005 };
+        const route = g.solveCPP(undefined, undefined, undefined, [box]);
+        const id = (p: { lat: number; lon: number }) => Object.keys(N).find(k => N[+k].lat === p.lat && N[+k].lon === p.lon);
+        const steps = route.slice(1).map((p, i) => `${id(route[i])}>${id(p)}`);
+        expect(steps).toContain('1>2');
+        expect(steps).not.toContain('2>1');
+    });
+
+    test('repair replaces a wrong-way step with a legal detour and re-covers the street', () => {
+        const g = block({ oneway: 'yes' });
+        const route = g.repairOnewayViolations(['2', '1'], new Set(['1|2']));
+        expect(route).toEqual(['2', '3', '4', '1', '2', '3', '4', '1']);
+    });
+
+    test('repair detours a run of wrong-way steps once, not once per block', () => {
+        // One-way boulevard 1 -> 2 -> 5 with a two-way return 5 -> 6 -> 1.
+        const g = build(way(10, [1, 2, 5], { oneway: 'yes' }), way(11, [5, 6, 1]));
+        const route = g.repairOnewayViolations(['5', '2', '1'], new Set(['1|2', '2|5']));
+        expect(route).toEqual(['5', '6', '1', '2', '5', '6', '1']);
+    });
+
+    test('a two-way trail is left untouched', () => {
+        const g = block({});
+        expect(g.repairOnewayViolations(['2', '1', '4'], new Set())).toEqual(['2', '1', '4']);
+    });
+
+    test('applyEndpointSnap does not extend a route the wrong way along a one-way edge', () => {
+        const A = { lat: 0, lon: 0 }, B = { lat: 0, lon: 0.001 };
+        const coords = [{ lat: 0.001, lon: 0.001 }, B];
+        const endPoint = { lat: 0, lon: 0.0004 };
+        const snap = { lat: 0, lon: 0.0004, u: 'A', v: 'B' };
+        expect(applyEndpointSnap(coords, endPoint, snap, A, B, true, false)).toEqual(coords);
+        expect(applyEndpointSnap(coords, endPoint, snap, A, B, false, true)).toEqual([...coords, { lat: 0, lon: 0.0004 }]);
+    });
+});

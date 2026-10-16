@@ -42,3 +42,21 @@ export function isRoutableHighway(highway: string | undefined, tags?: Record<str
     }
     return BASE_ROUTABLE_HIGHWAYS.has(highway);
 }
+
+// Direction a bicycle may legally travel a way relative to its node order:
+// 'both', 'forward', or 'backward'. Bike-specific exemptions (oneway:bicycle=no,
+// contraflow cycleway=opposite*) override the general oneway tag.
+export type TravelDirection = 'both' | 'forward' | 'backward';
+const CONTRAFLOW_CYCLEWAYS = new Set(['opposite', 'opposite_lane', 'opposite_track', 'opposite_share_busway']);
+
+export function bicycleTravelDirection(tags?: Record<string, string>): TravelDirection {
+    if (!tags) return 'both';
+    const bikeOneway = tags['oneway:bicycle'];
+    if (bikeOneway === 'no') return 'both';
+    if (['cycleway', 'cycleway:left', 'cycleway:right', 'cycleway:both'].some(k => CONTRAFLOW_CYCLEWAYS.has(tags[k] ?? ''))) return 'both';
+    const oneway = bikeOneway ?? tags.oneway;
+    if (oneway === 'yes' || oneway === 'true' || oneway === '1') return 'forward';
+    if (oneway === '-1' || oneway === 'reverse') return 'backward';
+    if (oneway === undefined && (tags.junction === 'roundabout' || tags.junction === 'circular')) return 'forward';
+    return 'both';
+}

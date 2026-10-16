@@ -1,4 +1,4 @@
-import { isRoutableHighway } from './highwayFilter';
+import { isRoutableHighway, bicycleTravelDirection } from './highwayFilter';
 
 describe('isRoutableHighway', () => {
     it('allows standard road types', () => {
@@ -55,5 +55,30 @@ describe('isRoutableHighway', () => {
         expect(isRoutableHighway(undefined)).toBe(false);
         expect(isRoutableHighway('steps')).toBe(false);
         expect(isRoutableHighway('pedestrian')).toBe(false);
+    });
+});
+
+describe('bicycleTravelDirection (#82)', () => {
+    it('treats untagged and oneway=no ways as two-way', () => {
+        expect(bicycleTravelDirection(undefined)).toBe('both');
+        expect(bicycleTravelDirection({ highway: 'residential' })).toBe('both');
+        expect(bicycleTravelDirection({ oneway: 'no' })).toBe('both');
+    });
+
+    it('reads oneway=yes/true/1 as forward and -1/reverse as backward', () => {
+        for (const v of ['yes', 'true', '1']) expect(bicycleTravelDirection({ oneway: v })).toBe('forward');
+        for (const v of ['-1', 'reverse']) expect(bicycleTravelDirection({ oneway: v })).toBe('backward');
+    });
+
+    it('treats roundabouts as implicitly one-way unless tagged otherwise', () => {
+        expect(bicycleTravelDirection({ junction: 'roundabout' })).toBe('forward');
+        expect(bicycleTravelDirection({ junction: 'roundabout', oneway: 'no' })).toBe('both');
+    });
+
+    it('lets bicycle exemptions override the general oneway tag', () => {
+        expect(bicycleTravelDirection({ oneway: 'yes', 'oneway:bicycle': 'no' })).toBe('both');
+        expect(bicycleTravelDirection({ oneway: 'yes', cycleway: 'opposite_lane' })).toBe('both');
+        expect(bicycleTravelDirection({ oneway: 'yes', 'cycleway:left': 'opposite_track' })).toBe('both');
+        expect(bicycleTravelDirection({ oneway: 'no', 'oneway:bicycle': 'yes' })).toBe('forward');
     });
 });

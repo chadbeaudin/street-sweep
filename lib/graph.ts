@@ -4,9 +4,10 @@ import createGraph, { Graph } from 'ngraph.graph';
 import path from 'ngraph.path';
 
 import { OSMWay, OSMNode, OverpassResponse } from './types';
-import { isRoutableHighway } from './highwayFilter';
+import { isRoutableHighway, bicycleTravelDirection } from './highwayFilter';
 import { haversineM } from './geometry';
 import { polylineSetFingerprint } from './riddenRoads';
+import { legalSnapEnds } from './stepPath';
 
 interface NodeData {
     lat: number;
@@ -225,6 +226,8 @@ export function applyEndpointSnap(
     snap: { lat: number; lon: number; u: string; v: string },
     uCoord: { lat: number; lon: number },
     vCoord: { lat: number; lon: number },
+    canTravelUtoV = true,
+    canTravelVtoU = true,
 ): { lat: number; lon: number; hasConstruction?: boolean }[] {
     const distToSnap = haversineM(endPoint.lat, endPoint.lon, snap.lat, snap.lon);
     const distToU = haversineM(endPoint.lat, endPoint.lon, uCoord.lat, uCoord.lon);
@@ -260,7 +263,7 @@ export function applyEndpointSnap(
     // extend along that edge to the snap point; otherwise leave coords as-is
     // rather than risk discarding most of the route.
     const last = coords[coords.length - 1];
-    if (isU(last) || isV(last)) {
+    if ((isU(last) && canTravelUtoV) || (isV(last) && canTravelVtoU)) {
         return [...coords, { lat: snap.lat, lon: snap.lon }];
     }
     return coords;
@@ -497,6 +500,8 @@ export class StreetGraph {
                     }
                 }
 
+                const direction = bicycleTravelDirection(way.tags);
+
                 // Detect construction
                 const hasConstruction =
                     way.tags?.construction !== undefined ||
@@ -614,8 +619,7 @@ export class StreetGraph {
                             dist *= 0.9;
                         }
                         const isRidden = wayEdges[i].isRidden;
-
-                        this.graph.addLink(uIdStr, vIdStr, {
+                        const edgeData: EdgeData = {
                             id: way.id.toString(),
                             weight: dist,
                             name: way.tags?.name,
@@ -625,18 +629,12 @@ export class StreetGraph {
                             isUserAvoided,
                             hasConstruction,
                             hasBikeLane
-                        });
-                        this.graph.addLink(vIdStr, uIdStr, {
-                            id: way.id.toString(),
-                            weight: dist,
-                            name: way.tags?.name,
-                            highway: highway,
-                            isRidden,
-                            isAvoided,
-                            isUserAvoided,
-                            hasConstruction,
-                            hasBikeLane
-                        });
+                        };
+
+                        // Links are directed: a one-way street only gets a link in its legal
+                        // direction, so every directed search can never route against it.
+                        if (direction !== 'backward') this.graph.addLink(uIdStr, vIdStr, { ...edgeData });
+                        if (direction !== 'forward') this.graph.addLink(vIdStr, uIdStr, { ...edgeData });
                     }
                 }
             }
@@ -1065,6 +1063,9 @@ export class StreetGraph {
                     for (let i = 0; i < unused.length; i++) {
                         const candidate = unused[i];
                         const nextNodeId = candidate.target;
+                        // Prefer the legal direction of a one-way street; anything left
+                        // wrong-way is detoured by repairOnewayViolations afterwards.
+                        const wrongWayPenalty = this.graph.getLink(curr, nextNodeId) ? 0 : 20000;
 
                         const pairKey = edgePairKey(curr, nextNodeId);
                         const pairTotal = edgePairCount.get(pairKey) || 1;
@@ -1078,7 +1079,7 @@ export class StreetGraph {
                             // of the edge we just rode (out-and-back on a doubled spur).
                             // On a bike that's a natural maneuver, and for turn-by-turn
                             // navigation it beats jaunting onto connector roads first.
-                            const score = isSecondTraversal ? -5000 : -1e9;
+                            const score = (isSecondTraversal ? -5000 : -1e9) - wrongWayPenalty;
                             if (score > bestScore) { bestScore = score; bestIdx = i; }
                             continue;
                         }
@@ -1087,7 +1088,7 @@ export class StreetGraph {
                         // above) > connectors over ridden/virtual roads that cover nothing
                         // new (-8000) > deferred second traversals (-10000).
                         const isConnector = pairTotal === 1 && candidate.isConnector;
-                        let score = isSecondTraversal ? -10000 : (isConnector ? -8000 : 0);
+                        let score = (isSecondTraversal ? -10000 : (isConnector ? -8000 : 0)) - wrongWayPenalty;
 
                         // Tiebreaker: bearing (prefer continuing straight)
                         if (inBearing !== null && currNode) {
@@ -1224,6 +1225,57 @@ export class StreetGraph {
         return trailPath;
     }
 
+    private countOnewayViolations(trail: string[]): number {
+        let count = 0;
+        for (let i = 0; i < trail.length - 1; i++) {
+            if (!this.graph.getLink(trail[i], trail[i + 1]) && this.graph.getLink(trail[i + 1], trail[i])) count++;
+        }
+        return count;
+    }
+
+    // The Eulerian trail is built over an undirected multigraph, so it can still walk a
+    // one-way street backwards. Each such step becomes the shortest legal detour, and any
+    // required one-way street that was only ever walked backwards gets a legal pass spliced
+    // in where the route reaches its start. Inserting there is optimal for a closed detour:
+    // any loop x -> from -> to -> x costs at least the edge plus the shortest to -> from path.
+    public repairOnewayViolations(trail: string[], requiredOneways: Set<string>): string[] {
+        const isWrongWay = (a: string, b: string) => !this.graph.getLink(a, b) && !!this.graph.getLink(b, a);
+        const route: string[] = trail.length > 0 ? [trail[0]] : [];
+        const wrongWay: [string, string][] = [];
+        for (let i = 0; i < trail.length - 1; i++) {
+            if (!isWrongWay(trail[i], trail[i + 1])) { route.push(trail[i + 1]); continue; }
+            // Detour around a whole run of consecutive wrong-way steps at once; detouring
+            // each block of a one-way boulevard separately loops around every block.
+            let end = i + 1;
+            while (end < trail.length - 1 && isWrongWay(trail[end], trail[end + 1])) end++;
+            const detour = this.findPath(trail[i], trail[end]);
+            if (detour.length === 0) {
+                console.warn(`${ts()} No legal detour around one-way ${trail[end]} -> ${trail[i]}; leaving it as-is.`);
+                route.push(...trail.slice(i + 1, end + 1));
+            } else {
+                for (const seg of detour) route.push(seg.idNext);
+                for (let k = i; k < end; k++) {
+                    if (requiredOneways.has(`${trail[k + 1]}|${trail[k]}`)) wrongWay.push([trail[k + 1], trail[k]]);
+                }
+            }
+            i = end - 1;
+        }
+
+        for (const [from, to] of wrongWay) {
+            const covered = route.some((n, i) => n === from && route[i + 1] === to);
+            if (covered) continue;
+            const at = route.indexOf(from);
+            const back = this.findPath(to, from);
+            if (at === -1 || back.length === 0) {
+                console.warn(`${ts()} Could not add a legal pass over one-way ${from} -> ${to}.`);
+                continue;
+            }
+            route.splice(at + 1, 0, to, ...back.map(seg => seg.idNext));
+        }
+        if (wrongWay.length > 0) console.log(`${ts()} Repaired ${wrongWay.length} wrong-way one-way traversal(s).`);
+        return route;
+    }
+
     public pruneDisconnectedComponents() {
         if (this.graph.getNodesCount() === 0) return;
         const visited = new Set<string>();
@@ -1290,7 +1342,8 @@ export class StreetGraph {
             const node = this.graph.getNode(u);
             node?.links?.forEach((link: any) => {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
-                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                if (link.fromId !== u) return;
+                const v = link.toId.toString();
                 // Penalise ridden roads heavily so T-join matching prefers unridden bridges
                 const weight = link.data.weight * (link.data.isRidden ? riddenPenalty : 1);
                 const alt = distU + weight;
@@ -1342,7 +1395,8 @@ export class StreetGraph {
 
             const node = this.graph.getNode(u);
             node?.links?.forEach((link: any) => {
-                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                if (link.fromId !== u) return;
+                const v = link.toId.toString();
                 const weight = link.data.weight * (link.data.isRidden ? riddenPenalty : 1);
                 const alt = distU + weight;
                 if (!distances.has(v) || alt < distances.get(v)!) {
@@ -1423,7 +1477,8 @@ export class StreetGraph {
             const node = this.graph.getNode(u);
             node?.links?.forEach((link: any) => {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
-                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                if (link.fromId !== u) return;
+                const v = link.toId.toString();
                 
                 let weight = link.data.weight;
                 if (penalizedLinks && penalizedLinks.has(link.id)) {
@@ -1508,7 +1563,8 @@ export class StreetGraph {
             const node = this.graph.getNode(u);
             node?.links?.forEach((link: any) => {
                 if (allowedLinks && !allowedLinks.has(link.id)) return;
-                const v = (link.fromId === u ? link.toId : link.fromId).toString();
+                if (link.fromId !== u) return;
+                const v = link.toId.toString();
 
                 let weight = link.data.weight;
                 if (penalizedLinks && penalizedLinks.has(link.id)) {
@@ -1903,8 +1959,9 @@ export class StreetGraph {
             // mid-edge point (skipping the real edge geometry) draws a visible
             // straight line across open ground.
             const entryEdgeSnap = this.findClosestPointOnEdge(bridgeSource.lat, bridgeSource.lon);
+            const hasLink = (a: string, b: string) => !!this.graph.getLink(a, b);
             const entryStartCandidates = entryEdgeSnap
-                ? [entryEdgeSnap.u, entryEdgeSnap.v]
+                ? legalSnapEnds(entryEdgeSnap, hasLink).exits
                 : [this.findClosestNode(bridgeSource.lat, bridgeSource.lon)].filter((id): id is string => !!id);
             let entryBridge: { lat: number; lon: number }[] = [];
             if (areaEntryNodeId && entryStartCandidates.length > 0) {
@@ -1978,7 +2035,7 @@ export class StreetGraph {
                 // across open ground. Mirrors /api/step's snap-edge handling.
                 const edgeSnap = this.findClosestPointOnEdge(bridgeTarget.lat, bridgeTarget.lon);
                 const exitStartCandidates = edgeSnap
-                    ? [edgeSnap.u, edgeSnap.v]
+                    ? legalSnapEnds(edgeSnap, hasLink).entries
                     : [this.findClosestNode(bridgeTarget.lat, bridgeTarget.lon)].filter((id): id is string => !!id);
                 if (areaEndNodeId && exitStartCandidates.length > 0) {
                     let bridgePath: { id: string, idNext: string, weight: number }[] = [];
@@ -2263,14 +2320,14 @@ export class StreetGraph {
 
         if ((!manualRoute || manualRoute.length === 0) && (!selectionBoxes || selectionBoxes.length === 0) && (!selectionPolygons || selectionPolygons.length === 0)) {
             this.graph.forEachLink((link: any) => {
-                if (link.fromId < link.toId) {
-                    if (!link.data.isRidden && !link.data.isAvoided) {
-                        const key = edgeKey(link.fromId.toString(), link.toId.toString());
-                        requiredEdgeKeys.add(key); // needed for BFS component detection
-                        requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
-                        unriddenNodes.add(link.fromId.toString());
-                        unriddenNodes.add(link.toId.toString());
-                    }
+                if (!link.data.isRidden && !link.data.isAvoided) {
+                    // Dedupe by key, not fromId < toId: a one-way street has only one link.
+                    const key = edgeKey(link.fromId.toString(), link.toId.toString());
+                    if (requiredEdgeKeys.has(key)) return;
+                    requiredEdgeKeys.add(key); // needed for BFS component detection
+                    requiredEdges.push({ u: link.fromId.toString(), v: link.toId.toString(), link });
+                    unriddenNodes.add(link.fromId.toString());
+                    unriddenNodes.add(link.toId.toString());
                 }
             });
         }
@@ -2608,6 +2665,21 @@ export class StreetGraph {
                     }
                 }
             }
+            // A closed circuit (or a trail with no fixed start) can run either way round;
+            // take whichever direction walks fewer one-way streets backwards.
+            if (!startNode || (trail.length > 1 && trail[0] === trail[trail.length - 1])) {
+                const reversed = [...trail].reverse();
+                if (this.countOnewayViolations(reversed) < this.countOnewayViolations(trail)) trail = reversed;
+            }
+            const requiredOneways = new Set<string>();
+            for (const e of edgesInFinalGraph) {
+                if (e.data.isVirtual) continue;
+                const forward = !!this.graph.getLink(e.u, e.v), backward = !!this.graph.getLink(e.v, e.u);
+                if (forward && !backward) requiredOneways.add(`${e.u}|${e.v}`);
+                if (backward && !forward) requiredOneways.add(`${e.v}|${e.u}`);
+            }
+            trail = this.repairOnewayViolations(trail, requiredOneways);
+
             const coords: { lat: number; lon: number; hasConstruction?: boolean }[] = [];
 
             for (let i = 0; i < trail.length; i++) {
@@ -2623,7 +2695,7 @@ export class StreetGraph {
                         (e.u === id && e.v === nextId) || (e.v === id && e.u === nextId)
                     );
 
-                    if (edge?.data?.hasConstruction) {
+                    if ((edge?.data ?? this.graph.getLink(id, nextId)?.data)?.hasConstruction) {
                         hasConstruction = true;
                     }
 
@@ -2651,7 +2723,8 @@ export class StreetGraph {
                     const uNode = this.graph.getNode(snap.u);
                     const vNode = this.graph.getNode(snap.v);
                     if (uNode && vNode) {
-                        return applyEndpointSnap(coords, endPoint, snap, uNode.data, vNode.data);
+                        return applyEndpointSnap(coords, endPoint, snap, uNode.data, vNode.data,
+                            !!this.graph.getLink(snap.u, snap.v), !!this.graph.getLink(snap.v, snap.u));
                     }
                 }
             }

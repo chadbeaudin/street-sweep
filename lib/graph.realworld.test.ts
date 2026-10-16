@@ -1,7 +1,22 @@
-import { StreetGraph } from './graph';
+import { StreetGraph, RoutingOptions } from './graph';
 import { haversineM } from './geometry';
 import fixture from './__fixtures__/comstock-31st-jefferson.json';
 import type { OverpassResponse } from './types';
+
+// Steps in the route that travel an edge whose only graph link runs the other way.
+function wrongWaySteps(fixture: { osm: OverpassResponse; riddenRoads: [number, number][][] | null; routingOptions?: RoutingOptions }, circuit: { lat: number, lon: number }[]): number {
+    const graph = new StreetGraph();
+    graph.buildFromOSM(fixture.osm, fixture.riddenRoads, fixture.routingOptions);
+    const byCoord = new Map<string, string>();
+    graph.graph.forEachNode(n => { byCoord.set(`${n.data.lat},${n.data.lon}`, String(n.id)); });
+    let count = 0;
+    for (let i = 0; i < circuit.length - 1; i++) {
+        const a = byCoord.get(`${circuit[i].lat},${circuit[i].lon}`);
+        const b = byCoord.get(`${circuit[i + 1].lat},${circuit[i + 1].lon}`);
+        if (a && b && !graph.graph.getLink(a, b) && graph.graph.getLink(b, a)) count++;
+    }
+    return count;
+}
 
 // Real OSM data for the neighborhood bounded by West 29th-33rd Ave, Ben Burr/
 // Balsamroot Trail, and Comstock Park (Spokane, WA) -- see issue #90, where a
@@ -85,9 +100,15 @@ describe('real-world regression: Manito 27th/Latawah mixed-mode route', () => {
         );
     }
 
-    test('distance matches the independently brute-force-verified optimal (~1.309mi)', () => {
+    // The brute-forced 1.309mi optimum rode South Manito Blvd's one-way carriageway the
+    // wrong way for 134m (#82); riding it legally costs the extra ~0.07mi.
+    test('distance matches the one-way-legal route (~1.375mi)', () => {
         const circuit = buildAndSolve();
-        expect(routeDistanceMiles(circuit)).toBeCloseTo(1.309, 2);
+        expect(routeDistanceMiles(circuit)).toBeCloseTo(1.375, 2);
+    });
+
+    test('never rides a one-way street the wrong way (#82)', () => {
+        expect(wrongWaySteps(fixture, buildAndSolve())).toBe(0);
     });
 
     test('fully covers the unridden South Latawah St stretch, including its southern end', () => {
@@ -152,6 +173,10 @@ describe('real-world regression: Eagle Ridge/Shelby Ridge/Latah Hills Ct mixed-m
         const { circuit } = buildAndSolve();
         const visits = circuit.filter(p => haversineM(p.lat, p.lon, JUNCTION[0], JUNCTION[1]) < 15).length;
         expect(visits).toBeLessThanOrEqual(3);
+    });
+
+    test('never rides a one-way street the wrong way (#82)', () => {
+        expect(wrongWaySteps(fixture, buildAndSolve().circuit)).toBe(0);
     });
 
     test('total distance matches the fixed, verified-lower value (~6.036mi)', () => {

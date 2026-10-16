@@ -1,4 +1,4 @@
-import { buildStepPathCoords, EdgeSnap } from './stepPath';
+import { buildStepPathCoords, EdgeSnap, legalSnapEnds, sameOnewayEdgePath } from './stepPath';
 import { StreetGraph } from './graph';
 import { OverpassResponse } from './types';
 
@@ -134,5 +134,30 @@ describe('step routing to a click on a disconnected footpath (graph)', () => {
             expect(sameLat || sameLon).toBe(true);
         }
         expect(coords.map(c => c[1])).toContain(SE_BLVD.lat);
+    });
+});
+
+describe('one-way snap edges (#82)', () => {
+    const oneway = (from: string, to: string) => (a: string, b: string) => a === from && b === to;
+    const twoWay = () => true;
+    const snapAB: EdgeSnap = { lat: 0, lon: 0.5, u: 'A', v: 'B' };
+
+    it('only lets a rider leave toward, or arrive from, the legal end of a one-way edge', () => {
+        expect(legalSnapEnds(snapAB, oneway('A', 'B'))).toEqual({ exits: ['B'], entries: ['A'] });
+        expect(legalSnapEnds(snapAB, oneway('B', 'A'))).toEqual({ exits: ['A'], entries: ['B'] });
+        expect(legalSnapEnds(snapAB, twoWay)).toEqual({ exits: ['B', 'A'], entries: ['A', 'B'] });
+    });
+
+    it('joins two clicks on the same one-way edge directly when heading the legal way', () => {
+        const prev: EdgeSnap = { lat: 0, lon: 0.2, u: 'A', v: 'B' };
+        const next: EdgeSnap = { lat: 0, lon: 0.8, u: 'A', v: 'B' };
+        expect(sameOnewayEdgePath(prev, next, getNode, oneway('A', 'B'))).toEqual([[0.2, 0], [0.8, 0]]);
+    });
+
+    it('does not join clicks directly against the one-way, or on a two-way edge', () => {
+        const prev: EdgeSnap = { lat: 0, lon: 0.8, u: 'A', v: 'B' };
+        const next: EdgeSnap = { lat: 0, lon: 0.2, u: 'A', v: 'B' };
+        expect(sameOnewayEdgePath(prev, next, getNode, oneway('A', 'B'))).toBeNull();
+        expect(sameOnewayEdgePath(next, prev, getNode, twoWay)).toBeNull();
     });
 });
