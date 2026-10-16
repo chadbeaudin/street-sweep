@@ -22,6 +22,7 @@ import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { useUnits } from '@/components/UnitsContext';
 import { elevationFromFeet, elevationUnit } from '@/lib/units';
+import { homeToPrepend } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
@@ -79,6 +80,7 @@ export default function Home() {
         riddenPenalty: number;
         boxElasticity: number;
         pointRoutePenalty: number;
+        startFromHome: boolean;
         avoidedRoads: [number, number][][];
     }>({
         avoidGravel: false,
@@ -87,6 +89,7 @@ export default function Home() {
         riddenPenalty: 15,
         boxElasticity: 0,
         pointRoutePenalty: 4,
+        startFromHome: false,
         // User-marked "avoid" roads (#45): raw coordinate polylines of roads the
         // user has clicked to mark, persisted per-browser and sent alongside the
         // other routing options so the server can heavily penalize them.
@@ -678,7 +681,7 @@ export default function Home() {
                 bbox: currentBbox,
                 riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, riddenFilterBbox),
                 selectedPoints: currentPoints,
-                startPoint: startPointRef.current,
+                startPoint: routingOptionsRef.current.startFromHome ? startPointRef.current : null,
                 selectionBoxes: selectionBoxesRef.current,
                 selectionPolygons: selectionPolygonsRef.current,
                 routingOptions: routingOptionsRef.current,
@@ -1161,7 +1164,7 @@ export default function Home() {
         });
     }, []);
 
-    const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
+    const addPoint = useCallback((point: { lat: number; lon: number }) => {
         if (isDraggingRef.current) return;
         isImportedRouteRef.current = false;
         setIsImportedRoute(false);
@@ -1258,6 +1261,17 @@ export default function Home() {
             }
         });
     }, []);
+
+    const handlePointAdd = useCallback((point: { lat: number; lon: number }) => {
+        const home = homeToPrepend(
+            routingOptionsRef.current.startFromHome,
+            startPointRef.current,
+            pointsRef.current.length,
+            selectionBoxesRef.current.length > 0 || selectionPolygonsRef.current.length > 0,
+        );
+        if (home) addPoint(home);
+        addPoint(point);
+    }, [addPoint]);
 
     const handlePointMove = useCallback((idx: number, newLatLng: { lat: number; lon: number }) => {
         const currentBbox = bboxRef.current;
@@ -1815,6 +1829,16 @@ export default function Home() {
                                                         </button>
                                                     </div>
                                                 )}
+                                                <label className={`mt-2 flex items-center gap-2 text-xs ${startPoint ? 'text-gray-700 cursor-pointer' : 'text-gray-400'}`}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={routingOptions.startFromHome}
+                                                        disabled={!startPoint}
+                                                        onChange={() => setRoutingOptions({ ...routingOptions, startFromHome: !routingOptions.startFromHome })}
+                                                        className="accent-indigo-600"
+                                                    />
+                                                    Start routes from this address
+                                                </label>
                                             </div>
                                             <button
                                                 onClick={() => setRoutingOptions({ ...routingOptions, avoidGravel: !routingOptions.avoidGravel })}
