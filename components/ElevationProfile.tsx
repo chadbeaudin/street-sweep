@@ -12,6 +12,8 @@ import {
     ReferenceLine,
     ReferenceDot
 } from 'recharts';
+import { useUnits } from './UnitsContext';
+import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
 
 interface ElevationData {
     distance: number;
@@ -28,7 +30,16 @@ interface ElevationProfileProps {
     highlightPoint?: { lat: number; lon: number } | null;
 }
 
-const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover, totalDistance, totalElevationGain, highlightPoint }) => {
+const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data: rawData, onHover, totalDistance, totalElevationGain, highlightPoint }) => {
+    const { units } = useUnits();
+    const data = useMemo(() => units === 'imperial' ? rawData : rawData?.map(d => ({
+        ...d,
+        distance: parseFloat(distanceFromMiles(d.distance, units).toFixed(3)),
+        elevation: Math.round(elevationFromFeet(d.elevation, units)),
+    })), [rawData, units]);
+    const displayDistance = totalDistance ? distanceFromMiles(parseFloat(totalDistance), units).toFixed(2) : null;
+    const displayGain = totalElevationGain !== undefined ? Math.round(elevationFromFeet(totalElevationGain, units)) : undefined;
+
     const yDomain = useMemo(() => {
         if (!data || data.length === 0) return [0, 100];
         const elevations = data.map(d => d.elevation);
@@ -59,24 +70,24 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover,
 
     return (
         <div className="w-full h-48 bg-white border-t border-gray-200 shadow-inner relative z-10 flex">
-            {(totalDistance || totalElevationGain !== undefined) && (
+            {(displayDistance || displayGain !== undefined) && (
                 <div className="flex flex-col items-center justify-center gap-6 px-5 py-4 border-r border-gray-200 shrink-0 w-36">
-                    {totalDistance && (
+                    {displayDistance && (
                         <div className="flex flex-col items-center gap-0.5">
-                            <span className="text-2xl font-bold text-indigo-700 leading-none">{totalDistance}</span>
-                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">miles</span>
+                            <span className="text-2xl font-bold text-indigo-700 leading-none">{displayDistance}</span>
+                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{distanceUnit(units, true)}</span>
                         </div>
                     )}
-                    {totalElevationGain !== undefined && (
+                    {displayGain !== undefined && (
                         <div className="flex flex-col items-center gap-0.5">
-                            <span className="text-2xl font-bold text-emerald-600 leading-none">{totalElevationGain}</span>
-                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">ft gain</span>
+                            <span className="text-2xl font-bold text-emerald-600 leading-none">{displayGain}</span>
+                            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">{elevationUnit(units)} gain</span>
                         </div>
                     )}
                 </div>
             )}
             <div className="flex-1 flex flex-col p-4 min-w-0">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Elevation Profile (feet)</h3>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Elevation Profile ({elevationUnit(units, true)})</h3>
             <div className="flex-1">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart
@@ -101,7 +112,7 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover,
                             dataKey="distance"
                             type="number"
                             domain={['dataMin', 'dataMax']}
-                            tickFormatter={(val) => `${val} mi`}
+                            tickFormatter={(val) => `${val} ${distanceUnit(units)}`}
                             fontSize={10}
                             tick={{ fill: '#9CA3AF' }}
                             axisLine={{ stroke: '#E5E7EB' }}
@@ -118,8 +129,8 @@ const ElevationProfileInner: React.FC<ElevationProfileProps> = ({ data, onHover,
                         />
                         <Tooltip
                             contentStyle={{ fontSize: '12px', borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                            labelFormatter={(val) => `${val} miles`}
-                            formatter={(val: any) => [`${val} ft`, 'Elevation']}
+                            labelFormatter={(val) => `${val} ${distanceUnit(units, true)}`}
+                            formatter={(val: any) => [`${val} ${elevationUnit(units)}`, 'Elevation']}
                         />
                         <Area
                             type="monotone"

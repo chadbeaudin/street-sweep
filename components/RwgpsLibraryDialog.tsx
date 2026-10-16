@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { X, ChevronRight, ChevronDown, Route as RouteIcon, Folder, Loader2 } from 'lucide-react';
+import { useUnits } from './UnitsContext';
+import { distanceFromMeters, distanceUnit } from '@/lib/units';
 
 interface RwgpsRouteSummary {
     id: number;
@@ -23,9 +25,9 @@ interface RwgpsLibraryDialogProps {
     onSelectRoute: (routeId: number, routeName: string) => void;
 }
 
-const metersToMiles = (m: number) => (m / 1609.344).toFixed(1);
 
 function RouteRow({ route, isLoadingRoute, onSelectRoute }: { route: RwgpsRouteSummary; isLoadingRoute: boolean; onSelectRoute: (id: number, name: string) => void }) {
+    const { units } = useUnits();
     return (
         <button
             onClick={() => onSelectRoute(route.id, route.name)}
@@ -34,7 +36,7 @@ function RouteRow({ route, isLoadingRoute, onSelectRoute }: { route: RwgpsRouteS
         >
             <RouteIcon className="w-3.5 h-3.5 shrink-0 text-gray-400" />
             <span className="flex-1 truncate">{route.name}</span>
-            <span className="text-xs text-gray-400 shrink-0">{metersToMiles(route.distance)} mi</span>
+            <span className="text-xs text-gray-400 shrink-0">{distanceFromMeters(route.distance, units).toFixed(1)} {distanceUnit(units)}</span>
         </button>
     );
 }

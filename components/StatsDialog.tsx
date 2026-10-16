@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, MapPin, RefreshCw, ChevronDown, ChevronRight, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route, Zap } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useUnits } from './UnitsContext';
+import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
 
 interface CityStats {
     name: string;
@@ -107,6 +109,9 @@ function formatAge(refreshedAt?: string): string | null {
 }
 
 export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials, activityMode }: StatsDialogProps) {
+    const { units } = useUnits();
+    const dist = (miles: number) => distanceFromMiles(miles, units);
+    const elev = (feet: number) => elevationFromFeet(feet, units);
     const activityNoun = activityMode === 'running' ? 'run' : 'ride';
     const activityNounPlural = activityMode === 'running' ? 'runs' : 'rides';
     const activityVerbPast = activityMode === 'running' ? 'run' : 'ridden';
@@ -264,15 +269,15 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                 </div>
                                 <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/60 rounded-xl p-4 border border-indigo-100">
                                     <Route className="w-4 h-4 text-indigo-400 mb-1.5" />
-                                    <div className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">Unique Miles</div>
-                                    <div className="text-2xl font-bold text-indigo-900 mt-0.5 tabular-nums whitespace-nowrap">{(stats.totalUniqueMiles ?? 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
+                                    <div className="text-[11px] font-semibold text-indigo-700 uppercase tracking-wider">Unique {units === 'metric' ? 'Kilometers' : 'Miles'}</div>
+                                    <div className="text-2xl font-bold text-indigo-900 mt-0.5 tabular-nums whitespace-nowrap">{dist(stats.totalUniqueMiles ?? 0).toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</div>
                                     <div className="text-[11px] text-indigo-500 mt-0.5">deduplicated</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-amber-50 to-amber-100/60 rounded-xl p-4 border border-amber-100">
                                     <Mountain className="w-4 h-4 text-amber-400 mb-1.5" />
                                     <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">Climbed</div>
-                                    <div className="text-2xl font-bold text-amber-900 mt-0.5 tabular-nums whitespace-nowrap">{Math.round(stats.totalElevationFeet ?? 0).toLocaleString()}</div>
-                                    <div className="text-[11px] text-amber-500 mt-0.5">ft total</div>
+                                    <div className="text-2xl font-bold text-amber-900 mt-0.5 tabular-nums whitespace-nowrap">{Math.round(elev(stats.totalElevationFeet ?? 0)).toLocaleString()}</div>
+                                    <div className="text-[11px] text-amber-500 mt-0.5">{elevationUnit(units)} total</div>
                                 </div>
                             </div>
 
@@ -363,10 +368,10 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <h3 className="text-sm font-semibold text-gray-700 mb-3">Records</h3>
                                     <div className="grid grid-cols-3 gap-2">
                                         {[
-                                            { label: 'Total Distance', value: `${Math.round(stats.totalDistanceMiles).toLocaleString()}`, unit: 'mi' },
-                                            { label: 'New Ground', value: `${Math.round(stats.explorationPct ?? 0)}%`, unit: 'of miles were new' },
-                                            { label: activityMode === 'running' ? 'Longest Run' : 'Longest Ride', value: `${Math.round(stats.longestRideMiles ?? 0)}`, unit: 'mi' },
-                                            { label: 'Biggest Climb', value: `${Math.round(stats.biggestClimbFeet ?? 0).toLocaleString()}`, unit: 'ft' },
+                                            { label: 'Total Distance', value: `${Math.round(dist(stats.totalDistanceMiles)).toLocaleString()}`, unit: distanceUnit(units) },
+                                            { label: 'New Ground', value: `${Math.round(stats.explorationPct ?? 0)}%`, unit: `of ${distanceUnit(units, true)} were new` },
+                                            { label: activityMode === 'running' ? 'Longest Run' : 'Longest Ride', value: `${Math.round(dist(stats.longestRideMiles ?? 0))}`, unit: distanceUnit(units) },
+                                            { label: 'Biggest Climb', value: `${Math.round(elev(stats.biggestClimbFeet ?? 0)).toLocaleString()}`, unit: elevationUnit(units) },
                                             { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days' },
                                         ].map(r => (
                                             <div key={r.label} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
@@ -381,10 +386,10 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                         const maxMiles = Math.max(...stats.ridesPerYear.map(y => y.miles), 1);
                                         return (
                                             <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
-                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Miles per Year</div>
+                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">{units === 'metric' ? 'Kilometers' : 'Miles'} per Year</div>
                                                 <div className="flex gap-1.5 h-24">
                                                     {stats.ridesPerYear.map(y => (
-                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(y.miles).toLocaleString()} mi · ${y.rides} ${activityNounPlural}`}>
+                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(dist(y.miles)).toLocaleString()} ${distanceUnit(units)} · ${y.rides} ${activityNounPlural}`}>
                                                             <div className="w-full flex-1 flex items-end">
                                                                 <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }} />
                                                             </div>
@@ -490,7 +495,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                         </div>
                                                         <div className="text-right flex-shrink-0">
                                                             <div className="text-lg font-bold text-gray-900 tabular-nums">{c.percent.toFixed(1)}%</div>
-                                                            <div className="text-xs text-gray-500 tabular-nums">{c.riddenMiles.toFixed(0)} / {c.totalMiles.toFixed(0)} mi</div>
+                                                            <div className="text-xs text-gray-500 tabular-nums">{dist(c.riddenMiles).toFixed(0)} / {dist(c.totalMiles).toFixed(0)} {distanceUnit(units)}</div>
                                                         </div>
                                                     </div>
                                                     {c.totalMiles > 0 && (

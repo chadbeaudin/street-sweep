@@ -20,6 +20,8 @@ import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
+import { useUnits } from '@/components/UnitsContext';
+import { elevationFromFeet, elevationUnit } from '@/lib/units';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
@@ -148,6 +150,7 @@ export default function Home() {
     // "ridden" everywhere (map overlay, coverage stats, routing penalty).
     // Prompted once on first run, then persisted; changeable later from
     // Routing Preferences.
+    const { units, setUnits } = useUnits();
     const ACTIVITY_MODE_KEY = 'activity_mode';
     const [activityMode, setActivityMode] = useState<'cycling' | 'running'>('cycling');
     const [showActivityModePrompt, setShowActivityModePrompt] = useState(false);
@@ -1879,6 +1882,25 @@ export default function Home() {
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Units
+                                                </label>
+                                                <div className="flex rounded-md border border-gray-300 overflow-hidden text-sm">
+                                                    <button
+                                                        onClick={() => setUnits('imperial')}
+                                                        className={`flex-1 px-3 py-1.5 transition-colors ${units === 'imperial' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                    >
+                                                        Imperial (mi, ft)
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setUnits('metric')}
+                                                        className={`flex-1 px-3 py-1.5 transition-colors border-l border-gray-300 ${units === 'metric' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-50'}`}
+                                                    >
+                                                        Metric (km, m)
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
                                                     Point Route Detour Preference: {routingOptions.pointRoutePenalty}x
                                                 </label>
                                                 <input
@@ -1893,7 +1915,7 @@ export default function Home() {
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
-                                                    Bounding Box Elasticity: {routingOptions.boxElasticity} ft
+                                                    Bounding Box Elasticity: {Math.round(elevationFromFeet(routingOptions.boxElasticity, units))} {elevationUnit(units)}
                                                 </label>
                                                 <input
                                                     type="range"
