@@ -111,6 +111,18 @@ describe('creditMatchingActivities', () => {
         expect(prisma.exportedRoute.update).toHaveBeenCalledWith({ where: { id: 'r1' }, data: { creditedActivityId: '1' } });
     });
 
+    it('credits a ride that cut the route short but still covered most of it', async () => {
+        const firstSixtyPercent: LatLon[] = [[44.05, -121.30], [44.05, -121.2916]];
+        setup({ activities: [activity(1, '2026-10-11T15:00:00Z', firstSixtyPercent)] });
+        expect(await creditMatchingActivities('user-1')).toBe(1);
+    });
+
+    it('ignores a ride that only shared a short piece of the route', async () => {
+        const firstThird: LatLon[] = [[44.05, -121.30], [44.05, -121.2953]];
+        setup({ activities: [activity(1, '2026-10-11T15:00:00Z', firstThird)] });
+        expect(await creditMatchingActivities('user-1')).toBe(0);
+    });
+
     it('prefers the stored full GPS track over the summary line', async () => {
         setup({ activities: [activity(1, '2026-10-11T15:00:00Z', parallelRide)] });
         (prisma.stravaActivityStream.findUnique as jest.Mock).mockResolvedValue({ polyline: polyline.encode(rideOverStreet) });

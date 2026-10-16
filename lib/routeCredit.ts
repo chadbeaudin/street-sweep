@@ -8,7 +8,7 @@ export const CREDIT_TEXT = 'Route created by StreetSweep';
 export const STRAVA_WRITE_SCOPE = 'activity:write';
 
 const MATCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-const MIN_COVERAGE = 0.8;
+const MIN_COVERAGE = 0.5;
 const TOLERANCE_M = 40;
 const SAMPLE_SPACING_M = 20;
 const CELL_DEG = 0.0005;
