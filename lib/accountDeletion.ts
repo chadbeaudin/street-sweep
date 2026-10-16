@@ -52,6 +52,7 @@ export async function deleteAccount(userId: string): Promise<void> {
             prisma.stravaActivityDetail.deleteMany({ where: { athleteId } }),
             prisma.stravaActivityStream.deleteMany({ where: { athleteId } }),
             prisma.ftpReadingCache.deleteMany({ where: { athleteId } }),
+            prisma.stravaSyncEvent.deleteMany({ where: { athleteId } }),
         ] : []),
         // Cascades to Account and Session.
         prisma.user.delete({ where: { id: userId } }),

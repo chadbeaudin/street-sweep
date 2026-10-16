@@ -101,11 +101,33 @@ model StatsCache {
 }
 
 model StravaActivityCache {
-  athleteId  String   @id
-  activities Json
-  syncedAt   DateTime @default(now())
+  athleteId    String    @id
+  activities   Json
+  syncedAt     DateTime  @default(now())
+  fullSyncedAt DateTime? // last full-history pull; catches edits/deletes a missed webhook never reported (#118)
 
   @@map("strava_activity_cache")
+}
+
+// Append-only queue of per-athlete work for the worker machine (#118): Strava
+// webhook events (create/update/delete/deauthorize), catch-up resyncs, and
+// stats recomputes. Rows are deleted once processed; append-only so the
+// webhook route never races the worker over a shared row.
+model StravaSyncEvent {
+  id             Int      @id @default(autoincrement())
+  athleteId      String
+  aspect         String   // create | update | delete | deauthorize | resync | recompute
+  activityId     String?
+  mode           String?  // recompute only: cycling | running; null recomputes every cached mode
+  credsEncrypted String?  // set when the caller's creds can't be looked up from a linked Account
+  attempts       Int      @default(0)
+  availableAt    DateTime @default(now())
+  claimedAt      DateTime? // set while a worker tick is processing it
+  createdAt      DateTime @default(now())
+
+  @@index([athleteId])
+  @@index([availableAt])
+  @@map("strava_sync_events")
 }
 
 // Full-resolution polyline per activity, backfilled gradually and cached

@@ -1,0 +1,299 @@
+import { fetchOSMData } from './overpass';
+import { reverseGeocode, searchCityPolygon } from './nominatim';
+import {
+    buildCoverageCells,
+    cellsToMiles,
+    pointInPolygon,
+    polylineCentroid,
+    computeRideRecords,
+    RideRecords
+} from './stats';
+import { fetchCyclingRiddenRoads } from './strava';
+import { prisma } from './prisma';
+import type { ActivityMode, Creds } from './riddenRoadsRefresh';
+
+const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
+
+const MAX_CITIES = 5;
+
+// Bump when the stats computation changes shape/semantics so cached rows
+// computed by an older version are recomputed in the background on next open.
+// v2: dashboard is biking-only (walks/hikes/runs excluded from every metric).
+// v3: bikingStats holds name lists (drill-down) instead of bare counts.
+// v4: place names reverse-geocoded in English (accept-language=en).
+// v5: virtual/indoor and stationary rides excluded from the ridden set.
+// v6: bikingStats levels carry parent chain for hierarchical drill-down.
+// v7: records added (total distance, exploration %, longest ride, climb, active days, per-year).
+export const STATS_VERSION = 8; // bumped: totalActivities/totalElevationFeet now include VirtualRide
+
+interface CityStats {
+    name: string;
+    state: string | null;
+    activityCount: number;
+    riddenMiles: number;
+    totalMiles: number;
+    percent: number;
+}
+
+export interface StatsPayload {
+    version?: number;
+    totalActivities: number;
+    totalUniqueMiles: number;
+    totalElevationFeet: number;
+    totalDistanceMiles?: number;
+    explorationPct?: number; // unique (deduped) miles / total distance ridden
+    longestRideMiles?: number;
+    biggestClimbFeet?: number;
+    activeDays?: number;
+    ridesPerYear?: RideRecords['ridesPerYear'];
+    cities: CityStats[];
+    bikingStats?: BikingGeographies;
+}
+
+interface BikingGeographies {
+    countries: string[];
+    states: { name: string; country: string }[];
+    counties: { name: string; state: string; country: string }[];
+    cities: { name: string; county: string | null; state: string; country: string }[];
+}
+
+// Cycling stays on the bare athleteId key so existing cached rows keep
+// matching (no DB migration needed); running gets a distinct suffixed key so
+// switching modes never mixes the two activity sets in the same cache row.
+export const statsCacheKey = (athleteId: string, mode: ActivityMode) => mode === 'running' ? `${athleteId}__running` : athleteId;
+
+function networkPolylinesFromOSM(data: { elements: any[] }): [number, number][][] {
+    const nodeMap = new Map<number, { lat: number; lon: number }>();
+    for (const el of data.elements) {
+        if (el.type === 'node') nodeMap.set(el.id, { lat: el.lat, lon: el.lon });
+    }
+    const polylines: [number, number][][] = [];
+    for (const el of data.elements) {
+        if (el.type !== 'way' || !el.nodes) continue;
+        const poly: [number, number][] = [];
+        if (el.geometry) {
+            for (const g of el.geometry) poly.push([g.lat, g.lon]);
+        } else {
+            for (const nid of el.nodes) {
+                const n = nodeMap.get(nid);
+                if (n) poly.push([n.lat, n.lon]);
+            }
+        }
+        if (poly.length >= 2) polylines.push(poly);
+    }
+    return polylines;
+}
+
+function filterCellsByPolygon(cells: Set<string>, polygon: [number, number][]): Set<string> {
+    const CELL_METERS = 15;
+    const DEG_PER_METER = 1 / 111320;
+    const CELL_DEG = CELL_METERS * DEG_PER_METER;
+    const out = new Set<string>();
+    for (const key of cells) {
+        const [cLat, cLon] = key.split(':').map(Number);
+        const lat = (cLat + 0.5) * CELL_DEG;
+        const lon = (cLon + 0.5) * CELL_DEG;
+        if (pointInPolygon(lat, lon, polygon)) out.add(key);
+    }
+    return out;
+}
+
+const METERS_TO_FEET = 3.28084;
+
+// riddenRoads/activityElevations/etc. are the real-world-trackable subset
+// (used for coverage miles and per-city geocoding, which need an actual GPS
+// track). totalCyclingActivities/totalCyclingElevationGainMeters are broader
+// — they also include VirtualRide (indoor trainer rides have no real-world
+// location, but their elevation/activity count are still real) — so the
+// "Activities" and "Climbed" dashboard totals aren't missing indoor rides.
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = [], totalCyclingActivities: number = riddenRoads.length, totalCyclingElevationGainMeters: number = activityElevations.reduce((sum, m) => sum + (m || 0), 0)): Promise<StatsPayload> {
+    console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
+    const records = computeRideRecords(activityDistances, activityElevations, activityStartDates);
+    const totalCells = buildCoverageCells(riddenRoads);
+    const totalUniqueMiles = cellsToMiles(totalCells.size);
+    const totalElevationFeet = totalCyclingElevationGainMeters * METERS_TO_FEET;
+
+    // Dedupe centroids to ~5km buckets BEFORE hitting Nominatim. With 800+
+    // activities concentrated in one metro area this collapses to <20 lookups
+    // instead of one per activity (which would take ~15 min at 1 req/sec).
+    const centroidByActivity = riddenRoads.map(polylineCentroid);
+    const uniqueBuckets = new Map<string, [number, number]>();
+    for (const c of centroidByActivity) {
+        if (!c) continue;
+        // Same 5km quantization that lib/nominatim uses for its cache key.
+        const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
+        if (!uniqueBuckets.has(bucketKey)) uniqueBuckets.set(bucketKey, c);
+    }
+    console.log(`${ts()} Stats: ${uniqueBuckets.size} unique ~5km buckets to reverse-geocode`);
+
+    const bucketResult = new Map<string, { city: string | null; county: string | null; state: string | null; country: string | null } | null>();
+    const bucketEntries = Array.from(uniqueBuckets.entries());
+    let rateLimitHits = 0;
+    let bailed = false;
+    for (let i = 0; i < bucketEntries.length; i++) {
+        const [bucketKey, c] = bucketEntries[i];
+        try {
+            const r = await reverseGeocode(c[0], c[1]);
+            bucketResult.set(bucketKey, { city: r.city, county: r.county, state: r.state, country: r.country });
+            rateLimitHits = 0;
+            if ((i + 1) % 25 === 0) {
+                console.log(`${ts()} Stats: reverse-geocode progress ${i + 1}/${bucketEntries.length}`);
+            }
+        } catch (e: any) {
+            const msg = e?.message || String(e);
+            console.warn(`${ts()} reverse-geocode bucket ${bucketKey} failed: ${msg}`);
+            bucketResult.set(bucketKey, null);
+            if (msg.includes('429') || msg.includes('abort')) {
+                rateLimitHits++;
+                if (rateLimitHits >= 5) {
+                    console.warn(`${ts()} Stats: bailing out of reverse-geocode after ${rateLimitHits} consecutive rate-limit/timeout errors`);
+                    bailed = true;
+                    break;
+                }
+            }
+        }
+    }
+    console.log(`${ts()} Stats: reverse-geocoding complete (${bucketResult.size}/${bucketEntries.length} buckets resolved)`);
+
+    // A rate-limit bail leaves geographies/cities incomplete. Throw instead of
+    // returning a degraded result, so refreshInBackground skips persisting and
+    // the previous good cache is preserved (a later refresh retries once the
+    // Nominatim rate-limit window clears).
+    if (bailed) {
+        throw new Error('reverse-geocoding bailed on sustained rate-limits; skipping persist to protect cached stats');
+    }
+
+    const cityByActivity: ({ city: string | null; county: string | null; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
+        if (!c) return null;
+        const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
+        return bucketResult.get(bucketKey) ?? null;
+    });
+
+    const byCity = new Map<string, { city: string; state: string | null; country: string | null; activityIdx: number[] }>();
+    for (let i = 0; i < cityByActivity.length; i++) {
+        const info = cityByActivity[i];
+        if (!info || !info.city) continue;
+        const key = `${info.city}|${info.state ?? ''}|${info.country ?? ''}`;
+        let entry = byCity.get(key);
+        if (!entry) { entry = { city: info.city, state: info.state, country: info.country, activityIdx: [] }; byCity.set(key, entry); }
+        entry.activityIdx.push(i);
+    }
+
+    const topCities = Array.from(byCity.values())
+        .sort((a, b) => b.activityIdx.length - a.activityIdx.length)
+        .slice(0, MAX_CITIES);
+
+    const cities: CityStats[] = [];
+    for (const entry of topCities) {
+        try {
+            const cityPoly = await searchCityPolygon(entry.city, entry.state, entry.country);
+            if (!cityPoly) {
+                cities.push({ name: entry.city, state: entry.state, activityCount: entry.activityIdx.length, riddenMiles: 0, totalMiles: 0, percent: 0 });
+                continue;
+            }
+
+            console.log(`${ts()} Stats: fetching road network for ${entry.city} (bbox ${JSON.stringify(cityPoly.bbox)})`);
+            const cityOSM = await fetchOSMData(cityPoly.bbox);
+            const networkPolys = networkPolylinesFromOSM(cityOSM);
+
+            const insidePolys = networkPolys.filter(p => {
+                const mid = p[Math.floor(p.length / 2)];
+                return pointInPolygon(mid[0], mid[1], cityPoly.polygon);
+            });
+            const totalNetCells = buildCoverageCells(insidePolys);
+            const totalMiles = cellsToMiles(totalNetCells.size);
+
+            const cityRiddenCells = filterCellsByPolygon(totalCells, cityPoly.polygon);
+            const riddenInCity = new Set<string>();
+            for (const k of cityRiddenCells) if (totalNetCells.has(k)) riddenInCity.add(k);
+            const riddenMiles = cellsToMiles(riddenInCity.size);
+
+            const percent = totalMiles > 0 ? (riddenMiles / totalMiles) * 100 : 0;
+            cities.push({ name: entry.city, state: entry.state, activityCount: entry.activityIdx.length, riddenMiles, totalMiles, percent });
+        } catch (e: any) {
+            console.warn(`${ts()} city stats failed for ${entry.city}:`, e?.message || e);
+            cities.push({ name: entry.city, state: entry.state, activityCount: entry.activityIdx.length, riddenMiles: 0, totalMiles: 0, percent: 0 });
+        }
+    }
+
+    // cityByActivity is already biking-only (non-biking activities were filtered
+    // out at the top). Dedup each level while keeping its parent chain so the UI
+    // can drill Country -> State -> County -> City.
+    const countrySet = new Set<string>();
+    const stateMap = new Map<string, { name: string; country: string }>();
+    const countyMap = new Map<string, { name: string; state: string; country: string }>();
+    const cityMap = new Map<string, { name: string; county: string | null; state: string; country: string }>();
+
+    for (const info of cityByActivity) {
+        if (!info) continue;
+        const country = info.country ?? '';
+        const state = info.state ?? '';
+        if (info.country) countrySet.add(info.country);
+        if (info.state) stateMap.set(`${state}|${country}`, { name: info.state, country });
+        if (info.county) countyMap.set(`${info.county}|${state}|${country}`, { name: info.county, state, country });
+        if (info.city) cityMap.set(`${info.city}|${state}|${country}`, { name: info.city, county: info.county ?? null, state, country });
+    }
+
+    const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name);
+    const bikingStats: BikingGeographies = {
+        countries: Array.from(countrySet).sort((a, b) => a.localeCompare(b)),
+        states: Array.from(stateMap.values()).sort(byName),
+        counties: Array.from(countyMap.values()).sort(byName),
+        cities: Array.from(cityMap.values()).sort(byName),
+    };
+
+    const explorationPct = records.totalDistanceMiles > 0
+        ? (totalUniqueMiles / records.totalDistanceMiles) * 100
+        : 0;
+
+    return {
+        version: STATS_VERSION,
+        totalActivities: totalCyclingActivities,
+        totalUniqueMiles,
+        totalElevationFeet,
+        totalDistanceMiles: records.totalDistanceMiles,
+        explorationPct,
+        longestRideMiles: records.longestRideMiles,
+        biggestClimbFeet: records.biggestClimbFeet,
+        activeDays: records.activeDays,
+        ridesPerYear: records.ridesPerYear,
+        cities,
+        bikingStats,
+    };
+}
+// The DB connection can intermittently reject on transient network blips.
+// Retry idempotent DB ops rather than surfacing the blip to the user (reads)
+// or throwing away minutes of compute (writes).
+export async function withDbRetry<T>(op: () => Promise<T>, label: string): Promise<T> {
+    const delays = [500, 2000, 5000];
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
+        try {
+            return await op();
+        } catch (e: any) {
+            if (attempt === delays.length) throw e;
+            console.warn(`${ts()} Stats: ${label} attempt ${attempt + 1} failed (${e?.message || e}); retrying`);
+            await new Promise(r => setTimeout(r, delays[attempt]));
+        }
+    }
+    throw new Error('unreachable');
+}
+
+async function persistStats(athleteId: string, stats: StatsPayload): Promise<void> {
+    await withDbRetry(() => prisma.statsCache.upsert({
+        where: { athleteId },
+        create: { athleteId, stats: stats as any, refreshedAt: new Date() },
+        update: { stats: stats as any, refreshedAt: new Date() }
+    }), 'persist');
+}
+
+
+// Runs only on the worker machine (lib/athleteSyncWorker.ts). Fetches the ride
+// set server-side so no client ever ships it in a request body.
+export async function recomputeStats(athleteId: string, creds: Creds | undefined, mode: ActivityMode): Promise<void> {
+    const key = statsCacheKey(athleteId, mode);
+    console.log(`${ts()} Stats: recompute starting for ${key}`);
+    const { riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds, mode);
+    const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters);
+    await persistStats(key, fresh);
+    console.log(`${ts()} Stats: recompute complete for ${key}`);
+}

@@ -5,6 +5,7 @@ import { prisma } from './prisma';
 import { riddenTileKey } from './roadTiles';
 import { riddenRoadsCacheKey } from './riddenRoadsRefresh';
 import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
+import { enqueueAthleteSync } from './athleteSyncQueue';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -278,23 +279,57 @@ async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSec
         return cachedActivities;
     }
 
-    // An expired cache only pulls rides newer than the newest cached one -- a
-    // full history download is dozens of seconds and pages of rate limit.
-    // Deleted/edited rides are picked up by forceSyncStravaActivities instead.
-    const accessToken = await getStravaAccessToken(creds);
-    const newestStart = Math.max(...cachedActivities.map(a => Date.parse(a.start_date) || 0));
-    const after = newestStart > 0 ? Math.floor(newestStart / 1000) : undefined;
+    const { activities, changed } = await syncActivities(athleteId, await getStravaAccessToken(creds), cached ? cachedActivities : null);
+    if (changed) await enqueueAthleteSync(athleteId, 'recompute', { creds });
+    return activities;
+}
+
+// Pulls activities into the Postgres cache. Without `full` only rides newer than
+// the newest cached one are fetched -- a full history download is dozens of
+// seconds and pages of rate limit -- so deleted/edited rides are only picked up
+// by a full pull (the manual Sync button, or the worker's weekly catch-up).
+export async function syncActivities(athleteId: string, accessToken: string, cachedActivities: StravaActivity[] | null, { full = false } = {}): Promise<{ activities: StravaActivity[]; changed: boolean }> {
+    const newestStart = Math.max(...(cachedActivities ?? []).map(a => Date.parse(a.start_date) || 0));
+    const after = !full && newestStart > 0 ? Math.floor(newestStart / 1000) : undefined;
     const fetched = await fetchAllStravaActivitiesWithToken(accessToken, after);
     const fetchedIds = new Set(fetched.map(a => a.id));
-    const activities = after === undefined ? fetched : [...fetched, ...cachedActivities.filter(a => !fetchedIds.has(a.id))];
+    const activities = after === undefined ? fetched : [...fetched, ...(cachedActivities ?? []).filter(a => !fetchedIds.has(a.id))];
+    const changed = after === undefined ? JSON.stringify(activities) !== JSON.stringify(cachedActivities) : fetched.length > 0;
     console.log(`[Strava] ${after === undefined ? 'Full' : 'Incremental'} activity sync for athlete ${athleteId}: ${fetched.length} fetched, ${activities.length} total`);
+    const now = new Date();
+    const fullSynced = after === undefined ? { fullSyncedAt: now } : {};
     await prisma.stravaActivityCache.upsert({
         where: { athleteId },
-        create: { athleteId, activities: activities as any, syncedAt: new Date() },
-        update: { activities: activities as any, syncedAt: new Date() },
+        create: { athleteId, activities: activities as any, syncedAt: now, ...fullSynced },
+        update: { activities: activities as any, syncedAt: now, ...fullSynced },
     }).catch(e => console.warn(`[Strava] Failed to persist activity cache for ${athleteId}: ${e.message}`));
+    return { activities, changed };
+}
 
-    return activities;
+// One activity, for a webhook event. null when it's gone or no longer visible
+// to this app (deleted, or made private without activity:read_all).
+export async function fetchStravaActivity(accessToken: string, activityId: string): Promise<{ activity: StravaActivity; fullPolyline?: string } | null> {
+    const res = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+    });
+    if (res.status === 404 || res.status === 403) return null;
+    if (!res.ok) throw new Error(`Strava activity ${activityId} fetch failed: ${res.status}`);
+    const d = await res.json() as StravaActivity & { map?: { summary_polyline?: string; polyline?: string } };
+    if (!d.map?.summary_polyline) return null; // no GPS track: excluded from the list like fetchAllStravaActivitiesWithToken does
+    return {
+        activity: {
+            id: d.id,
+            name: d.name,
+            map: { summary_polyline: d.map.summary_polyline },
+            start_date: d.start_date,
+            distance: d.distance,
+            total_elevation_gain: d.total_elevation_gain,
+            type: d.type,
+            sport_type: d.sport_type,
+            comment_count: d.comment_count,
+        },
+        fullPolyline: d.map.polyline || undefined,
+    };
 }
 
 // Cap per call so a rider with a large backlog of un-backfilled rides doesn't
@@ -395,12 +430,9 @@ export async function forceSyncStravaActivities(creds?: { clientId?: string; cli
     const accessToken = await getStravaAccessToken(creds);
     const athleteId = await getStravaAthleteId(accessToken);
     if (creds?.refreshToken) ATHLETE_ID_CACHE.set(creds.refreshToken, athleteId);
-    const activities = await fetchAllStravaActivitiesWithToken(accessToken);
-    await prisma.stravaActivityCache.upsert({
-        where: { athleteId },
-        create: { athleteId, activities: activities as any, syncedAt: new Date() },
-        update: { activities: activities as any, syncedAt: new Date() },
-    });
+    const cached = await prisma.stravaActivityCache.findUnique({ where: { athleteId } }).catch(() => null);
+    const { changed } = await syncActivities(athleteId, accessToken, cached ? cached.activities as unknown as StravaActivity[] : null, { full: true });
+    if (changed) await enqueueAthleteSync(athleteId, 'recompute', { creds });
 }
 
 // Scans the athlete's own comments on their activities for FTP mentions (#76).
