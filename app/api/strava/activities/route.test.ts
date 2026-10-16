@@ -11,8 +11,13 @@ jest.mock('@/lib/strava', () => ({
     forceSyncStravaActivities: jest.fn(),
 }));
 jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
+jest.mock('next-auth', () => ({ getServerSession: jest.fn() }));
+jest.mock('@/lib/auth', () => ({ authOptions: {} }));
+jest.mock('@/lib/routeCredit', () => ({ creditMatchingActivities: jest.fn() }));
 
 import { POST } from './route';
+import { getServerSession } from 'next-auth';
+import { creditMatchingActivities } from '@/lib/routeCredit';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 
@@ -20,9 +25,20 @@ const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchC
 const mockedForceSync = forceSyncStravaActivities as jest.MockedFunction<typeof forceSyncStravaActivities>;
 const mockedGetSessionCreds = getSessionStravaCredentials as jest.MockedFunction<typeof getSessionStravaCredentials>;
 
+const mockedSession = getServerSession as jest.Mock;
+const mockedCredit = creditMatchingActivities as jest.Mock;
+
 beforeEach(() => {
     mockedGetSessionCreds.mockResolvedValue(null);
+    mockedSession.mockResolvedValue(null);
+    mockedCredit.mockResolvedValue(0);
 });
+
+const emptyRides = {
+    riddenRoads: [], activityElevations: [], activityTypes: [],
+    activityDistances: [], activityStartDates: [],
+    totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
+};
 
 function makeRequest(body: any): Request {
     return new Request('http://localhost/api/strava/activities', {
@@ -131,5 +147,27 @@ describe('POST /api/strava/activities', () => {
         });
         await POST(makeRequest({}));
         expect(mockedGetSessionCreds).toHaveBeenCalled();
+    });
+
+    it('credits matching rides for a signed-in user after syncing', async () => {
+        mockedFetch.mockResolvedValueOnce(emptyRides);
+        mockedSession.mockResolvedValueOnce({ user: { id: 'user-1' } });
+        await POST(makeRequest({}));
+        expect(mockedCredit).toHaveBeenCalledWith('user-1');
+        expect(mockedFetch.mock.invocationCallOrder[0]).toBeLessThan(mockedCredit.mock.invocationCallOrder[0]);
+    });
+
+    it('does not try to credit rides without a signed-in user', async () => {
+        mockedFetch.mockResolvedValueOnce(emptyRides);
+        await POST(makeRequest({}));
+        expect(mockedCredit).not.toHaveBeenCalled();
+    });
+
+    it('still returns rides when crediting fails', async () => {
+        mockedFetch.mockResolvedValueOnce(emptyRides);
+        mockedSession.mockResolvedValueOnce({ user: { id: 'user-1' } });
+        mockedCredit.mockRejectedValueOnce(new Error('Strava down'));
+        await POST(makeRequest({}));
+        expect(mockJson.mock.calls[0][1]).toBeUndefined();
     });
 });

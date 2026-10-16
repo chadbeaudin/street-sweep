@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useSession, signIn, signOut, getProviders, type ClientSafeProvider } from 'next-auth/react';
 import { LogIn, LogOut } from 'lucide-react';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
+import { StravaCreditToggle } from './StravaCreditToggle';
 
 // Purely presentational auth control (#87 foundation) -- signing in/out works
 // end-to-end, but no app state (Strava settings, avoided roads, routing
@@ -42,7 +43,8 @@ export function AccountButton() {
                 {showMenu && (
                     <>
                         <div className="fixed inset-0 z-[1001]" onClick={() => setShowMenu(false)} />
-                        <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
+                        <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
+                            <StravaCreditToggle />
                             <button
                                 onClick={() => { setShowMenu(false); signOut(); }}
                                 className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"

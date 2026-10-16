@@ -19,6 +19,7 @@ import { ExportTipsDialog } from '@/components/ExportTipsDialog';
 import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
+import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
@@ -796,8 +797,18 @@ export default function Home() {
         return () => clearTimeout(timer);
     }, [manualRoute, selectionBoxes, selectionPolygons, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
 
+    const recordExport = () => {
+        if (!route) return;
+        fetch('/api/exported-routes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ route }),
+        }).catch(() => { /* best effort: only used to credit a later Strava ride */ });
+    };
+
     const downloadGPX = async () => {
         if (!route) return;
+        recordExport();
         const gpx = buildGpxCourse(route, routeName);
         await shareOrDownloadGpx(gpx, 'route.gpx');
     };
@@ -814,6 +825,7 @@ export default function Home() {
                 body: JSON.stringify({ route, name: routeName }),
             });
             if (!res.ok) throw new Error('FIT export failed');
+            recordExport();
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -846,6 +858,7 @@ export default function Home() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Garmin upload failed');
+            recordExport();
             setShowGarminSettings(false);
             alert('Route uploaded successfully! It will now appear in your Garmin Courses.');
         } catch (err: any) {
@@ -907,6 +920,7 @@ export default function Home() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'RideWithGPS update failed');
+            recordExport();
             setRwgpsSourceRouteId(data.routeId);
             setRwgpsUploadResult({ routeUrl: data.routeUrl });
         } catch (err: any) {
@@ -952,6 +966,7 @@ export default function Home() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'RideWithGPS upload failed');
+            recordExport();
             setRwgpsUploadResult({ routeUrl: data.routeUrl });
         } catch (err: any) {
             console.error('RideWithGPS upload error:', err);
@@ -2031,6 +2046,7 @@ export default function Home() {
                                 <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
                                     {session?.user ? (
                                         <>
+                                            <StravaCreditToggle className="border-b border-gray-100" />
                                             <button
                                                 onClick={() => { signOut(); setShowMobileMenu(false); }}
                                                 className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"

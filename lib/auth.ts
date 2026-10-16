@@ -16,14 +16,13 @@ if (process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET) {
     providers.push(StravaProviderBase({
         clientId: process.env.STRAVA_CLIENT_ID,
         clientSecret: process.env.STRAVA_CLIENT_SECRET,
-        // Matches the scope already requested by the existing manual "Connect
-        // to Strava" flow (app/api/strava/auth/route.ts) -- activity:read, not
-        // just the base provider's default `read` (profile-only). This lets a
-        // Strava sign-in double as activity access: the resulting Account's
-        // refresh_token is directly usable by the existing activity-sync code
-        // (lib/strava.ts) without a separate connect step. See
-        // app/api/auth/strava-credentials/route.ts for the bridge.
-        authorization: { params: { scope: 'read,activity:read' } },
+        // activity:read lets a Strava sign-in double as activity access: the
+        // resulting Account's refresh_token is directly usable by the existing
+        // activity-sync code (lib/strava.ts) without a separate connect step.
+        // See app/api/auth/strava-credentials/route.ts for the bridge.
+        // activity:write lets a ride that followed an exported route be
+        // credited in its description (lib/routeCredit.ts, #91).
+        authorization: { params: { scope: 'read,activity:read,activity:write' } },
         // Strava's token-exchange response is non-standard: it embeds the full
         // athlete profile inline as an extra `athlete` field alongside the real
         // OAuth tokens. NextAuth passes the whole token response through to the
@@ -45,7 +44,9 @@ if (process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET) {
                 });
                 if (!res.ok) throw new Error(`Strava token exchange failed: ${res.status}`);
                 const { athlete: _athlete, ...tokens } = await res.json();
-                return { tokens };
+                // Strava reports the scopes the user actually granted (they can
+                // untick activity:write) on the callback URL, not in this response.
+                return { tokens: { ...tokens, scope: tokens.scope ?? params.scope } };
             },
         },
         // Strava's athlete endpoint returns numeric ids and no email; the base
@@ -102,6 +103,23 @@ export const authOptions: NextAuthOptions = {
     adapter,
     providers,
     session: { strategy: 'database' },
+    events: {
+        // The adapter only stores tokens when an account is first linked, so a
+        // returning user who re-consents (e.g. to grant activity:write) would
+        // keep their old token and scope without this.
+        async signIn({ account }) {
+            if (account?.provider !== 'strava' || !account.refresh_token) return;
+            await prisma.account.updateMany({
+                where: { provider: 'strava', providerAccountId: account.providerAccountId },
+                data: {
+                    refresh_token: encryptToken(account.refresh_token),
+                    access_token: account.access_token ? encryptToken(account.access_token) : null,
+                    expires_at: account.expires_at ?? null,
+                    ...(account.scope ? { scope: account.scope } : {}),
+                },
+            });
+        },
+    },
     callbacks: {
         // Default database-session callback only exposes name/email/image;
         // surface id + athleteId too so the client/API routes can key off them.

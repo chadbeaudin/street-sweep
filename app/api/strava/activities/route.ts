@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { creditMatchingActivities } from '@/lib/routeCredit';
 
 export async function POST(req: Request) {
     try {
@@ -33,6 +36,12 @@ export async function POST(req: Request) {
             // a forced resync (it resets its "already fetched" tracking then).
         }
         const { riddenRoads, activityElevations, activityTypes } = await fetchCyclingRiddenRoads(stravaCredentials, mode);
+
+        // Runs after the sync above so newly synced rides and their tracks are in the cache.
+        const userId = (await getServerSession(authOptions).catch(() => null) as { user?: { id?: string } } | null)?.user?.id;
+        if (userId) {
+            creditMatchingActivities(userId).catch(e => console.warn(`[RouteCredit] Skipped for ${userId}: ${e.message}`));
+        }
 
         return NextResponse.json({ riddenRoads, activityElevations, activityTypes });
     } catch (error: any) {

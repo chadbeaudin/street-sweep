@@ -156,10 +156,26 @@ model User {
   emailVerified DateTime?
   image         String?
   athleteId     String?   @unique
+  creditRoutesOnStrava Boolean @default(true)
   accounts      Account[]
   sessions      Session[]
+  exportedRoutes ExportedRoute[]
 
   @@map("users")
+}
+
+// A route the user downloaded or sent to a device, kept so a later Strava
+// ride that follows it can be credited in its description (#91).
+model ExportedRoute {
+  id                 String   @id @default(cuid())
+  userId             String
+  polyline           String // encoded [lat, lon]
+  creditedActivityId String?
+  createdAt          DateTime @default(now())
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("exported_routes")
 }
 
 model Account {
