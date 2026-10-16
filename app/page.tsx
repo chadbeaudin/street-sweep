@@ -18,6 +18,7 @@ import { HowToDialog } from '@/components/HowToDialog';
 import { ExportTipsDialog } from '@/components/ExportTipsDialog';
 import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
+import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
@@ -191,6 +192,7 @@ export default function Home() {
     const [isLoadingRwgpsRoute, setIsLoadingRwgpsRoute] = useState(false);
     const [rwgpsSourceRouteId, setRwgpsSourceRouteId] = useState<number | null>(null);
     const [showRwgpsSaveConfirm, setShowRwgpsSaveConfirm] = useState(false);
+    const [showDeleteAccount, setShowDeleteAccount] = useState(false);
     const RWGPS_HIDE_RECREATE_WARNING_KEY = 'rwgps_hide_recreate_warning';
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
@@ -2028,12 +2030,20 @@ export default function Home() {
                                 ></div>
                                 <div className="absolute right-0 mt-2 w-60 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
                                     {session?.user ? (
-                                        <button
-                                            onClick={() => { signOut(); setShowMobileMenu(false); }}
-                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
-                                        >
-                                            {`Sign out (${session.user.name ?? 'account'})`}
-                                        </button>
+                                        <>
+                                            <button
+                                                onClick={() => { signOut(); setShowMobileMenu(false); }}
+                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
+                                            >
+                                                {`Sign out (${session.user.name ?? 'account'})`}
+                                            </button>
+                                            <button
+                                                onClick={() => { setShowDeleteAccount(true); setShowMobileMenu(false); }}
+                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-red-600 hover:bg-red-50 flex items-center border-b border-gray-100"
+                                            >
+                                                Delete account
+                                            </button>
+                                        </>
                                     ) : authProviders && Object.values(authProviders).length > 1 ? (
                                         Object.values(authProviders).map(p => (
                                             <button
@@ -2526,6 +2536,8 @@ export default function Home() {
                         onSelectRoute={handleSelectRwgpsRoute}
                     />
                 )}
+
+                <DeleteAccountDialog isOpen={showDeleteAccount} onClose={() => setShowDeleteAccount(false)} />
 
                 <RwgpsSaveConfirmDialog
                     isOpen={showRwgpsSaveConfirm}
