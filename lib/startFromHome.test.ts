@@ -1,4 +1,4 @@
-import { homeToPrepend } from './startFromHome';
+import { homeToPrepend, isCoordinateLabel } from './startFromHome';
 
 const home = { lat: 44.05, lon: -121.31, label: 'Home' };
 
@@ -21,5 +21,16 @@ describe('homeToPrepend', () => {
 
     it('leaves points added after an area alone', () => {
         expect(homeToPrepend(true, home, 0, true)).toBeNull();
+    });
+});
+
+describe('isCoordinateLabel', () => {
+    it('recognizes the coordinates saved for a map-picked point', () => {
+        expect(isCoordinateLabel('44.29280, -121.25087')).toBe(true);
+    });
+
+    it('does not treat an address as coordinates', () => {
+        expect(isCoordinateLabel('1234 NW Lemhi Pass Dr, Bend, Oregon')).toBe(false);
+        expect(isCoordinateLabel('1234, Main Street')).toBe(false);
     });
 });

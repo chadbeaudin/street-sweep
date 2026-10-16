@@ -204,6 +204,19 @@ export async function searchAddresses(query: string, limit = 5): Promise<Geocode
         .filter((r: GeocodeResult) => isFinite(r.lat) && isFinite(r.lon));
 }
 
+// Street address for a point (the start point picked on the map, #30).
+export async function reverseAddress(lat: number, lon: number): Promise<string | null> {
+    await rateLimit();
+    const url = `${NOMINATIM_BASE}/reverse?lat=${lat}&lon=${lon}&format=json&zoom=18&accept-language=en`;
+    const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+    if (!res.ok) {
+        if (res.status === 429) throw new Error('Nominatim 429 (rate-limited)');
+        return null;
+    }
+    const data = await res.json();
+    return typeof data?.display_name === 'string' ? data.display_name : null;
+}
+
 // Single best match (convenience wrapper).
 export async function geocodeAddress(query: string): Promise<GeocodeResult | null> {
     const [first] = await searchAddresses(query, 1);

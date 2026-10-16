@@ -7,3 +7,9 @@ export function homeToPrepend(enabled: boolean, home: LatLon | null, pointCount:
     if (!enabled || !home || pointCount > 0 || hasArea) return null;
     return { lat: home.lat, lon: home.lon };
 }
+
+// A start point picked on the map is saved under its coordinates until its
+// street address has been looked up.
+export function isCoordinateLabel(label: string): boolean {
+    return /^-?\d+(\.\d+)?, -?\d+(\.\d+)?$/.test(label.trim());
+}

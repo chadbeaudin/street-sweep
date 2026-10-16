@@ -22,7 +22,7 @@ import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { useUnits } from '@/components/UnitsContext';
 import { elevationFromFeet, elevationUnit } from '@/lib/units';
-import { homeToPrepend } from '@/lib/startFromHome';
+import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
@@ -281,6 +281,25 @@ export default function Home() {
     }, []);
     useEffect(() => {
         startPointRef.current = startPoint ? { lat: startPoint.lat, lon: startPoint.lon } : null;
+    }, [startPoint]);
+
+    useEffect(() => {
+        if (!startPoint || !isCoordinateLabel(startPoint.label)) return;
+        let cancelled = false;
+        fetch('/api/geocode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat: startPoint.lat, lon: startPoint.lon }),
+        })
+            .then(r => r.json())
+            .then(({ label }: { label?: string | null }) => {
+                if (cancelled || !label) return;
+                const named = { ...startPoint, label };
+                setStartPoint(named);
+                try { localStorage.setItem('streetsweep_start', JSON.stringify(named)); } catch { /* ignore */ }
+            })
+            .catch(() => { /* keep the coordinates as the label */ });
+        return () => { cancelled = true; };
     }, [startPoint]);
 
     const chooseStart = useCallback((p: { lat: number; lon: number; label: string }) => {

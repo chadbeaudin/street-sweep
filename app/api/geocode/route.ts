@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
-import { searchAddresses } from '@/lib/nominatim';
+import { reverseAddress, searchAddresses } from '@/lib/nominatim';
 
 export async function POST(req: Request) {
     try {
-        const { address, limit } = await req.json() as { address?: string; limit?: number };
+        const { address, limit, lat, lon } = await req.json() as { address?: string; limit?: number; lat?: number; lon?: number };
+        if (typeof lat === 'number' && typeof lon === 'number') {
+            return NextResponse.json({ label: await reverseAddress(lat, lon) });
+        }
         if (!address || typeof address !== 'string' || !address.trim()) {
             return NextResponse.json({ error: 'address is required' }, { status: 400 });
         }
