@@ -1,8 +1,9 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
     const clientId = process.env.STRAVA_CLIENT_ID;
     
     if (!clientId) {
@@ -30,3 +31,5 @@ export async function GET(req: Request) {
     });
     return response;
 }
+
+export const GET = withApiMetrics('GET', '/api/strava/auth', handleGET);

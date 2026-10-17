@@ -179,6 +179,8 @@ model User {
   image         String?
   athleteId     String?   @unique
   creditRoutesOnStrava Boolean @default(true)
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime? // throttled touch from the session callback, for active-user counts (#117)
   accounts      Account[]
   sessions      Session[]
   exportedRoutes ExportedRoute[]
@@ -237,4 +239,19 @@ model VerificationToken {
 
   @@unique([identifier, token])
   @@map("verification_tokens")
+}
+
+// Hourly aggregate counters for the admin dashboard (#117): request counts,
+// error counts and latency histograms per API route, usage and dependency
+// events. Incremented in memory and flushed once a minute (lib/metrics.ts);
+// never per-user, never location data.
+model MetricCounter {
+  bucket DateTime // start of the hour
+  name   String
+  count  Int      @default(0)
+  sum    Float    @default(0) // e.g. total milliseconds, for averages
+
+  @@id([bucket, name])
+  @@index([name])
+  @@map("metric_counters")
 }

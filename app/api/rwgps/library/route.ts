@@ -1,7 +1,8 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { listRoutes, listCollections, buildLibraryTree } from '@/lib/rwgps';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const { accessToken } = await req.json();
         if (!accessToken) {
@@ -19,3 +20,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/rwgps/library', handlePOST);

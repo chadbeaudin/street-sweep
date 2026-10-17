@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -10,7 +11,7 @@ async function sessionUserId(): Promise<string | undefined> {
     return (session?.user as { id?: string } | undefined)?.id;
 }
 
-export async function GET() {
+async function handleGET() {
     const userId = await sessionUserId();
     if (!userId) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -23,7 +24,7 @@ export async function GET() {
     });
 }
 
-export async function PATCH(req: Request) {
+async function handlePATCH(req: Request) {
     const userId = await sessionUserId();
     if (!userId) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -34,7 +35,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ creditRoutesOnStrava });
 }
 
-export async function DELETE() {
+async function handleDELETE() {
     const userId = await sessionUserId();
     if (!userId) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -46,3 +47,7 @@ export async function DELETE() {
         return NextResponse.json({ error: 'Account deletion failed. Please try again.' }, { status: 500 });
     }
 }
+
+export const GET = withApiMetrics('GET', '/api/account', handleGET);
+export const PATCH = withApiMetrics('PATCH', '/api/account', handlePATCH);
+export const DELETE = withApiMetrics('DELETE', '/api/account', handleDELETE);

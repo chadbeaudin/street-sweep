@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
 import { NextResponse } from 'next/server';
 
@@ -7,7 +8,9 @@ import { NextResponse } from 'next/server';
 // resolve it themselves server-side via getSessionStravaCredentials when the
 // client doesn't supply one -- see the security review that replaced the
 // previous version of this endpoint, which returned the decrypted token.
-export async function GET() {
+async function handleGET() {
     const creds = await getSessionStravaCredentials();
     return NextResponse.json({ connected: !!creds }, { headers: { 'Cache-Control': 'no-store' } });
 }
+
+export const GET = withApiMetrics('GET', '/api/auth/strava-credentials', handleGET);

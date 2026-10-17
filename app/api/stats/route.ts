@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
@@ -19,7 +20,7 @@ interface StatsResponse extends Partial<StatsPayload> {
 }
 
 // A fast read of the worker-computed row: never computes in this process.
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     try {
         const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string };
         let { stravaCredentials } = body;
@@ -52,3 +53,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/stats', handlePOST);

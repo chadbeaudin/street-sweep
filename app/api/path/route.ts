@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
@@ -6,7 +7,7 @@ import { LatLon, BBox, parseBody } from '@/lib/validation';
 
 const Body = z.object({ start: LatLon, end: LatLon, bbox: BBox });
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     try {
         const parsed = await parseBody(request, Body);
         if ('error' in parsed) return parsed.error;
@@ -42,3 +43,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/path', handlePOST);

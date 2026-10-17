@@ -1,6 +1,7 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const body = await req.json();
         const { code, clientId: bodyClientId, clientSecret: bodyClientSecret } = body;
@@ -47,3 +48,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/strava/exchange', handlePOST);

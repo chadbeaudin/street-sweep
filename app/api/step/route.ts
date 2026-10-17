@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
@@ -16,7 +17,7 @@ const Body = z.object({
     routingOptions: RoutingOptions,
 });
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
     try {
         const parsed = await parseBody(req, Body);
         if ('error' in parsed) return parsed.error;
@@ -162,3 +163,5 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/step', handlePOST);

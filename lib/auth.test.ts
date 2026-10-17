@@ -1,12 +1,14 @@
 jest.mock('./prisma', () => ({ prisma: { account: { updateMany: jest.fn() } } }));
 jest.mock('@auth/prisma-adapter', () => ({ PrismaAdapter: () => ({}) }));
 jest.mock('./tokenCrypto', () => ({ encryptToken: (t: string) => `enc:${t}` }));
+jest.mock('./metrics', () => ({ touchUserLastSeen: jest.fn() }));
 
 process.env.STRAVA_CLIENT_ID = 'client';
 process.env.STRAVA_CLIENT_SECRET = 'secret';
 
 import { authOptions } from './auth';
 import { prisma } from './prisma';
+import { touchUserLastSeen } from './metrics';
 
 type StravaProviderOptions = {
     authorization: { params: { scope: string } };
@@ -48,5 +50,13 @@ describe('Strava sign-in', () => {
             account: { provider: 'google', providerAccountId: 'g', type: 'oauth', refresh_token: 'r' },
         });
         expect(prisma.account.updateMany).not.toHaveBeenCalled();
+    });
+});
+
+describe('session callback (#117)', () => {
+    it('exposes id and athleteId and records the user as seen', async () => {
+        const session = await authOptions.callbacks!.session!({ session: { user: { name: 'x' } }, user: { id: 'u1', athleteId: '42' } } as never);
+        expect(session.user).toMatchObject({ id: 'u1', athleteId: '42' });
+        expect(touchUserLastSeen).toHaveBeenCalledWith('u1');
     });
 });

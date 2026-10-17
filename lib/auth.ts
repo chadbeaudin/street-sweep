@@ -4,6 +4,7 @@ import StravaProviderBase from 'next-auth/providers/strava';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
 import { encryptToken } from './tokenCrypto';
+import { touchUserLastSeen } from './metrics';
 
 const providers: NextAuthOptions['providers'] = [];
 
@@ -127,6 +128,7 @@ export const authOptions: NextAuthOptions = {
             if (session.user) {
                 (session.user as any).id = user.id;
                 (session.user as any).athleteId = (user as any).athleteId ?? null;
+                touchUserLastSeen(user.id);
             }
             return session;
         },

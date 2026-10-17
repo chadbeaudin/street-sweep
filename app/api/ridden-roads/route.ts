@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { resolveAthleteId } from '@/lib/strava';
 import {
@@ -16,7 +17,7 @@ const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     try {
         let { stravaCredentials, activityMode, bbox } = await request.json() as { stravaCredentials?: Creds; activityMode?: string; bbox?: BBox };
         if (!stravaCredentials?.refreshToken) {
@@ -54,3 +55,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: e.message || 'Internal Server Error' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/ridden-roads', handlePOST);

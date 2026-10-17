@@ -1,8 +1,9 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { OSMWay, OSMNode } from '@/lib/types';
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
     try {
         let bbox: any;
         try {
@@ -79,3 +80,5 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/roads', handlePOST);

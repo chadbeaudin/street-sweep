@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { GarminConnect } from 'garmin-connect';
 import { haversineM } from '@/lib/geometry';
@@ -11,7 +12,7 @@ const Body = z.object({
     password: z.string().min(1).max(500),
 });
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const parsed = await parseBody(req, Body);
         if ('error' in parsed) return parsed.error;
@@ -84,3 +85,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: errorMessage }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/export/garmin', handlePOST);
