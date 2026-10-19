@@ -37,6 +37,7 @@ describe('/admin (#117)', () => {
         (getAdminStats as jest.Mock).mockResolvedValue(stats);
         const html = renderToStaticMarkup(await AdminPage());
         expect(html).toContain('Total users');
+        expect(html).toMatch(/<a href="\/"[^>]*>.*Back to StreetSweep/);
         expect(html).toContain('+1 today · +2 this week · +3 in 30d');
         expect(html).toContain('oldest 2m');
         expect(html).toContain('POST /api/generate');
