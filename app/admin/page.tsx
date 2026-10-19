@@ -65,9 +65,8 @@ export default async function AdminPage() {
     return (
         <main className="min-h-screen bg-gray-50 text-gray-800">
             <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-                <div className="flex items-baseline justify-between gap-4 flex-wrap">
-                    <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
-                    <div className="flex items-baseline gap-4">
+                <div className="space-y-2">
+                    <div className="flex items-baseline justify-between gap-4 flex-wrap">
                         <a href="/" className="text-sm text-indigo-600 hover:underline">
                             ← Back to StreetSweep
                         </a>
@@ -75,6 +74,7 @@ export default async function AdminPage() {
                             Fly machine metrics →
                         </a>
                     </div>
+                    <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
                 </div>
 
                 <section className="space-y-3">
