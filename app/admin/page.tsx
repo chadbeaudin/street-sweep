@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import { ArrowLeft } from 'lucide-react';
 import { notFound } from 'next/navigation';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -66,15 +65,16 @@ export default async function AdminPage() {
     return (
         <main className="min-h-screen bg-gray-50 text-gray-800">
             <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-                <a href="/" className="inline-flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900">
-                    <ArrowLeft className="w-4 h-4" />
-                    Back to StreetSweep
-                </a>
                 <div className="flex items-baseline justify-between gap-4 flex-wrap">
                     <h1 className="text-2xl font-bold text-gray-900">Admin</h1>
-                    <a href={FLY_MONITORING_URL} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 hover:underline">
-                        Fly machine metrics →
-                    </a>
+                    <div className="flex items-baseline gap-4">
+                        <a href="/" className="text-sm text-indigo-600 hover:underline">
+                            ← Back to StreetSweep
+                        </a>
+                        <a href={FLY_MONITORING_URL} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 hover:underline">
+                            Fly machine metrics →
+                        </a>
+                    </div>
                 </div>
 
                 <section className="space-y-3">
