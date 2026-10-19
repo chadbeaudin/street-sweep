@@ -13,7 +13,7 @@ jest.mock('next-auth/react', () => ({
     signOut: jest.fn(),
 }));
 jest.mock('./DeleteAccountDialog', () => ({ DeleteAccountDialog: () => null }));
-jest.mock('./StravaCreditToggle', () => ({ StravaCreditToggle: () => null }));
+jest.mock('./StravaCreditToggle', () => ({ StravaCreditToggle: () => <div>Credit toggle</div> }));
 
 import { AccountButton } from './AccountButton';
 
@@ -45,5 +45,13 @@ describe('AccountButton (#126)', () => {
         fireEvent.click(screen.getByText('Rider'));
         expect(screen.getByText('Sign out')).toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Admin' })).not.toBeInTheDocument();
+    });
+
+    it('puts the Strava credit toggle right above Sign out', () => {
+        mockUseSession.mockReturnValue({ data: { user: { name: 'Rider', isAdmin: true } }, status: 'authenticated' });
+        render(<AccountButton />);
+        fireEvent.click(screen.getByText('Rider'));
+        const items = Array.from(screen.getByText('Sign out').parentElement!.children).map(el => el.textContent);
+        expect(items).toEqual(['Admin', 'Credit toggle', 'Sign out', 'Delete account']);
     });
 });
