@@ -206,19 +206,26 @@ export async function tickAthleteSyncWorker(now = Date.now()): Promise<{ process
     const { athleteId } = ready;
     const events = await prisma.stravaSyncEvent.findMany({ where: { athleteId, ...claimable }, orderBy: { id: 'asc' } });
     const ids = events.map(e => e.id);
-    const claimed = await prisma.stravaSyncEvent.updateMany({ where: { id: { in: ids }, ...claimable }, data: { claimedAt: new Date(now) } });
+    // Counted when claimed, not on failure: a run that gets OOM-killed never reaches
+    // the catch below, and would otherwise be retried forever (#123).
+    const attempts = Math.max(...events.map(ev => ev.attempts)) + 1;
+    if (attempts > MAX_ATTEMPTS) {
+        console.warn(`${ts()} AthleteSync: giving up on athlete ${athleteId}: ${MAX_ATTEMPTS} attempts never finished`);
+        await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });
+        return { processed: true, athleteId };
+    }
+    const claimed = await prisma.stravaSyncEvent.updateMany({ where: { id: { in: ids }, ...claimable }, data: { claimedAt: new Date(now), attempts } });
     if (claimed.count !== ids.length) return { processed: false }; // another tick got there first
     try {
         await processAthlete(athleteId, events);
         await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });
     } catch (e: any) {
-        const attempts = Math.max(...events.map(ev => ev.attempts)) + 1;
         if (attempts >= MAX_ATTEMPTS) {
             console.warn(`${ts()} AthleteSync: giving up on athlete ${athleteId} after ${attempts} attempts: ${e.message}`);
             await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });
         } else {
             console.warn(`${ts()} AthleteSync: athlete ${athleteId} failed (attempt ${attempts}), retrying later: ${e.message}`);
-            await prisma.stravaSyncEvent.updateMany({ where: { id: { in: ids } }, data: { attempts, claimedAt: null, availableAt: new Date(now + RETRY_BACKOFF_MS * attempts) } });
+            await prisma.stravaSyncEvent.updateMany({ where: { id: { in: ids } }, data: { claimedAt: null, availableAt: new Date(now + RETRY_BACKOFF_MS * attempts) } });
         }
     }
     return { processed: true, athleteId };

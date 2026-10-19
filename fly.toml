@@ -33,8 +33,9 @@ primary_region = 'sjc'
   cpus = 1
   processes = ['app']
 
+# 2GB since it runs the stats recompute (#123): a large city's road network OOM-killed it at 1GB.
 [[vm]]
-  memory = '1024mb'
+  memory = '2048mb'
   cpu_kind = 'shared'
   cpus = 1
   processes = ['worker']
