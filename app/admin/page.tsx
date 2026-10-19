@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getAdminStats, isAdminAthlete, RouteHealth } from '@/lib/adminStats';
+import { getAdminStats, isAdminUser, RouteHealth } from '@/lib/adminStats';
 
 export const metadata: Metadata = { title: 'Admin - StreetSweep' };
 export const dynamic = 'force-dynamic';
@@ -58,7 +58,7 @@ function ApiTable({ rows }: { rows: RouteHealth[] }) {
 
 export default async function AdminPage() {
     const session = await getServerSession(authOptions);
-    if (!isAdminAthlete((session?.user as { athleteId?: string } | undefined)?.athleteId)) notFound();
+    if (!(await isAdminUser((session?.user as { id?: string } | undefined)?.id))) notFound();
     const stats = await getAdminStats();
     const { users, exportedRoutes, queues } = stats;
 

@@ -179,6 +179,7 @@ model User {
   image         String?
   athleteId     String?   @unique
   creditRoutesOnStrava Boolean @default(true)
+  isAdmin       Boolean   @default(false) // grants /admin (#117); set directly in the DB
   createdAt     DateTime  @default(now())
   lastSeenAt    DateTime? // throttled touch from the session callback, for active-user counts (#117)
   accounts      Account[]

@@ -2,20 +2,19 @@ jest.mock('next-auth', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/auth', () => ({ authOptions: {} }));
 jest.mock('next/navigation', () => ({ notFound: jest.fn() }));
 jest.mock('@/lib/adminStats', () => ({ ...jest.requireActual('@/lib/adminStats'), getAdminStats: jest.fn() }));
-jest.mock('@/lib/prisma', () => ({ prisma: {} }));
+jest.mock('@/lib/prisma', () => ({ prisma: { user: { findUnique: jest.fn() } } }));
 
 import { renderToStaticMarkup } from 'react-dom/server';
 import { getServerSession } from 'next-auth';
 import { getAdminStats } from '@/lib/adminStats';
 import { notFound } from 'next/navigation';
+import { prisma } from '@/lib/prisma';
 import AdminPage from './page';
 
-const ORIGINAL_ENV = process.env;
 beforeEach(() => {
-    process.env = { ...ORIGINAL_ENV, ADMIN_ATHLETE_IDS: '42' };
+    (prisma.user.findUnique as jest.Mock).mockImplementation(async ({ where }: { where: { id: string } }) => ({ isAdmin: where.id === 'admin' }));
     (notFound as unknown as jest.Mock).mockImplementation(() => { throw new Error('NEXT_NOT_FOUND'); });
 });
-afterAll(() => { process.env = ORIGINAL_ENV; });
 
 const stats = {
     users: { total: 12, stravaLinked: 10, withHistory: 9, creditOn: 8, new: { day: 1, week: 2, month: 3 }, active: { day: 4, week: 6, month: 11 } },
@@ -25,8 +24,8 @@ const stats = {
 };
 
 describe('/admin (#117)', () => {
-    it('is a 404 for anyone not on the admin list, without loading any stats', async () => {
-        (getServerSession as jest.Mock).mockResolvedValue({ user: { athleteId: '7' } });
+    it('is a 404 for anyone not flagged admin in the DB, without loading any stats', async () => {
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 'someone' } });
         await expect(AdminPage()).rejects.toThrow('NEXT_NOT_FOUND');
         (getServerSession as jest.Mock).mockResolvedValue(null);
         await expect(AdminPage()).rejects.toThrow('NEXT_NOT_FOUND');
@@ -34,7 +33,7 @@ describe('/admin (#117)', () => {
     });
 
     it('renders user, background-work and API figures for an admin', async () => {
-        (getServerSession as jest.Mock).mockResolvedValue({ user: { athleteId: '42' } });
+        (getServerSession as jest.Mock).mockResolvedValue({ user: { id: 'admin' } });
         (getAdminStats as jest.Mock).mockResolvedValue(stats);
         const html = renderToStaticMarkup(await AdminPage());
         expect(html).toContain('Total users');

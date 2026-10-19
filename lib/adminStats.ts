@@ -3,10 +3,10 @@ import { LATENCY_BUCKETS_MS } from './metrics';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Comma-separated Strava athlete ids allowed to see /admin (#117).
-export function isAdminAthlete(athleteId: string | null | undefined): boolean {
-    if (!athleteId) return false;
-    return (process.env.ADMIN_ATHLETE_IDS ?? '').split(',').map(s => s.trim()).filter(Boolean).includes(athleteId);
+export async function isAdminUser(userId: string | null | undefined): Promise<boolean> {
+    if (!userId) return false;
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { isAdmin: true } });
+    return user?.isAdmin ?? false;
 }
 
 export interface RouteHealth {

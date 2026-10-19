@@ -2,7 +2,7 @@ jest.mock('./prisma', () => {
     const count = () => ({ count: jest.fn() });
     return {
         prisma: {
-            user: count(), account: count(), stravaActivityCache: count(), exportedRoute: count(),
+            user: { ...count(), findUnique: jest.fn() }, account: count(), stravaActivityCache: count(), exportedRoute: count(),
             riddenRoadsJob: { groupBy: jest.fn() },
             stravaSyncEvent: { count: jest.fn(), findFirst: jest.fn() },
             metricCounter: { groupBy: jest.fn() },
@@ -10,27 +10,25 @@ jest.mock('./prisma', () => {
     };
 });
 
-import { isAdminAthlete, summarizeApiMetrics, getAdminStats } from './adminStats';
+import { isAdminUser, summarizeApiMetrics, getAdminStats } from './adminStats';
 import { prisma } from './prisma';
 
 const p = prisma as any;
 
-describe('isAdminAthlete (#117)', () => {
-    const ORIGINAL_ENV = process.env;
-    afterEach(() => { process.env = ORIGINAL_ENV; });
-
-    it('allows only athletes listed in ADMIN_ATHLETE_IDS', () => {
-        process.env = { ...ORIGINAL_ENV, ADMIN_ATHLETE_IDS: '111, 222' };
-        expect(isAdminAthlete('222')).toBe(true);
-        expect(isAdminAthlete('333')).toBe(false);
-        expect(isAdminAthlete(null)).toBe(false);
+describe('isAdminUser (#117)', () => {
+    it('allows only users flagged isAdmin in the database', async () => {
+        p.user.findUnique.mockResolvedValueOnce({ isAdmin: true });
+        expect(await isAdminUser('u1')).toBe(true);
+        expect(p.user.findUnique).toHaveBeenCalledWith({ where: { id: 'u1' }, select: { isAdmin: true } });
+        p.user.findUnique.mockResolvedValueOnce({ isAdmin: false });
+        expect(await isAdminUser('u2')).toBe(false);
+        p.user.findUnique.mockResolvedValueOnce(null);
+        expect(await isAdminUser('gone')).toBe(false);
     });
 
-    it('allows nobody when the variable is unset or empty', () => {
-        process.env = { ...ORIGINAL_ENV, ADMIN_ATHLETE_IDS: '' };
-        expect(isAdminAthlete('')).toBe(false);
-        delete process.env.ADMIN_ATHLETE_IDS;
-        expect(isAdminAthlete('111')).toBe(false);
+    it('allows nobody without a signed-in user, without querying', async () => {
+        expect(await isAdminUser(undefined)).toBe(false);
+        expect(p.user.findUnique).not.toHaveBeenCalled();
     });
 });
 
