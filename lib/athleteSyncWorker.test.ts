@@ -178,12 +178,29 @@ describe('tickAthleteSyncWorker (#118)', () => {
         p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [] });
         (fetchStravaActivity as jest.Mock).mockRejectedValue(new Error('429'));
         await tick();
-        expect(p.stravaSyncEvent.updateMany).toHaveBeenLastCalledWith({ where: { id: { in: [1] } }, data: { attempts: 2, claimedAt: null, availableAt: new Date(clock + 2 * 5 * 60 * 1000) } });
+        expect(p.stravaSyncEvent.updateMany.mock.calls[0][0].data).toEqual({ claimedAt: new Date(clock), attempts: 2 });
+        expect(p.stravaSyncEvent.updateMany).toHaveBeenLastCalledWith({ where: { id: { in: [1] } }, data: { claimedAt: null, availableAt: new Date(clock + 2 * 5 * 60 * 1000) } });
         expect(p.stravaSyncEvent.deleteMany).not.toHaveBeenCalled();
 
         queue(event({ aspect: 'create', activityId: '2', attempts: 4 }));
         await tick();
         expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalled();
+    });
+});
+
+describe('crashed runs (#123)', () => {
+    it('counts the attempt when claiming, so a run killed mid-way still counts', async () => {
+        queue(event({ aspect: 'recompute', mode: 'cycling', attempts: 2 }));
+        await tick();
+        expect(p.stravaSyncEvent.updateMany.mock.calls[0][0].data).toEqual({ claimedAt: new Date(clock), attempts: 3 });
+    });
+
+    it('gives up on events whose earlier runs never finished, without running them again', async () => {
+        queue(event({ aspect: 'recompute', mode: 'cycling', attempts: 5 }));
+        expect(await tick()).toEqual({ processed: true, athleteId: '42' });
+        expect(recomputeStats).not.toHaveBeenCalled();
+        expect(p.stravaSyncEvent.updateMany).not.toHaveBeenCalled();
+        expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [1] } } });
     });
 });
 
