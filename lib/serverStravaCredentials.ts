@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from './auth';
 import { prisma } from './prisma';
 import { decryptToken } from './tokenCrypto';
+import { featureFlags } from './featureFlags';
 
 // Resolves the signed-in user's Strava refresh_token server-side only --
 // never sent to or stored on the client (see app/api/auth/strava-credentials
@@ -22,4 +23,20 @@ export async function getSessionStravaCredentials(): Promise<{ refreshToken: str
     } catch {
         return null;
     }
+}
+
+interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
+
+// The one place a Strava-backed API route gets credentials (#126): the signed-in
+// user's own token, or -- only with advancedStravaIntegration -- a power user's
+// own Strava app credentials from the request. Anything else is null, so an
+// anonymous caller never falls through to the server's STRAVA_* env account.
+export async function resolveRequestStravaCredentials(bodyCreds?: Creds): Promise<Creds | null> {
+    const clientId = bodyCreds?.clientId?.trim();
+    const clientSecret = bodyCreds?.clientSecret?.trim();
+    const refreshToken = bodyCreds?.refreshToken?.trim();
+    if (featureFlags.advancedStravaIntegration && clientId && clientSecret && refreshToken) {
+        return { clientId, clientSecret, refreshToken };
+    }
+    return getSessionStravaCredentials();
 }

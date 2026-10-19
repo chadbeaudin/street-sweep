@@ -2,7 +2,7 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({ status: i
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
 jest.mock('@/lib/strava', () => ({ resolveAthleteId: jest.fn() }));
 jest.mock('@/lib/prisma', () => ({ prisma: { statsCache: { findUnique: jest.fn() } } }));
-jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
+jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 jest.mock('@/lib/athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn(), hasPendingSync: jest.fn() }));
 jest.mock('@/lib/statsCompute', () => ({
     STATS_VERSION: 8,
@@ -13,7 +13,7 @@ jest.mock('@/lib/statsCompute', () => ({
 import { POST } from './route';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { enqueueAthleteSync, hasPendingSync } from '@/lib/athleteSyncQueue';
 
 const creds = { refreshToken: 'r' };
@@ -23,7 +23,7 @@ const row = (overrides: Record<string, unknown> = {}, refreshedAt = new Date()) 
 
 beforeEach(() => {
     (resolveAthleteId as jest.Mock).mockResolvedValue('42');
-    (getSessionStravaCredentials as jest.Mock).mockResolvedValue(null);
+    (resolveRequestStravaCredentials as jest.Mock).mockResolvedValue(creds);
     (hasPendingSync as jest.Mock).mockResolvedValue(false);
 });
 
@@ -61,15 +61,17 @@ describe('POST /api/stats (#118)', () => {
         expect(lastResponse()[0]).toMatchObject({ refreshing: true, computing: true });
     });
 
-    it('uses the signed-in session credentials when the client has none', async () => {
-        (getSessionStravaCredentials as jest.Mock).mockResolvedValue({ refreshToken: 'session' });
+    it('gets credentials only through the shared resolver (#126)', async () => {
         (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row());
         await post({ stravaCredentials: { sessionLinked: true } });
-        expect(resolveAthleteId).toHaveBeenCalledWith({ sessionLinked: true, refreshToken: 'session' });
+        expect(resolveRequestStravaCredentials).toHaveBeenCalledWith({ sessionLinked: true });
+        expect(resolveAthleteId).toHaveBeenCalledWith(creds);
     });
 
-    it('rejects a request with no way to identify the athlete', async () => {
-        await post({});
-        expect(lastResponse()[1]?.status).toBe(400);
+    it('rejects a caller who is not signed in with Strava (#126)', async () => {
+        (resolveRequestStravaCredentials as jest.Mock).mockResolvedValue(null);
+        await post({ stravaCredentials: { refreshToken: 'client-tok' } });
+        expect(lastResponse()[1]?.status).toBe(401);
+        expect(resolveAthleteId).not.toHaveBeenCalled();
     });
 });

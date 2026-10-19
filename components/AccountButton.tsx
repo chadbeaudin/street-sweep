@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useSession, signIn, signOut, getProviders, type ClientSafeProvider } from 'next-auth/react';
+import { useState } from 'react';
+import { useSession, signIn, signOut } from 'next-auth/react';
 import { LogIn, LogOut } from 'lucide-react';
 import { DeleteAccountDialog } from './DeleteAccountDialog';
 import { StravaCreditToggle } from './StravaCreditToggle';
@@ -12,14 +12,8 @@ import { StravaCreditToggle } from './StravaCreditToggle';
 // follow-up work.
 export function AccountButton() {
     const { data: session, status } = useSession();
-    const [providers, setProviders] = useState<Record<string, ClientSafeProvider> | null>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showDeleteAccount, setShowDeleteAccount] = useState(false);
-
-    // Only offer providers actually configured server-side (lib/auth.ts registers
-    // Google conditionally on GOOGLE_CLIENT_ID/SECRET) -- avoids showing a Google
-    // option that would just 404 in an environment where it isn't set up.
-    useEffect(() => { getProviders().then(setProviders); }, []);
 
     if (status === 'loading') return null;
 
@@ -45,6 +39,15 @@ export function AccountButton() {
                         <div className="fixed inset-0 z-[1001]" onClick={() => setShowMenu(false)} />
                         <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
                             <StravaCreditToggle />
+                            {(session.user as { isAdmin?: boolean }).isAdmin && (
+                                <a
+                                    href="/admin"
+                                    onClick={() => setShowMenu(false)}
+                                    className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                                >
+                                    Admin
+                                </a>
+                            )}
                             <button
                                 onClick={() => { setShowMenu(false); signOut(); }}
                                 className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
@@ -65,50 +68,15 @@ export function AccountButton() {
         );
     }
 
-    const providerList = providers ? Object.values(providers) : [];
-
-    // Only one provider configured (the common case today) -- skip the menu
-    // and sign in directly, same one-click behavior as before Google existed.
-    if (providerList.length <= 1) {
-        const providerId = providerList[0]?.id ?? 'strava';
-        return (
-            <button
-                onClick={() => signIn(providerId)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
-                title={`Sign in with ${providerList[0]?.name ?? 'Strava'}`}
-            >
-                <LogIn className="w-4 h-4" />
-                Sign in
-            </button>
-        );
-    }
-
+    // Strava is the only sign-in (#126): signing in is also what connects Strava.
     return (
-        <div className="relative">
-            <button
-                onClick={() => setShowMenu(v => !v)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
-                title="Sign in"
-            >
-                <LogIn className="w-4 h-4" />
-                Sign in
-            </button>
-            {showMenu && (
-                <>
-                    <div className="fixed inset-0 z-[1001]" onClick={() => setShowMenu(false)} />
-                    <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
-                        {providerList.map(p => (
-                            <button
-                                key={p.id}
-                                onClick={() => { setShowMenu(false); signIn(p.id); }}
-                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
-                            >
-                                Continue with {p.name}
-                            </button>
-                        ))}
-                    </div>
-                </>
-            )}
-        </div>
+        <button
+            onClick={() => signIn('strava')}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
+            title="Sign in with Strava"
+        >
+            <LogIn className="w-4 h-4" />
+            Sign in with Strava
+        </button>
     );
 }

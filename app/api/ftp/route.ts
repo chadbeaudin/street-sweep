@@ -2,7 +2,7 @@ import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { fetchFtpReadings, resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
@@ -32,14 +32,9 @@ async function refreshInBackground(athleteId: string, creds: Creds) {
 
 async function handlePOST(request: Request) {
     try {
-        let { stravaCredentials } = await request.json() as { stravaCredentials?: Creds };
-        if (!stravaCredentials?.refreshToken) {
-            const sessionCreds = await getSessionStravaCredentials();
-            if (sessionCreds) stravaCredentials = { ...stravaCredentials, ...sessionCreds };
-        }
-        if (!stravaCredentials?.refreshToken) {
-            return NextResponse.json({ error: 'stravaCredentials.refreshToken required' }, { status: 400 });
-        }
+        const body = await request.json() as { stravaCredentials?: Creds };
+        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         const athleteId = await resolveAthleteId(stravaCredentials);
         const cached = await prisma.ftpReadingCache.findUnique({ where: { athleteId } });
 
