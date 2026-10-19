@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
 import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
@@ -24,7 +25,7 @@ const GenerateBody = z.object({
     selectionPolygons: z.array(z.array(z.tuple([z.number().finite(), z.number().finite()])).max(20_000)).max(500).optional().nullable(),
 }).passthrough();
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     try {
         const json = await request.json();
         const check = GenerateBody.safeParse(json);
@@ -320,3 +321,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/generate', handlePOST);

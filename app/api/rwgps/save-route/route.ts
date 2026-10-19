@@ -1,8 +1,9 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { buildGpxCourse } from '@/lib/gpx';
 import { uploadRouteToRwgps, deleteRwgpsRoute } from '@/lib/rwgps';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const { route, name, accessToken, oldRouteId } = await req.json();
         if (!route || !accessToken || !oldRouteId) {
@@ -26,3 +27,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/rwgps/save-route', handlePOST);

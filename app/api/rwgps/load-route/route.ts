@@ -1,9 +1,10 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { calculateElevationProfile } from '@/lib/elevation';
 import { parseGpxTrack } from '@/lib/gpx';
 import { fetchRouteGpx } from '@/lib/rwgps';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const { accessToken, routeId } = await req.json();
         if (!accessToken || !routeId) {
@@ -32,3 +33,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/rwgps/load-route', handlePOST);

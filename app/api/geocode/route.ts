@@ -1,7 +1,8 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { reverseAddress, searchAddresses } from '@/lib/nominatim';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const { address, limit, lat, lon } = await req.json() as { address?: string; limit?: number; lat?: number; lon?: number };
         if (typeof lat === 'number' && typeof lon === 'number') {
@@ -16,3 +17,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: e.message || 'Geocoding failed' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/geocode', handlePOST);

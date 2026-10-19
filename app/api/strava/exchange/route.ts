@@ -1,7 +1,8 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { featureFlags } from '@/lib/featureFlags';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         // Only the advanced own-Strava-app flow exchanges codes here; everyone else
         // connects Strava by signing in (#126), which never hands the client a token.
@@ -50,3 +51,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/strava/exchange', handlePOST);

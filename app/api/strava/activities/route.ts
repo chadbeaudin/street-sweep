@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
@@ -5,7 +6,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { creditMatchingActivities } from '@/lib/routeCredit';
 
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
     try {
         const body = await req.json();
         const { forceSync, activityMode } = body;
@@ -36,3 +37,5 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/strava/activities', handlePOST);

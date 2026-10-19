@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { fetchFtpReadings, resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
@@ -29,7 +30,7 @@ async function refreshInBackground(athleteId: string, creds: Creds) {
     }
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     try {
         const body = await request.json() as { stravaCredentials?: Creds };
         const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
@@ -55,3 +56,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: e.message || 'Internal Server Error' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/ftp', handlePOST);

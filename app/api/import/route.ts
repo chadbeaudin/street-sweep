@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { calculateElevationProfile } from '@/lib/elevation';
 import { parseGpxTrack, GpxCoord as Coord } from '@/lib/gpx';
@@ -52,7 +53,7 @@ function parseTcx(text: string): Coord[] {
     return coords;
 }
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     try {
         const formData = await request.formData();
         const file = formData.get('file') as File | null;
@@ -92,3 +93,5 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: err.message || 'Failed to parse route file' }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/import', handlePOST);

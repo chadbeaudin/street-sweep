@@ -1,3 +1,4 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
@@ -10,7 +11,7 @@ import { enqueueAthleteSync } from '@/lib/athleteSyncQueue';
 // Register the subscription with scripts/strava-webhook.js.
 
 // Subscription validation handshake, sent once when the subscription is created.
-export async function GET(request: Request) {
+async function handleGET(request: Request) {
     const params = new URL(request.url).searchParams;
     const verifyToken = process.env.STRAVA_WEBHOOK_VERIFY_TOKEN;
     if (!verifyToken || params.get('hub.mode') !== 'subscribe' || params.get('hub.verify_token') !== verifyToken) {
@@ -28,7 +29,7 @@ const Event = z.object({
     updates: z.record(z.string(), z.unknown()).optional(),
 });
 
-export async function POST(request: Request) {
+async function handlePOST(request: Request) {
     const parsed = await parseBody(request, Event);
     if ('error' in parsed) return parsed.error;
     const event = parsed.data;
@@ -52,3 +53,6 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ ok: true });
 }
+
+export const GET = withApiMetrics('GET', '/api/strava/webhook', handleGET);
+export const POST = withApiMetrics('POST', '/api/strava/webhook', handlePOST);

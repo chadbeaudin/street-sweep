@@ -1,7 +1,8 @@
+import { withApiMetrics } from '@/lib/metrics';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildFitCourse } from '@/lib/fit';
 
-export async function POST(req: NextRequest) {
+async function handlePOST(req: NextRequest) {
     try {
         const { route, name } = await req.json();
 
@@ -26,3 +27,5 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export const POST = withApiMetrics('POST', '/api/export/fit', handlePOST);

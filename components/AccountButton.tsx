@@ -38,7 +38,15 @@ export function AccountButton() {
                     <>
                         <div className="fixed inset-0 z-[1001]" onClick={() => setShowMenu(false)} />
                         <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 origin-top-right overflow-hidden ring-1 ring-black ring-opacity-5">
-                            <StravaCreditToggle />
+                            {(session.user as { isAdmin?: boolean }).isAdmin && (
+                                <a
+                                    href="/admin"
+                                    onClick={() => setShowMenu(false)}
+                                    className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
+                                >
+                                    Admin
+                                </a>
+                            )}
                             <button
                                 onClick={() => { setShowMenu(false); signOut(); }}
                                 className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
@@ -51,6 +59,7 @@ export function AccountButton() {
                             >
                                 Delete account
                             </button>
+                            <StravaCreditToggle />
                         </div>
                     </>
                 )}
