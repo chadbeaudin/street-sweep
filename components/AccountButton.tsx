@@ -47,7 +47,6 @@ export function AccountButton() {
                                     Admin
                                 </a>
                             )}
-                            <StravaCreditToggle />
                             <button
                                 onClick={() => { setShowMenu(false); signOut(); }}
                                 className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
@@ -60,6 +59,7 @@ export function AccountButton() {
                             >
                                 Delete account
                             </button>
+                            <StravaCreditToggle />
                         </div>
                     </>
                 )}

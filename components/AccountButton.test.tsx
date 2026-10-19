@@ -47,11 +47,11 @@ describe('AccountButton (#126)', () => {
         expect(screen.queryByRole('link', { name: 'Admin' })).not.toBeInTheDocument();
     });
 
-    it('puts the Strava credit toggle right above Sign out', () => {
+    it('puts the Strava credit toggle at the bottom, under Delete account', () => {
         mockUseSession.mockReturnValue({ data: { user: { name: 'Rider', isAdmin: true } }, status: 'authenticated' });
         render(<AccountButton />);
         fireEvent.click(screen.getByText('Rider'));
         const items = Array.from(screen.getByText('Sign out').parentElement!.children).map(el => el.textContent);
-        expect(items).toEqual(['Admin', 'Credit toggle', 'Sign out', 'Delete account']);
+        expect(items).toEqual(['Admin', 'Sign out', 'Delete account', 'Credit toggle']);
     });
 });
