@@ -11,6 +11,7 @@ import { fetchStravaActivity, getStravaAccessToken, resolveAthleteId, syncActivi
 import { isModeActivity } from './stats';
 import { recomputeStats, statsCacheKey } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
+import { creditMatchingActivities } from './routeCredit';
 import { decryptJobCreds, refreshRiddenRoadsInBackground, riddenRoadsCacheKey, tilesForBbox, ActivityMode, Creds } from './riddenRoadsRefresh';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -121,6 +122,16 @@ async function resync(athleteId: string, accessToken: string): Promise<boolean> 
     return changed;
 }
 
+// Same check the app runs when the rider opens it (/api/strava/activities), so a
+// ride that followed an exported route is credited without waiting for that.
+// Never fails the batch: a credit retry isn't worth redoing the stats recompute.
+async function creditNewRides(athleteId: string): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { athleteId }, select: { id: true } });
+    if (!user) return;
+    await creditMatchingActivities(user.id)
+        .catch(e => console.warn(`${ts()} AthleteSync: route credit skipped for athlete ${athleteId}: ${e.message}`));
+}
+
 async function processAthlete(athleteId: string, events: StravaSyncEvent[]): Promise<void> {
     if (events.some(e => e.aspect === 'deauthorize')) return purgeAthlete(athleteId);
 
@@ -137,6 +148,9 @@ async function processAthlete(athleteId: string, events: StravaSyncEvent[]): Pro
     const touched = new Map<ActivityMode, Set<string>>();
     let changed = latest.size > 0 && await applyActivityEvents(athleteId, accessToken, latest, touched);
     if (events.some(e => e.aspect === 'resync')) changed = (await resync(athleteId, accessToken)) || changed;
+
+    // Before the stats recompute, which can take a minute or more.
+    if (changed) await creditNewRides(athleteId);
 
     const modes = new Set<ActivityMode>();
     for (const e of events) {
