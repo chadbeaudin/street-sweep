@@ -9,6 +9,7 @@ jest.mock('./prisma', () => ({
         riddenRoadsJob: { deleteMany: jest.fn() },
         ftpReadingCache: { deleteMany: jest.fn() },
         account: { findFirst: jest.fn(), findMany: jest.fn(), updateMany: jest.fn() },
+        user: { findUnique: jest.fn() },
         $transaction: jest.fn((ops: unknown[]) => Promise.all(ops)),
     },
 }));
@@ -23,6 +24,7 @@ jest.mock('./statsCompute', () => ({
     statsCacheKey: (id: string, mode: string) => mode === 'running' ? `${id}__running` : id,
 }));
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
+jest.mock('./routeCredit', () => ({ creditMatchingActivities: jest.fn() }));
 jest.mock('./tokenCrypto', () => ({ decryptToken: (v: string) => `dec:${v}`, encryptToken: (v: string) => v }));
 jest.mock('./riddenRoadsRefresh', () => ({
     ...jest.requireActual('./riddenRoadsRefresh'),
@@ -37,6 +39,7 @@ import { fetchStravaActivity, getStravaAccessToken, syncActivities } from './str
 import { recomputeStats } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { refreshRiddenRoadsInBackground, tilesForBbox } from './riddenRoadsRefresh';
+import { creditMatchingActivities } from './routeCredit';
 
 const p = prisma as any;
 const TRACK = polyline.encode([[47.65, -117.42], [47.66, -117.43]]);
@@ -57,6 +60,8 @@ beforeEach(() => {
     p.account.findMany.mockResolvedValue([]);
     p.statsCache.findMany.mockResolvedValue([]);
     p.riddenRoadsTile.findMany.mockResolvedValue([]);
+    p.user.findUnique.mockResolvedValue({ id: 'user-42' });
+    (creditMatchingActivities as jest.Mock).mockResolvedValue(0);
     (getStravaAccessToken as jest.Mock).mockResolvedValue('token');
 });
 
@@ -100,6 +105,44 @@ describe('tickAthleteSyncWorker (#118)', () => {
         expect(recomputeStats).toHaveBeenCalledWith('42', { refreshToken: 'dec:enc' }, 'cycling');
         expect(refreshRiddenRoadsInBackground).toHaveBeenCalledWith('42', { refreshToken: 'dec:enc' }, 'cycling', [existingTile]);
         expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [7] } } });
+    });
+
+    it('credits a newly delivered ride on Strava before the slower stats recompute (#122)', async () => {
+        queue(event({ aspect: 'create', activityId: '2' }));
+        p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [] });
+        (fetchStravaActivity as jest.Mock).mockResolvedValue({ activity: ride(2) });
+        const order: string[] = [];
+        (creditMatchingActivities as jest.Mock).mockImplementation(async () => { order.push('credit'); return 1; });
+        (recomputeStats as jest.Mock).mockImplementation(async () => { order.push('stats'); });
+
+        await tick();
+
+        expect(p.user.findUnique).toHaveBeenCalledWith({ where: { athleteId: '42' }, select: { id: true } });
+        expect(creditMatchingActivities).toHaveBeenCalledWith('user-42');
+        expect(order).toEqual(['credit', 'stats']);
+    });
+
+    it('still finishes the batch when crediting fails, and skips athletes with no account (#122)', async () => {
+        queue(event({ aspect: 'create', activityId: '2' }));
+        p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [] });
+        (fetchStravaActivity as jest.Mock).mockResolvedValue({ activity: ride(2) });
+        (creditMatchingActivities as jest.Mock).mockRejectedValue(new Error('strava down'));
+        await tick();
+        expect(recomputeStats).toHaveBeenCalled();
+        expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalled();
+
+        queue(event({ aspect: 'create', activityId: '3' }));
+        (fetchStravaActivity as jest.Mock).mockResolvedValue({ activity: ride(3) });
+        p.user.findUnique.mockResolvedValue(null);
+        (creditMatchingActivities as jest.Mock).mockClear();
+        await tick();
+        expect(creditMatchingActivities).not.toHaveBeenCalled();
+    });
+
+    it('does not run the credit check when the activity list did not change (#122)', async () => {
+        queue(event({ aspect: 'recompute', mode: 'cycling' }));
+        await tick();
+        expect(creditMatchingActivities).not.toHaveBeenCalled();
     });
 
     it('removes a deleted ride without asking Strava, and drops its stored tracks', async () => {
@@ -178,12 +221,29 @@ describe('tickAthleteSyncWorker (#118)', () => {
         p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [] });
         (fetchStravaActivity as jest.Mock).mockRejectedValue(new Error('429'));
         await tick();
-        expect(p.stravaSyncEvent.updateMany).toHaveBeenLastCalledWith({ where: { id: { in: [1] } }, data: { attempts: 2, claimedAt: null, availableAt: new Date(clock + 2 * 5 * 60 * 1000) } });
+        expect(p.stravaSyncEvent.updateMany.mock.calls[0][0].data).toEqual({ claimedAt: new Date(clock), attempts: 2 });
+        expect(p.stravaSyncEvent.updateMany).toHaveBeenLastCalledWith({ where: { id: { in: [1] } }, data: { claimedAt: null, availableAt: new Date(clock + 2 * 5 * 60 * 1000) } });
         expect(p.stravaSyncEvent.deleteMany).not.toHaveBeenCalled();
 
         queue(event({ aspect: 'create', activityId: '2', attempts: 4 }));
         await tick();
         expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalled();
+    });
+});
+
+describe('crashed runs (#123)', () => {
+    it('counts the attempt when claiming, so a run killed mid-way still counts', async () => {
+        queue(event({ aspect: 'recompute', mode: 'cycling', attempts: 2 }));
+        await tick();
+        expect(p.stravaSyncEvent.updateMany.mock.calls[0][0].data).toEqual({ claimedAt: new Date(clock), attempts: 3 });
+    });
+
+    it('gives up on events whose earlier runs never finished, without running them again', async () => {
+        queue(event({ aspect: 'recompute', mode: 'cycling', attempts: 5 }));
+        expect(await tick()).toEqual({ processed: true, athleteId: '42' });
+        expect(recomputeStats).not.toHaveBeenCalled();
+        expect(p.stravaSyncEvent.updateMany).not.toHaveBeenCalled();
+        expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [1] } } });
     });
 });
 
