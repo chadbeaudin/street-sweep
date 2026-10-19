@@ -6,7 +6,7 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
 const mockResolveAthleteId = jest.fn();
 jest.mock('@/lib/strava', () => ({ resolveAthleteId: (...args: any[]) => mockResolveAthleteId(...args) }));
-jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
+jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 
 const mockGetCachedRiddenTiles = jest.fn();
 const mockRefreshInBackground = jest.fn();
@@ -21,9 +21,10 @@ jest.mock('@/lib/riddenRoadsRefresh', () => ({
 }));
 
 import { POST } from './route';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
-const mockedGetSessionCreds = getSessionStravaCredentials as jest.MockedFunction<typeof getSessionStravaCredentials>;
+const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
+const SIGNED_IN = { refreshToken: 'session-tok' };
 const bbox = { south: 0, north: 1, west: 0, east: 1 };
 
 function makeRequest(body: any): Request {
@@ -36,17 +37,18 @@ function makeRequest(body: any): Request {
 
 beforeEach(() => {
     jest.clearAllMocks();
-    mockedGetSessionCreds.mockResolvedValue(null);
+    mockedResolveCreds.mockResolvedValue(SIGNED_IN);
     mockResolveAthleteId.mockResolvedValue('athlete-1');
     mockCapTiles.mockImplementation((tiles: string[]) => ({ tiles, truncated: false }));
 });
 
 describe('POST /api/ridden-roads', () => {
-    it('requires a refreshToken', async () => {
-        await POST(makeRequest({ bbox }));
-        const [data, init] = mockJson.mock.calls[0];
-        expect(init.status).toBe(400);
-        expect(data.error).toMatch(/refreshToken/);
+    it('rejects a caller who is not signed in with Strava (#126)', async () => {
+        mockedResolveCreds.mockResolvedValueOnce(null);
+        await POST(makeRequest({ stravaCredentials: { refreshToken: 'client-supplied' }, bbox }));
+        const [, init] = mockJson.mock.calls[0];
+        expect(init.status).toBe(401);
+        expect(mockResolveAthleteId).not.toHaveBeenCalled();
     });
 
     it('requires a bbox -- it never matches a rider'+"'"+'s whole history in one shot', async () => {
@@ -66,9 +68,8 @@ describe('POST /api/ridden-roads', () => {
 
     it('enqueues only the missing tiles, scoped to the requested bbox', async () => {
         mockGetCachedRiddenTiles.mockResolvedValue({ tiles: {}, refreshedAt: null, missing: ['1,2', '1,3'] });
-        const creds = { refreshToken: 'tok' };
-        await POST(makeRequest({ stravaCredentials: creds, bbox }));
-        expect(mockRefreshInBackground).toHaveBeenCalledWith('athlete-1', creds, 'cycling', ['1,2', '1,3']);
+        await POST(makeRequest({ bbox }));
+        expect(mockRefreshInBackground).toHaveBeenCalledWith('athlete-1', SIGNED_IN, 'cycling', ['1,2', '1,3']);
         const [data] = mockJson.mock.calls[0];
         expect(data.refreshing).toBe(true);
         expect(data.computing).toBe(true);
@@ -84,18 +85,16 @@ describe('POST /api/ridden-roads', () => {
 
     it('uses the mode-suffixed cache key for running', async () => {
         mockGetCachedRiddenTiles.mockResolvedValue({ tiles: {}, refreshedAt: null, missing: ['1,2'] });
-        const creds = { refreshToken: 'tok' };
-        await POST(makeRequest({ stravaCredentials: creds, activityMode: 'running', bbox }));
-        expect(mockRefreshInBackground).toHaveBeenCalledWith('athlete-1', creds, 'running', ['1,2']);
+        await POST(makeRequest({ activityMode: 'running', bbox }));
+        expect(mockRefreshInBackground).toHaveBeenCalledWith('athlete-1', SIGNED_IN, 'running', ['1,2']);
     });
 
-    it('resolves the refresh token from the session when the client sends none', async () => {
-        mockedGetSessionCreds.mockResolvedValueOnce({ refreshToken: 'session-tok' });
+    it('gets credentials only through the shared resolver, never straight from the body (#126)', async () => {
         mockGetCachedRiddenTiles.mockResolvedValue({ tiles: {}, refreshedAt: null, missing: [] });
-        await POST(makeRequest({ bbox }));
-        const [data, init] = mockJson.mock.calls[0];
-        expect(init?.status ?? 200).toBe(200);
-        expect(data).not.toHaveProperty('error');
+        const sent = { refreshToken: 'client-supplied' };
+        await POST(makeRequest({ stravaCredentials: sent, bbox }));
+        expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
+        expect(mockResolveAthleteId).toHaveBeenCalledWith(SIGNED_IN);
     });
 
     it('only looks up the capped tiles and reports truncation when the bbox has too many', async () => {

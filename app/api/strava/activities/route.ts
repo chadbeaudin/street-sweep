@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { creditMatchingActivities } from '@/lib/routeCredit';
@@ -8,24 +8,11 @@ import { creditMatchingActivities } from '@/lib/routeCredit';
 export async function POST(req: Request) {
     try {
         const body = await req.json();
-        let { stravaCredentials } = body;
         const { forceSync, activityMode } = body;
         const mode: 'cycling' | 'running' = activityMode === 'running' ? 'running' : 'cycling';
 
-        // A Strava sign-in session doesn't send a refreshToken from the client
-        // (it never leaves the server -- see lib/serverStravaCredentials.ts);
-        // resolve it here instead of trusting the client to supply it.
-        if (!stravaCredentials?.refreshToken) {
-            const sessionCreds = await getSessionStravaCredentials();
-            if (sessionCreds) stravaCredentials = { ...stravaCredentials, ...sessionCreds };
-        }
-
-        if (stravaCredentials) {
-            // Trim values if they exist
-            if (stravaCredentials.clientId) stravaCredentials.clientId = String(stravaCredentials.clientId).trim();
-            if (stravaCredentials.clientSecret) stravaCredentials.clientSecret = String(stravaCredentials.clientSecret).trim();
-            if (stravaCredentials.refreshToken) stravaCredentials.refreshToken = String(stravaCredentials.refreshToken).trim();
-        }
+        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
 
         if (forceSync) {
             await forceSyncStravaActivities(stravaCredentials);

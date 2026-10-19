@@ -8,7 +8,7 @@ export default function TermsOfServicePage() {
     return (
         <main className="max-w-3xl mx-auto px-6 py-12 text-gray-800">
             <h1 className="text-3xl font-bold mb-2">Terms of Service</h1>
-            <p className="text-sm text-gray-500 mb-8">Last updated: September 27, 2026</p>
+            <p className="text-sm text-gray-500 mb-8">Last updated: October 18, 2026</p>
 
             <p className="mb-6">
                 These Terms of Service (&quot;Terms&quot;) govern your use of StreetSweep (the
@@ -24,7 +24,7 @@ export default function TermsOfServicePage() {
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Accounts &amp; Connected Services</h2>
             <p className="mb-6">
-                You may sign in using a third-party provider (e.g. Google, Strava). You
+                You sign in using your Strava account. You
                 are responsible for maintaining the security of your account and any
                 connected third-party accounts. StreetSweep is not responsible for the
                 availability, accuracy, or content of third-party services it integrates

@@ -11,21 +11,22 @@ jest.mock('@/lib/strava', () => ({
 jest.mock('@/lib/prisma', () => ({
     prisma: { ftpReadingCache: { findUnique: jest.fn(), upsert: jest.fn() } },
 }));
-jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
+jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 
 import { POST } from './route';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const mockedResolveAthleteId = resolveAthleteId as jest.MockedFunction<typeof resolveAthleteId>;
 const mockedFindUnique = prisma.ftpReadingCache.findUnique as jest.MockedFunction<typeof prisma.ftpReadingCache.findUnique>;
-const mockedGetSessionCreds = getSessionStravaCredentials as jest.MockedFunction<typeof getSessionStravaCredentials>;
+const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
+const SIGNED_IN = { refreshToken: 'session-tok' };
 
 beforeEach(() => {
     jest.clearAllMocks();
     mockedResolveAthleteId.mockResolvedValue('athlete-1');
-    mockedGetSessionCreds.mockResolvedValue(null);
+    mockedResolveCreds.mockResolvedValue(SIGNED_IN);
     mockedFindUnique.mockResolvedValue(null);
 });
 
@@ -38,27 +39,18 @@ function makeRequest(body: any): Request {
 }
 
 describe('POST /api/ftp', () => {
-    it('requires a refreshToken when there is neither a client-supplied one nor a session', async () => {
-        await POST(makeRequest({}));
-        const [data, init] = mockJson.mock.calls[0];
-        expect(init?.status).toBe(400);
-        expect(data.error).toMatch(/refreshToken required/);
+    it('rejects a caller who is not signed in with Strava (#126)', async () => {
+        mockedResolveCreds.mockResolvedValueOnce(null);
+        await POST(makeRequest({ stravaCredentials: { refreshToken: 'client-tok' } }));
+        const [, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(401);
         expect(mockedResolveAthleteId).not.toHaveBeenCalled();
     });
 
-    it('resolves the refresh token from the session when the client sends none (session-linked sign-in)', async () => {
-        mockedGetSessionCreds.mockResolvedValueOnce({ refreshToken: 'session-tok' });
-        await POST(makeRequest({ stravaCredentials: { sessionLinked: true } }));
-        expect(mockedResolveAthleteId).toHaveBeenCalledWith(
-            expect.objectContaining({ sessionLinked: true, refreshToken: 'session-tok' }),
-        );
-    });
-
-    it('does not fall back to the session when the client already supplied a refreshToken', async () => {
-        await POST(makeRequest({ stravaCredentials: { refreshToken: 'client-tok' } }));
-        expect(mockedGetSessionCreds).not.toHaveBeenCalled();
-        expect(mockedResolveAthleteId).toHaveBeenCalledWith(
-            expect.objectContaining({ refreshToken: 'client-tok' }),
-        );
+    it('uses the resolved credentials, never the body as-is (#126)', async () => {
+        const sent = { refreshToken: 'client-tok' };
+        await POST(makeRequest({ stravaCredentials: sent }));
+        expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
+        expect(mockedResolveAthleteId).toHaveBeenCalledWith(SIGNED_IN);
     });
 });

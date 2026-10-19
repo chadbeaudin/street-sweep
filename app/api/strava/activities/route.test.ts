@@ -10,7 +10,7 @@ jest.mock('@/lib/strava', () => ({
     fetchCyclingRiddenRoads: jest.fn(),
     forceSyncStravaActivities: jest.fn(),
 }));
-jest.mock('@/lib/serverStravaCredentials', () => ({ getSessionStravaCredentials: jest.fn() }));
+jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 jest.mock('next-auth', () => ({ getServerSession: jest.fn() }));
 jest.mock('@/lib/auth', () => ({ authOptions: {} }));
 jest.mock('@/lib/routeCredit', () => ({ creditMatchingActivities: jest.fn() }));
@@ -19,17 +19,18 @@ import { POST } from './route';
 import { getServerSession } from 'next-auth';
 import { creditMatchingActivities } from '@/lib/routeCredit';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchCyclingRiddenRoads>;
 const mockedForceSync = forceSyncStravaActivities as jest.MockedFunction<typeof forceSyncStravaActivities>;
-const mockedGetSessionCreds = getSessionStravaCredentials as jest.MockedFunction<typeof getSessionStravaCredentials>;
+const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
+const SIGNED_IN = { refreshToken: 'session-tok' };
 
 const mockedSession = getServerSession as jest.Mock;
 const mockedCredit = creditMatchingActivities as jest.Mock;
 
 beforeEach(() => {
-    mockedGetSessionCreds.mockResolvedValue(null);
+    mockedResolveCreds.mockResolvedValue(SIGNED_IN);
     mockedSession.mockResolvedValue(null);
     mockedCredit.mockResolvedValue(0);
 });
@@ -91,7 +92,7 @@ describe('POST /api/strava/activities', () => {
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
         await POST(makeRequest({}));
-        expect(mockedFetch).toHaveBeenCalledWith(undefined, 'cycling');
+        expect(mockedFetch).toHaveBeenCalledWith(SIGNED_IN, 'cycling');
     });
 
     it('passes activityMode: "running" through to fetchCyclingRiddenRoads', async () => {
@@ -101,7 +102,7 @@ describe('POST /api/strava/activities', () => {
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
         await POST(makeRequest({ activityMode: 'running' }));
-        expect(mockedFetch).toHaveBeenCalledWith(undefined, 'running');
+        expect(mockedFetch).toHaveBeenCalledWith(SIGNED_IN, 'running');
     });
 
     it('force-syncs Strava activities when requested', async () => {
@@ -110,9 +111,8 @@ describe('POST /api/strava/activities', () => {
             activityDistances: [], activityStartDates: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
-        const creds = { refreshToken: 'tok' };
-        await POST(makeRequest({ stravaCredentials: creds, forceSync: true, activityMode: 'running' }));
-        expect(mockedForceSync).toHaveBeenCalledWith(creds);
+        await POST(makeRequest({ forceSync: true, activityMode: 'running' }));
+        expect(mockedForceSync).toHaveBeenCalledWith(SIGNED_IN);
     });
 
     it('does not force-sync when the user did not request it', async () => {
@@ -125,28 +125,20 @@ describe('POST /api/strava/activities', () => {
         expect(mockedForceSync).not.toHaveBeenCalled();
     });
 
-    it('resolves the refresh token from the session when the client sends none (session-linked sign-in)', async () => {
-        mockedFetch.mockResolvedValueOnce({
-            riddenRoads: [], activityElevations: [], activityTypes: [],
-            activityDistances: [], activityStartDates: [],
-            totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
-        });
-        mockedGetSessionCreds.mockResolvedValueOnce({ refreshToken: 'session-tok' });
-        await POST(makeRequest({ stravaCredentials: { sessionLinked: true } }));
-        expect(mockedFetch).toHaveBeenCalledWith(
-            expect.objectContaining({ sessionLinked: true, refreshToken: 'session-tok' }),
-            'cycling',
-        );
+    it('rejects a caller who is not signed in with Strava instead of serving the server account (#126)', async () => {
+        mockedResolveCreds.mockResolvedValueOnce(null);
+        await POST(makeRequest({ stravaCredentials: { refreshToken: 'client-tok' } }));
+        const [, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(401);
+        expect(mockedFetch).not.toHaveBeenCalled();
     });
 
-    it('never trusts a client-supplied refreshToken to skip session resolution silently -- session creds win when client sent none', async () => {
-        mockedFetch.mockResolvedValueOnce({
-            riddenRoads: [], activityElevations: [], activityTypes: [],
-            activityDistances: [], activityStartDates: [],
-            totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
-        });
-        await POST(makeRequest({}));
-        expect(mockedGetSessionCreds).toHaveBeenCalled();
+    it('uses the resolved credentials, never the body as-is (#126)', async () => {
+        mockedFetch.mockResolvedValueOnce(emptyRides);
+        const sent = { sessionLinked: true };
+        await POST(makeRequest({ stravaCredentials: sent }));
+        expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
+        expect(mockedFetch).toHaveBeenCalledWith(SIGNED_IN, 'cycling');
     });
 
     it('credits matching rides for a signed-in user after syncing', async () => {

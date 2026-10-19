@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
+import { featureFlags } from '@/lib/featureFlags';
 
 export async function POST(req: Request) {
     try {
+        // Only the advanced own-Strava-app flow exchanges codes here; everyone else
+        // connects Strava by signing in (#126), which never hands the client a token.
+        if (!featureFlags.advancedStravaIntegration) {
+            return NextResponse.json({ error: 'Not found' }, { status: 404 });
+        }
         const body = await req.json();
-        const { code, clientId: bodyClientId, clientSecret: bodyClientSecret } = body;
-
-        // Advanced mode: client passes its own credentials.
-        // Standard mode: fall back to server-side env vars.
-        const clientId = bodyClientId?.trim() || process.env.STRAVA_CLIENT_ID;
-        const clientSecret = bodyClientSecret?.trim() || process.env.STRAVA_CLIENT_SECRET;
+        const { code } = body;
+        const clientId = body.clientId?.trim();
+        const clientSecret = body.clientSecret?.trim();
 
         if (!clientId || !clientSecret || !code) {
             return NextResponse.json(

@@ -50,3 +50,16 @@ describe('Strava sign-in', () => {
         expect(prisma.account.updateMany).not.toHaveBeenCalled();
     });
 });
+
+describe('sign-in providers (#126)', () => {
+    it('offers Strava as the only way to sign in, even when Google credentials are configured', () => {
+        jest.isolateModules(() => {
+            process.env.GOOGLE_CLIENT_ID = 'g';
+            process.env.GOOGLE_CLIENT_SECRET = 'g';
+            const { authOptions: fresh } = require('./auth');
+            expect(fresh.providers.map((p: { id: string }) => p.id)).toEqual(['strava']);
+            delete process.env.GOOGLE_CLIENT_ID;
+            delete process.env.GOOGLE_CLIENT_SECRET;
+        });
+    });
+});

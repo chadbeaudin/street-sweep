@@ -3,10 +3,11 @@
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useSession, signIn, signOut, getProviders, type ClientSafeProvider } from 'next-auth/react';
+import { useSession, signIn, signOut } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Bike, Footprints } from 'lucide-react';
 import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
+import { featureFlags } from '@/lib/featureFlags';
 import { AccountButton } from '@/components/AccountButton';
 import { StatsDialog } from '@/components/StatsDialog';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
@@ -46,9 +47,7 @@ import { listKeyAction } from '@/lib/listNavigation';
 const RIDDEN_PREFETCH_FRACTION = 0.5;
 
 export default function Home() {
-    const { data: session } = useSession();
-    const [authProviders, setAuthProviders] = useState<Record<string, ClientSafeProvider> | null>(null);
-    useEffect(() => { getProviders().then(setAuthProviders); }, []);
+    const { data: session, status: sessionStatus } = useSession();
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [route, setRoute] = useState<[number, number, number?, number?][] | null>(null);
     const [elevationData, setElevationData] = useState<any[] | null>(null);
@@ -368,7 +367,10 @@ export default function Home() {
 
     useEffect(() => {
         const saved = localStorage.getItem('strava_settings');
-        if (saved) {
+        // Outside advanced mode Strava is connected by signing in (#126); drop any
+        // token an earlier "Connect Strava" left in this browser.
+        if (saved && !featureFlags.advancedStravaIntegration) localStorage.removeItem('strava_settings');
+        if (saved && featureFlags.advancedStravaIntegration) {
             const parsed = JSON.parse(saved);
             // `sessionLinked` only means anything alongside a live NextAuth
             // session -- session status isn't known yet this early (useSession()
@@ -400,15 +402,12 @@ export default function Home() {
         }
     }, []);
 
-    // Bridges NextAuth sign-in to the existing (separate, unchanged) Strava
-    // connect flow: a Strava sign-in already granted activity:read (lib/auth.ts),
-    // so it can populate the same `stravaCredentials` the manual "Connect to
-    // Strava" flow has always produced -- everything downstream (activity sync,
-    // ridden-roads) just works unchanged. Runs once per distinct athleteId (not
-    // on every render), and reverses itself on sign-out. Skipped entirely if the
-    // user already has their own custom Strava app credentials configured
-    // (advancedStravaIntegration power users) -- session sign-in shouldn't
-    // silently override a deliberate manual setup.
+    // Signing in with Strava is how Strava gets connected (#126): the sign-in
+    // granted activity access (lib/auth.ts), and the server resolves the token
+    // from the session, so the client only carries a `sessionLinked` marker.
+    // Runs once per distinct athleteId and reverses itself on sign-out. Skipped
+    // if the user has their own Strava app credentials (advancedStravaIntegration)
+    // -- sign-in shouldn't silently override a deliberate manual setup.
     const syncedAthleteIdRef = useRef<string | null>(null);
     useEffect(() => {
         const athleteId = (session?.user as any)?.athleteId as string | undefined;
@@ -426,9 +425,7 @@ export default function Home() {
                     // the session itself (lib/serverStravaCredentials.ts) when this
                     // sentinel-carrying request reaches /api/strava/activities or
                     // /api/ridden-roads.
-                    const creds = { sessionLinked: true };
-                    setStravaCredentials(creds);
-                    try { localStorage.setItem('strava_settings', JSON.stringify(creds)); } catch { /* ignore */ }
+                    setStravaCredentials({ sessionLinked: true });
                 } catch { /* ignore -- falls back to whatever stravaCredentials already had */ }
             })();
         } else if (syncedAthleteIdRef.current) {
@@ -436,7 +433,6 @@ export default function Home() {
             // since for these users the account *is* the Strava connection.
             syncedAthleteIdRef.current = null;
             setStravaCredentials({});
-            try { localStorage.removeItem('strava_settings'); } catch { /* ignore */ }
         }
     }, [session]);
 
@@ -1680,11 +1676,9 @@ export default function Home() {
                 {/* Fixed buttons sit right after the logo; mr-auto keeps them from shifting
                     when the route-dependent group on the right grows. */}
                 <div className="hidden md:flex items-center gap-3 ml-6 mr-auto">
-                    {/* Redundant once signed in via Strava (#87) -- that login already
-                        grants activity:read and drives stravaCredentials itself (see the
-                        session-sync effect above), so a separate connect button here would
-                        just be a second control for the same thing. */}
-                    {!(session?.user as any)?.athleteId && (
+                    {/* Only for power users bringing their own Strava app; everyone else
+                        connects Strava by signing in (#126). */}
+                    {featureFlags.advancedStravaIntegration && !(session?.user as any)?.athleteId && (
                         <StravaHeaderButton
                             isConnected={hasStravaCreds(stravaCredentials)}
                             stravaError={stravaError}
@@ -2080,7 +2074,7 @@ export default function Home() {
                 </div>
 
                 <div className="flex md:hidden items-center gap-2">
-                    {!(session?.user as any)?.athleteId && (
+                    {featureFlags.advancedStravaIntegration && !(session?.user as any)?.athleteId && (
                         <StravaHeaderButton
                             isConnected={hasStravaCreds(stravaCredentials)}
                             stravaError={stravaError}
@@ -2129,22 +2123,12 @@ export default function Home() {
                                                 Delete account
                                             </button>
                                         </>
-                                    ) : authProviders && Object.values(authProviders).length > 1 ? (
-                                        Object.values(authProviders).map(p => (
-                                            <button
-                                                key={p.id}
-                                                onClick={() => { signIn(p.id); setShowMobileMenu(false); }}
-                                                className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
-                                            >
-                                                {`Continue with ${p.name}`}
-                                            </button>
-                                        ))
                                     ) : (
                                         <button
-                                            onClick={() => { signIn(Object.values(authProviders ?? {})[0]?.id ?? 'strava'); setShowMobileMenu(false); }}
+                                            onClick={() => { signIn('strava'); setShowMobileMenu(false); }}
                                             className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center border-b border-gray-100"
                                         >
-                                            Sign in
+                                            Sign in with Strava
                                         </button>
                                     )}
                                     <button
@@ -2337,7 +2321,7 @@ export default function Home() {
                     stravaCredentials hasn't finished syncing from the session yet (#87) --
                     they're already connected, just waiting a beat on the bridge fetch, so
                     flashing "connect Strava" at them would be wrong and confusing. */}
-                {stravaCredentials !== undefined && !hasStravaCreds(stravaCredentials) && !showHowTo && !(session?.user as any)?.athleteId && (
+                {stravaCredentials !== undefined && sessionStatus !== 'loading' && !hasStravaCreds(stravaCredentials) && !showHowTo && !(session?.user as any)?.athleteId && (
                     <div className="absolute inset-0 z-[1100] backdrop-blur-md bg-white/40 flex flex-col items-center justify-center p-4">
                         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-lg text-center border border-gray-100 animate-in fade-in zoom-in duration-300 relative">
                             <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-100 mx-auto mb-6">
@@ -2349,19 +2333,19 @@ export default function Home() {
                             <div className="text-gray-600 mb-8 font-medium leading-relaxed space-y-4 text-left">
                                 <p>
                                     <strong>Street Sweep</strong> helps cyclists, runners, and hikers explore new areas they have not previously traveled.
-                                    Connect your Strava account to import all your activities which will be displayed on a single map.
+                                    Sign in with Strava to import all your activities, which will be displayed on a single map.
                                     StreetSweep will then help you generate optimized routes, previously untraveled by you, with minimal backtracking.
                                 </p>
                                 <p className="text-indigo-600 text-sm italic">
-                                    To get started creating your custom routes, we need to connect your Strava account to synchronize your activity data.
+                                    To get started, sign in with Strava. Your account keeps your rides synced on every device.
                                 </p>
                             </div>
                             <button
-                                onClick={() => setShowStravaSettings(true)}
+                                onClick={() => featureFlags.advancedStravaIntegration ? setShowStravaSettings(true) : signIn('strava')}
                                 className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#FC4C02] text-white rounded-xl text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200"
                             >
                                 <Settings className="w-4 h-4" />
-                                Setup Strava Connection
+                                {featureFlags.advancedStravaIntegration ? 'Setup Strava Connection' : 'Sign in with Strava'}
                             </button>
                         </div>
                     </div>
@@ -2590,7 +2574,7 @@ export default function Home() {
                 )}
 
                 <StravaSettingsDialog
-                    isOpen={showStravaSettings}
+                    isOpen={featureFlags.advancedStravaIntegration && showStravaSettings}
                     onClose={() => setShowStravaSettings(false)}
                     onSave={(creds) => {
                         setStravaCredentials(creds);
