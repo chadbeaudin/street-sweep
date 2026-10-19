@@ -20,7 +20,7 @@ function buildSlides(activityMode: 'cycling' | 'running') {
             <>
                 <p>
                     <strong>Street Sweep</strong> helps cyclists, runners, and hikers explore new areas they have not previously traveled.
-                    Connect your Strava account to import all your activities which will be displayed on a single map.
+                    Sign in with Strava to import all your activities, which will be displayed on a single map.
                     StreetSweep will then help you generate optimized routes, previously untraveled by you, with minimal backtracking.
                 </p>
                 <p className="text-gray-500">

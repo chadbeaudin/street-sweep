@@ -1,0 +1,35 @@
+/**
+ * @jest-environment jsdom
+ */
+
+import '@testing-library/jest-dom';
+import { render, screen, fireEvent } from '@testing-library/react';
+
+const mockUseSession = jest.fn();
+const mockSignIn = jest.fn();
+jest.mock('next-auth/react', () => ({
+    useSession: () => mockUseSession(),
+    signIn: (...args: unknown[]) => mockSignIn(...args),
+    signOut: jest.fn(),
+}));
+jest.mock('./DeleteAccountDialog', () => ({ DeleteAccountDialog: () => null }));
+jest.mock('./StravaCreditToggle', () => ({ StravaCreditToggle: () => null }));
+
+import { AccountButton } from './AccountButton';
+
+describe('AccountButton (#126)', () => {
+    it('offers a single Strava sign-in when signed out', () => {
+        mockUseSession.mockReturnValue({ data: null, status: 'unauthenticated' });
+        render(<AccountButton />);
+        fireEvent.click(screen.getByRole('button', { name: 'Sign in with Strava' }));
+        expect(mockSignIn).toHaveBeenCalledWith('strava');
+        expect(screen.getAllByRole('button')).toHaveLength(1);
+    });
+
+    it('shows the account menu instead when signed in', () => {
+        mockUseSession.mockReturnValue({ data: { user: { name: 'Rider' } }, status: 'authenticated' });
+        render(<AccountButton />);
+        expect(screen.queryByText('Sign in with Strava')).not.toBeInTheDocument();
+        expect(screen.getByText('Rider')).toBeInTheDocument();
+    });
+});

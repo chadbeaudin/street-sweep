@@ -6,6 +6,8 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 }));
 
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
+const flags = { advancedStravaIntegration: true };
+jest.mock('@/lib/featureFlags', () => ({ featureFlags: flags }));
 
 import { POST } from './route';
 
@@ -34,8 +36,11 @@ function makeRequest(body: any): Request {
     });
 }
 
+const APP = { clientId: 'own_id', clientSecret: 'own_secret' };
+
 describe('POST /api/strava/exchange', () => {
     beforeEach(() => {
+        flags.advancedStravaIntegration = true;
         process.env.STRAVA_CLIENT_ID = 'test_id';
         process.env.STRAVA_CLIENT_SECRET = 'test_secret';
         global.fetch = jest.fn();
@@ -46,7 +51,7 @@ describe('POST /api/strava/exchange', () => {
             ok: true,
             json: async () => stravaTokenResponse,
         });
-        await POST(makeRequest({ code: 'valid_code' }));
+        await POST(makeRequest({ code: 'valid_code', ...APP }));
         const [data] = mockJson.mock.calls[0];
         expect(data).toHaveProperty('refresh_token', 'real_refresh_token');
         expect(Object.keys(data)).toEqual(['refresh_token']);
@@ -57,7 +62,7 @@ describe('POST /api/strava/exchange', () => {
             ok: true,
             json: async () => stravaTokenResponse,
         });
-        await POST(makeRequest({ code: 'valid_code' }));
+        await POST(makeRequest({ code: 'valid_code', ...APP }));
         const [data] = mockJson.mock.calls[0];
         expect(data).not.toHaveProperty('access_token');
     });
@@ -67,9 +72,24 @@ describe('POST /api/strava/exchange', () => {
             ok: true,
             json: async () => stravaTokenResponse,
         });
-        await POST(makeRequest({ code: 'valid_code' }));
+        await POST(makeRequest({ code: 'valid_code', ...APP }));
         const [data] = mockJson.mock.calls[0];
         expect(data).not.toHaveProperty('athlete');
+    });
+
+    it('is not available outside advanced mode: everyone else connects by signing in (#126)', async () => {
+        flags.advancedStravaIntegration = false;
+        await POST(makeRequest({ code: 'valid_code', ...APP }));
+        const [, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(404);
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('never falls back to the server Strava app credentials (#126)', async () => {
+        await POST(makeRequest({ code: 'valid_code' }));
+        const [, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(400);
+        expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('returns 400 when code is missing', async () => {
@@ -84,7 +104,7 @@ describe('POST /api/strava/exchange', () => {
             status: 401,
             json: async () => ({ message: 'Authorization Error' }),
         });
-        await POST(makeRequest({ code: 'bad_code' }));
+        await POST(makeRequest({ code: 'bad_code', ...APP }));
         const [, init] = mockJson.mock.calls[0];
         expect(init?.status).toBe(401);
         const [data] = mockJson.mock.calls[0];

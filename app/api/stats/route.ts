@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { enqueueAthleteSync, hasPendingSync } from '@/lib/athleteSyncQueue';
 import { STATS_VERSION, StatsPayload, statsCacheKey, withDbRetry } from '@/lib/statsCompute';
 import type { ActivityMode, Creds } from '@/lib/riddenRoadsRefresh';
@@ -22,14 +22,8 @@ interface StatsResponse extends Partial<StatsPayload> {
 export async function POST(request: Request) {
     try {
         const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string };
-        let { stravaCredentials } = body;
-        if (!stravaCredentials?.refreshToken) {
-            const sessionCreds = await getSessionStravaCredentials();
-            if (sessionCreds) stravaCredentials = { ...stravaCredentials, ...sessionCreds };
-        }
-        if (!stravaCredentials?.refreshToken) {
-            return NextResponse.json({ error: 'stravaCredentials.refreshToken required to identify athlete' }, { status: 400 });
-        }
+        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         const mode: ActivityMode = body.activityMode === 'running' ? 'running' : 'cycling';
 
         const athleteId = await resolveAthleteId(stravaCredentials);

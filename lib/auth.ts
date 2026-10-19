@@ -70,17 +70,6 @@ if (process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET) {
     }));
 }
 
-// Optional second provider -- set GOOGLE_CLIENT_ID/SECRET to enable. Kept
-// dynamic so the app doesn't need the google provider module loaded unless
-// it's actually configured.
-if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
-    const GoogleProvider = require('next-auth/providers/google').default;
-    providers.push(GoogleProvider({
-        clientId: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    }));
-}
-
 // Account.access_token/refresh_token were stored in plaintext -- encrypt
 // them (see lib/tokenCrypto.ts) before the base Prisma adapter's
 // linkAccount writes them, rather than replacing the adapter wholesale.

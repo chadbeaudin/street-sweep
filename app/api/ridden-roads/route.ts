@@ -10,7 +10,7 @@ import {
     ActivityMode,
     BBox,
 } from '@/lib/riddenRoadsRefresh';
-import { getSessionStravaCredentials } from '@/lib/serverStravaCredentials';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -18,14 +18,10 @@ interface Creds { clientId?: string; clientSecret?: string; refreshToken?: strin
 
 export async function POST(request: Request) {
     try {
-        let { stravaCredentials, activityMode, bbox } = await request.json() as { stravaCredentials?: Creds; activityMode?: string; bbox?: BBox };
-        if (!stravaCredentials?.refreshToken) {
-            const sessionCreds = await getSessionStravaCredentials();
-            if (sessionCreds) stravaCredentials = { ...stravaCredentials, ...sessionCreds };
-        }
-        if (!stravaCredentials?.refreshToken) {
-            return NextResponse.json({ error: 'stravaCredentials.refreshToken required' }, { status: 400 });
-        }
+        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; bbox?: BBox };
+        const { activityMode, bbox } = body;
+        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         if (!bbox) {
             return NextResponse.json({ error: 'bbox required -- only the requested viewport is matched against OSM roads' }, { status: 400 });
         }

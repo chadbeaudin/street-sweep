@@ -8,7 +8,7 @@ export default function PrivacyPolicyPage() {
     return (
         <main className="max-w-3xl mx-auto px-6 py-12 text-gray-800">
             <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
-            <p className="text-sm text-gray-500 mb-8">Last updated: September 27, 2026</p>
+            <p className="text-sm text-gray-500 mb-8">Last updated: October 18, 2026</p>
 
             <p className="mb-6">
                 StreetSweep (&quot;we&quot;, &quot;us&quot;) helps cyclists and runners find and route streets
@@ -19,9 +19,8 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-xl font-semibold mt-8 mb-2">Information We Collect</h2>
             <ul className="list-disc pl-6 space-y-2 mb-6">
                 <li>
-                    <strong>Account information:</strong> if you sign in, we store your
-                    name, email address, and profile image as provided by your sign-in
-                    provider (e.g. Google, Strava).
+                    <strong>Account information:</strong> if you sign in with Strava, we
+                    store your name and profile image as provided by Strava.
                 </li>
                 <li>
                     <strong>Activity and GPS data:</strong> if you connect Strava or Ride
@@ -35,7 +34,7 @@ export default function PrivacyPolicyPage() {
                 </li>
                 <li>
                     <strong>OAuth tokens:</strong> access and refresh tokens issued by
-                    connected services (Google, Strava, Ride with GPS) are stored so we can
+                    connected services (Strava, Ride with GPS) are stored so we can
                     keep your connection active without asking you to re-authenticate
                     repeatedly.
                 </li>
@@ -44,7 +43,7 @@ export default function PrivacyPolicyPage() {
             <h2 className="text-xl font-semibold mt-8 mb-2">How We Use Your Information</h2>
             <ul className="list-disc pl-6 space-y-2 mb-6">
                 <li>To generate street-coverage routes and maps for your account.</li>
-                <li>To keep your connected accounts (Google, Strava, Ride with GPS) linked.</li>
+                <li>To keep your connected accounts (Strava, Ride with GPS) linked.</li>
                 <li>To save and let you retrieve your generated routes and collections.</li>
             </ul>
             <p className="mb-6">
@@ -63,8 +62,8 @@ export default function PrivacyPolicyPage() {
 
             <h2 className="text-xl font-semibold mt-8 mb-2">Third-Party Services</h2>
             <p className="mb-6">
-                StreetSweep integrates with third-party services (Google, Strava, Ride
-                with GPS, OpenStreetMap/Overpass) to provide its functionality. Your use
+                StreetSweep integrates with third-party services (Strava, Ride with GPS,
+                OpenStreetMap/Overpass) to provide its functionality. Your use
                 of those services is also governed by their own privacy policies and
                 terms.
             </p>
