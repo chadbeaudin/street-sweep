@@ -1,3 +1,5 @@
+export {};
+
 const mockQuery = jest.fn();
 const mockSend = jest.fn();
 jest.mock('./prisma', () => ({ prisma: { $queryRawUnsafe: (...a: unknown[]) => mockQuery(...a) } }));
