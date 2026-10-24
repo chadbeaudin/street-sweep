@@ -6,7 +6,9 @@ import {
     pointInPolygon,
     polylineCentroid,
     computeRideRecords,
-    RideRecords
+    computeRideTypeBreakdown,
+    RideRecords,
+    RideTypeBreakdown
 } from './stats';
 import { fetchCyclingRiddenRoads } from './strava';
 import { prisma } from './prisma';
@@ -24,7 +26,9 @@ const MAX_CITIES = 5;
 // v5: virtual/indoor and stationary rides excluded from the ridden set.
 // v6: bikingStats levels carry parent chain for hierarchical drill-down.
 // v7: records added (total distance, exploration %, longest ride, climb, active days, per-year).
-export const STATS_VERSION = 8; // bumped: totalActivities/totalElevationFeet now include VirtualRide
+// v8: totalActivities/totalElevationFeet include VirtualRide.
+// v9: rideTypeBreakdown (mountain bike vs road/gravel) added.
+export const STATS_VERSION = 9;
 
 interface CityStats {
     name: string;
@@ -46,6 +50,7 @@ export interface StatsPayload {
     biggestClimbFeet?: number;
     activeDays?: number;
     ridesPerYear?: RideRecords['ridesPerYear'];
+    rideTypeBreakdown?: RideTypeBreakdown;
     cities: CityStats[];
     bikingStats?: BikingGeographies;
 }
@@ -106,7 +111,7 @@ const METERS_TO_FEET = 3.28084;
 // — they also include VirtualRide (indoor trainer rides have no real-world
 // location, but their elevation/activity count are still real) — so the
 // "Activities" and "Climbed" dashboard totals aren't missing indoor rides.
-async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = [], totalCyclingActivities: number = riddenRoads.length, totalCyclingElevationGainMeters: number = activityElevations.reduce((sum, m) => sum + (m || 0), 0)): Promise<StatsPayload> {
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = [], activityTypes: string[] = [], mode: ActivityMode = 'cycling', totalCyclingActivities: number = riddenRoads.length, totalCyclingElevationGainMeters: number = activityElevations.reduce((sum, m) => sum + (m || 0), 0)): Promise<StatsPayload> {
     console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
     const records = computeRideRecords(activityDistances, activityElevations, activityStartDates);
     const totalCells = buildCoverageCells(riddenRoads);
@@ -257,6 +262,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         biggestClimbFeet: records.biggestClimbFeet,
         activeDays: records.activeDays,
         ridesPerYear: records.ridesPerYear,
+        rideTypeBreakdown: mode === 'cycling' ? computeRideTypeBreakdown(activityTypes, activityDistances, activityElevations) : undefined,
         cities,
         bikingStats,
     };
@@ -292,8 +298,8 @@ async function persistStats(athleteId: string, stats: StatsPayload): Promise<voi
 export async function recomputeStats(athleteId: string, creds: Creds | undefined, mode: ActivityMode): Promise<void> {
     const key = statsCacheKey(athleteId, mode);
     console.log(`${ts()} Stats: recompute starting for ${key}`);
-    const { riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds, mode);
-    const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, totalCyclingActivities, totalCyclingElevationGainMeters);
+    const { riddenRoads, activityElevations, activityDistances, activityStartDates, activityTypes, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds, mode);
+    const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, activityTypes, mode, totalCyclingActivities, totalCyclingElevationGainMeters);
     await persistStats(key, fresh);
     console.log(`${ts()} Stats: recompute complete for ${key}`);
 }

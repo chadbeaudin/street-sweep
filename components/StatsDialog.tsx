@@ -15,6 +15,8 @@ interface CityStats {
     percent: number;
 }
 
+interface RideTypeTotals { rides: number; miles: number; elevationFeet: number }
+
 interface StatsResponse {
     totalActivities?: number;
     totalUniqueMiles?: number;
@@ -25,6 +27,7 @@ interface StatsResponse {
     biggestClimbFeet?: number;
     activeDays?: number;
     ridesPerYear?: { year: number; rides: number; miles: number }[];
+    rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals>;
     cities?: CityStats[];
     bikingStats?: BikingGeographies;
     refreshedAt?: string | null;
@@ -394,6 +397,37 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                                 <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }} />
                                                             </div>
                                                             <span className="text-[9px] text-gray-500 tabular-nums">{`'${String(y.year).slice(2)}`}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+
+                                    {activityMode === 'cycling' && stats.rideTypeBreakdown && (() => {
+                                        const { mountain, roadGravel } = stats.rideTypeBreakdown;
+                                        const totalMiles = mountain.miles + roadGravel.miles;
+                                        if (mountain.rides + roadGravel.rides === 0) return null;
+                                        const mtbPct = totalMiles > 0 ? (mountain.miles / totalMiles) * 100 : 0;
+                                        const rows = [
+                                            { label: 'Mountain Bike', totals: mountain, pct: mtbPct, swatch: 'bg-emerald-500' },
+                                            { label: 'Road / Gravel', totals: roadGravel, pct: totalMiles > 0 ? 100 - mtbPct : 0, swatch: 'bg-indigo-400' },
+                                        ];
+                                        return (
+                                            <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
+                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">Ride Types</div>
+                                                <div className="flex h-2 rounded-full overflow-hidden bg-gray-200 mb-3">
+                                                    {rows.map(r => <div key={r.label} className={r.swatch} style={{ width: `${r.pct}%` }} />)}
+                                                </div>
+                                                <div className="space-y-2">
+                                                    {rows.map(r => (
+                                                        <div key={r.label} className="flex items-center gap-2 text-sm">
+                                                            <span className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${r.swatch}`} />
+                                                            <span className="font-medium text-gray-700 flex-1">{r.label}</span>
+                                                            <span className="text-gray-500 tabular-nums">{r.totals.rides.toLocaleString()} rides</span>
+                                                            <span className="text-gray-900 font-semibold tabular-nums w-20 text-right">{Math.round(dist(r.totals.miles)).toLocaleString()} {distanceUnit(units)}</span>
+                                                            <span className="text-gray-500 tabular-nums w-24 text-right">{Math.round(elev(r.totals.elevationFeet)).toLocaleString()} {elevationUnit(units)}</span>
+                                                            <span className="text-gray-400 tabular-nums w-10 text-right">{Math.round(r.pct)}%</span>
                                                         </div>
                                                     ))}
                                                 </div>

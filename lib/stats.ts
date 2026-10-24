@@ -49,6 +49,31 @@ export function computeRideRecords(distancesM: number[], elevationsM: number[], 
     };
 }
 
+export interface RideTypeTotals {
+    rides: number;
+    miles: number;
+    elevationFeet: number;
+}
+
+export interface RideTypeBreakdown {
+    mountain: RideTypeTotals;
+    roadGravel: RideTypeTotals;
+}
+
+// Splits real-world rides into mountain bike vs everything else (road and
+// gravel combined). Arrays are parallel, distances/elevations in meters.
+export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[]): RideTypeBreakdown {
+    const empty = (): RideTypeTotals => ({ rides: 0, miles: 0, elevationFeet: 0 });
+    const breakdown: RideTypeBreakdown = { mountain: empty(), roadGravel: empty() };
+    for (let i = 0; i < types.length; i++) {
+        const bucket = types[i]?.toLowerCase() === 'mountainbikeride' ? breakdown.mountain : breakdown.roadGravel;
+        bucket.rides += 1;
+        bucket.miles += (distancesM[i] || 0) / METERS_PER_MILE;
+        bucket.elevationFeet += (elevationsM[i] || 0) * METERS_TO_FEET;
+    }
+    return breakdown;
+}
+
 // Cell side ≈ 15m. Small enough to capture a single road segment without
 // merging adjacent parallel roads; large enough that GPS noise on the same
 // segment maps to the same cell across activities.
