@@ -5,6 +5,7 @@ import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
 import { encryptToken } from './tokenCrypto';
 import { touchUserLastSeen } from './metrics';
+import { alertNewUser, alertUserActive } from './userAlerts';
 
 const providers: NextAuthOptions['providers'] = [];
 
@@ -97,7 +98,8 @@ export const authOptions: NextAuthOptions = {
         // The adapter only stores tokens when an account is first linked, so a
         // returning user who re-consents (e.g. to grant activity:write) would
         // keep their old token and scope without this.
-        async signIn({ account }) {
+        async signIn({ user, account, isNewUser }) {
+            if (isNewUser) alertNewUser({ ...user, athleteId: (user as { athleteId?: string }).athleteId ?? account?.providerAccountId });
             if (account?.provider !== 'strava' || !account.refresh_token) return;
             await prisma.account.updateMany({
                 where: { provider: 'strava', providerAccountId: account.providerAccountId },
@@ -118,6 +120,7 @@ export const authOptions: NextAuthOptions = {
                 (session.user as any).id = user.id;
                 (session.user as any).athleteId = (user as any).athleteId ?? null;
                 (session.user as any).isAdmin = (user as any).isAdmin === true;
+                alertUserActive(user);
                 touchUserLastSeen(user.id);
             }
             return session;

@@ -2,6 +2,7 @@ jest.mock('./prisma', () => ({ prisma: { account: { updateMany: jest.fn() } } })
 jest.mock('@auth/prisma-adapter', () => ({ PrismaAdapter: () => ({}) }));
 jest.mock('./tokenCrypto', () => ({ encryptToken: (t: string) => `enc:${t}` }));
 jest.mock('./metrics', () => ({ touchUserLastSeen: jest.fn() }));
+jest.mock('./userAlerts', () => ({ alertNewUser: jest.fn(), alertUserActive: jest.fn() }));
 
 process.env.STRAVA_CLIENT_ID = 'client';
 process.env.STRAVA_CLIENT_SECRET = 'secret';
@@ -9,6 +10,7 @@ process.env.STRAVA_CLIENT_SECRET = 'secret';
 import { authOptions } from './auth';
 import { prisma } from './prisma';
 import { touchUserLastSeen } from './metrics';
+import { alertNewUser, alertUserActive } from './userAlerts';
 
 type StravaProviderOptions = {
     authorization: { params: { scope: string } };
@@ -58,6 +60,7 @@ describe('session callback (#117)', () => {
         const session = await authOptions.callbacks!.session!({ session: { user: { name: 'x' } }, user: { id: 'u1', athleteId: '42', isAdmin: true } } as never);
         expect(session.user).toMatchObject({ id: 'u1', athleteId: '42', isAdmin: true });
         expect(touchUserLastSeen).toHaveBeenCalledWith('u1');
+        expect(alertUserActive).toHaveBeenCalledWith(expect.objectContaining({ id: 'u1' }));
     });
 });
 
@@ -71,5 +74,23 @@ describe('sign-in providers (#126)', () => {
             delete process.env.GOOGLE_CLIENT_ID;
             delete process.env.GOOGLE_CLIENT_SECRET;
         });
+    });
+});
+
+describe('user alerts (#133, #134)', () => {
+    const signIn = (isNewUser: boolean) => authOptions.events!.signIn!({
+        user: { id: '42', athleteId: '42', name: 'New Rider' },
+        account: { provider: 'strava', providerAccountId: '42', type: 'oauth' },
+        isNewUser,
+    } as never);
+
+    it('messages the admin on Telegram the first time someone signs in', async () => {
+        await signIn(true);
+        expect(alertNewUser).toHaveBeenCalledWith(expect.objectContaining({ name: 'New Rider', athleteId: '42' }));
+    });
+
+    it('stays quiet for returning users', async () => {
+        await signIn(false);
+        expect(alertNewUser).not.toHaveBeenCalled();
     });
 });
