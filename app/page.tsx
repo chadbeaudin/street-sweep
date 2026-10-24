@@ -21,6 +21,7 @@ import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
+import { MaintenanceNotice } from '@/components/MaintenanceNotice';
 import { useUnits } from '@/components/UnitsContext';
 import { elevationFromFeet, elevationUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
@@ -2378,6 +2379,8 @@ export default function Home() {
                         </button>
                     </div>
                 )}
+
+                <MaintenanceNotice />
 
                 {/* Construction Warning */}
                 {route && route.some(p => p.length > 3 && p[3] === 1) && (
