@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeRideTypeBreakdown } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -188,5 +188,29 @@ describe('stats.computeRideRecords', () => {
         expect(r.longestRideMiles).toBe(0);
         expect(r.activeDays).toBe(0);
         expect(r.ridesPerYear).toEqual([]);
+    });
+});
+
+describe('stats.computeRideTypeBreakdown', () => {
+    const MI = 1609.344;
+    it('splits mountain bike rides from road and gravel combined', () => {
+        const r = computeRideTypeBreakdown(
+            ['MountainBikeRide', 'Ride', 'GravelRide', 'mountainbikeride', 'EBikeRide'],
+            [10 * MI, 30 * MI, 20 * MI, 5 * MI, 15 * MI],
+            [300, 100, 200, 100, 0]
+        );
+        expect(r.mountain.rides).toBe(2);
+        expect(r.mountain.miles).toBeCloseTo(15, 5);
+        expect(r.mountain.elevationFeet).toBeCloseTo(400 * 3.28084, 3);
+        expect(r.roadGravel.rides).toBe(3);
+        expect(r.roadGravel.miles).toBeCloseTo(65, 5);
+        expect(r.roadGravel.elevationFeet).toBeCloseTo(300 * 3.28084, 3);
+    });
+
+    it('handles empty input', () => {
+        expect(computeRideTypeBreakdown([], [], [])).toEqual({
+            mountain: { rides: 0, miles: 0, elevationFeet: 0 },
+            roadGravel: { rides: 0, miles: 0, elevationFeet: 0 },
+        });
     });
 });
