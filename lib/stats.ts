@@ -58,19 +58,38 @@ export interface RideTypeTotals {
 export interface RideTypeBreakdown {
     mountain: RideTypeTotals;
     roadGravel: RideTypeTotals;
+    perYear: { year: number; mountainMiles: number; roadGravelMiles: number }[];
+}
+
+// Strava only added MountainBikeRide in 2022, so older mountain bike rides are
+// plain "Ride" -- for those, the bike they were ridden on decides.
+export function isMountainBikeRide(type: string, gearId: string, mountainBikeGearIds: Set<string>): boolean {
+    const t = type?.toLowerCase();
+    return t === 'mountainbikeride' || (t === 'ride' && mountainBikeGearIds.has(gearId));
 }
 
 // Splits real-world rides into mountain bike vs everything else (road and
 // gravel combined). Arrays are parallel, distances/elevations in meters.
-export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[]): RideTypeBreakdown {
+export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[], startDates: string[] = [], gearIds: string[] = [], mountainBikeGearIds: Set<string> = new Set()): RideTypeBreakdown {
     const empty = (): RideTypeTotals => ({ rides: 0, miles: 0, elevationFeet: 0 });
-    const breakdown: RideTypeBreakdown = { mountain: empty(), roadGravel: empty() };
+    const breakdown: RideTypeBreakdown = { mountain: empty(), roadGravel: empty(), perYear: [] };
+    const perYear = new Map<number, { year: number; mountainMiles: number; roadGravelMiles: number }>();
     for (let i = 0; i < types.length; i++) {
-        const bucket = types[i]?.toLowerCase() === 'mountainbikeride' ? breakdown.mountain : breakdown.roadGravel;
+        const isMountain = isMountainBikeRide(types[i], gearIds[i] ?? '', mountainBikeGearIds);
+        const bucket = isMountain ? breakdown.mountain : breakdown.roadGravel;
+        const miles = (distancesM[i] || 0) / METERS_PER_MILE;
         bucket.rides += 1;
-        bucket.miles += (distancesM[i] || 0) / METERS_PER_MILE;
+        bucket.miles += miles;
         bucket.elevationFeet += (elevationsM[i] || 0) * METERS_TO_FEET;
+
+        const year = Number(startDates[i]?.slice(0, 4));
+        if (year) {
+            const y = perYear.get(year) ?? { year, mountainMiles: 0, roadGravelMiles: 0 };
+            if (isMountain) y.mountainMiles += miles; else y.roadGravelMiles += miles;
+            perYear.set(year, y);
+        }
     }
+    breakdown.perYear = Array.from(perYear.values()).sort((a, b) => a.year - b.year);
     return breakdown;
 }
 

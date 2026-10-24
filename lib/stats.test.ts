@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeRideTypeBreakdown } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeRideTypeBreakdown, isMountainBikeRide } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -211,6 +211,50 @@ describe('stats.computeRideTypeBreakdown', () => {
         expect(computeRideTypeBreakdown([], [], [])).toEqual({
             mountain: { rides: 0, miles: 0, elevationFeet: 0 },
             roadGravel: { rides: 0, miles: 0, elevationFeet: 0 },
+            perYear: [],
         });
+    });
+
+    it('counts a plain Ride on a mountain bike as MTB (#136)', () => {
+        const r = computeRideTypeBreakdown(
+            ['Ride', 'Ride', 'GravelRide', 'MountainBikeRide'],
+            [10 * MI, 20 * MI, 5 * MI, 7 * MI],
+            [0, 0, 0, 0],
+            [],
+            ['mtb', 'road', 'mtb', 'road'],
+            new Set(['mtb'])
+        );
+        expect(r.mountain.rides).toBe(2);
+        expect(r.mountain.miles).toBeCloseTo(17, 5);
+        expect(r.roadGravel.rides).toBe(2);
+        expect(r.roadGravel.miles).toBeCloseTo(25, 5);
+    });
+
+    it('splits miles per year (#136)', () => {
+        const r = computeRideTypeBreakdown(
+            ['MountainBikeRide', 'Ride', 'Ride', 'MountainBikeRide'],
+            [10 * MI, 20 * MI, 5 * MI, 7 * MI],
+            [0, 0, 0, 0],
+            ['2016-05-01T00:00:00Z', '2016-06-01T00:00:00Z', '2015-01-01T00:00:00Z', ''],
+        );
+        expect(r.perYear.map(y => y.year)).toEqual([2015, 2016]);
+        expect(r.perYear[0].mountainMiles).toBe(0);
+        expect(r.perYear[0].roadGravelMiles).toBeCloseTo(5, 5);
+        expect(r.perYear[1].mountainMiles).toBeCloseTo(10, 5);
+        expect(r.perYear[1].roadGravelMiles).toBeCloseTo(20, 5);
+    });
+});
+
+describe('stats.isMountainBikeRide (#136)', () => {
+    const mtb = new Set(['b1']);
+    it('trusts an explicit sport type over the bike', () => {
+        expect(isMountainBikeRide('MountainBikeRide', 'road', mtb)).toBe(true);
+        expect(isMountainBikeRide('GravelRide', 'b1', mtb)).toBe(false);
+    });
+
+    it('uses the bike frame type for a plain Ride', () => {
+        expect(isMountainBikeRide('Ride', 'b1', mtb)).toBe(true);
+        expect(isMountainBikeRide('Ride', 'b2', mtb)).toBe(false);
+        expect(isMountainBikeRide('Ride', '', mtb)).toBe(false);
     });
 });

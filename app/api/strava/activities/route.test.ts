@@ -36,7 +36,7 @@ beforeEach(() => {
 });
 
 const emptyRides = {
-    riddenRoads: [], activityElevations: [], activityTypes: [],
+    riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
     activityDistances: [], activityStartDates: [],
     totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
 };
@@ -54,7 +54,7 @@ describe('POST /api/strava/activities', () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [[[0, 0], [1, 1]]],
             activityElevations: [0],
-            activityTypes: ['Ride'],
+            activityTypes: ['Ride'], activityGearIds: [],
             activityDistances: [1000],
             activityStartDates: ['2024-01-01T00:00:00Z'],
             totalCyclingActivities: 1,
@@ -87,7 +87,7 @@ describe('POST /api/strava/activities', () => {
 
     it('defaults to cycling mode when activityMode is omitted', async () => {
         mockedFetch.mockResolvedValueOnce({
-            riddenRoads: [], activityElevations: [], activityTypes: [],
+            riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
@@ -97,7 +97,7 @@ describe('POST /api/strava/activities', () => {
 
     it('passes activityMode: "running" through to fetchCyclingRiddenRoads', async () => {
         mockedFetch.mockResolvedValueOnce({
-            riddenRoads: [], activityElevations: [], activityTypes: [],
+            riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
@@ -107,7 +107,7 @@ describe('POST /api/strava/activities', () => {
 
     it('force-syncs Strava activities when requested', async () => {
         mockedFetch.mockResolvedValueOnce({
-            riddenRoads: [], activityElevations: [], activityTypes: [],
+            riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
@@ -117,7 +117,7 @@ describe('POST /api/strava/activities', () => {
 
     it('does not force-sync when the user did not request it', async () => {
         mockedFetch.mockResolvedValueOnce({
-            riddenRoads: [], activityElevations: [], activityTypes: [],
+            riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });

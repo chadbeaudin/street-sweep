@@ -27,7 +27,7 @@ interface StatsResponse {
     biggestClimbFeet?: number;
     activeDays?: number;
     ridesPerYear?: { year: number; rides: number; miles: number }[];
-    rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals>;
+    rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals> & { perYear?: { year: number; mountainMiles: number; roadGravelMiles: number }[] };
     cities?: CityStats[];
     bikingStats?: BikingGeographies;
     refreshedAt?: string | null;
@@ -387,14 +387,19 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
 
                                     {stats.ridesPerYear && stats.ridesPerYear.length > 1 && (() => {
                                         const maxMiles = Math.max(...stats.ridesPerYear.map(y => y.miles), 1);
+                                        const typeByYear = new Map((activityMode === 'cycling' ? stats.rideTypeBreakdown?.perYear ?? [] : []).map(t => [t.year, t]));
                                         return (
                                             <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">{units === 'metric' ? 'Kilometers' : 'Miles'} per Year</div>
                                                 <div className="flex gap-1.5 h-24">
                                                     {stats.ridesPerYear.map(y => (
-                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(dist(y.miles)).toLocaleString()} ${distanceUnit(units)} · ${y.rides} ${activityNounPlural}`}>
+                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(dist(y.miles)).toLocaleString()} ${distanceUnit(units)} · ${y.rides} ${activityNounPlural}${typeByYear.has(y.year) ? ` · MTB ${Math.round(dist(typeByYear.get(y.year)!.mountainMiles)).toLocaleString()} / Road-Gravel ${Math.round(dist(typeByYear.get(y.year)!.roadGravelMiles)).toLocaleString()} ${distanceUnit(units)}` : ''}`}>
                                                             <div className="w-full flex-1 flex items-end">
-                                                                <div className="w-full rounded-t bg-indigo-400 hover:bg-indigo-500 transition-colors" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }} />
+                                                                <div className="w-full rounded-t overflow-hidden flex flex-col-reverse bg-indigo-400 hover:opacity-90 transition-opacity" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }}>
+                                                                    {typeByYear.has(y.year) && y.miles > 0 && (
+                                                                        <div data-testid={`mtb-bar-${y.year}`} className="w-full bg-emerald-500" style={{ height: `${(typeByYear.get(y.year)!.mountainMiles / y.miles) * 100}%` }} />
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                             <span className="text-[9px] text-gray-500 tabular-nums">{`'${String(y.year).slice(2)}`}</span>
                                                         </div>

@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings } from './strava';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchMountainBikeGearIds } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 
@@ -408,9 +408,9 @@ describe('fetchStravaActivity (#118)', () => {
     };
 
     it('maps a detailed activity onto the cached list shape and returns its full track', async () => {
-        respond(200, { id: 5, name: 'Lunch', start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', comment_count: 0, kudos_count: 3, map: { summary_polyline: 'abc', polyline: 'full' } });
+        respond(200, { id: 5, name: 'Lunch', start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', gear_id: 'b1', comment_count: 0, kudos_count: 3, map: { summary_polyline: 'abc', polyline: 'full' } });
         expect(await fetchStravaActivity('token', '5')).toEqual({
-            activity: { id: 5, name: 'Lunch', map: { summary_polyline: 'abc' }, start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', comment_count: 0 },
+            activity: { id: 5, name: 'Lunch', map: { summary_polyline: 'abc' }, start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', gear_id: 'b1', comment_count: 0 },
             fullPolyline: 'full',
         });
     });
@@ -482,5 +482,30 @@ describe('fetchFtpReadings incremental scan (#148)', () => {
         expect(commentCalls).toEqual([]);
         expect(result.readings).toEqual([]);
         expect(result.scanned['42']).toBeUndefined();
+    });
+});
+
+describe('fetchMountainBikeGearIds (#136)', () => {
+    const frameTypes: Record<string, number> = { mtb1: 1, road1: 3, gravel1: 5 };
+    beforeEach(() => {
+        global.fetch = jest.fn((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token' }) });
+            const id = url.split('/gear/')[1];
+            if (id === 'gone1') return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+            return Promise.resolve({ ok: true, json: async () => ({ id, frame_type: frameTypes[id] }) });
+        }) as any;
+    });
+
+    it('returns only the bikes Strava says are mountain bikes', async () => {
+        const ids = await fetchMountainBikeGearIds(creds, ['mtb1', 'road1', 'gravel1', 'mtb1', '', 'gone1']);
+        expect(Array.from(ids)).toEqual(['mtb1']);
+    });
+
+    it('looks each bike up only once', async () => {
+        await fetchMountainBikeGearIds(creds, ['mtb1', 'road1']);
+        const gearCalls = () => (global.fetch as jest.Mock).mock.calls.filter(([u]) => u.includes('/gear/'));
+        expect(gearCalls()).toHaveLength(0);
+        expect(Array.from(await fetchMountainBikeGearIds(creds, ['mtb1', 'gone1']))).toEqual(['mtb1']);
+        expect(gearCalls().map(([u]) => u)).toEqual(['https://www.strava.com/api/v3/gear/gone1']);
     });
 });

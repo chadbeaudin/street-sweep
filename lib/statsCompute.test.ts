@@ -1,4 +1,4 @@
-jest.mock('./strava', () => ({ fetchCyclingRiddenRoads: jest.fn() }));
+jest.mock('./strava', () => ({ fetchCyclingRiddenRoads: jest.fn(), fetchMountainBikeGearIds: jest.fn() }));
 jest.mock('./nominatim', () => ({
     reverseGeocode: jest.fn(async () => ({ city: null, county: null, state: null, country: null })),
     searchCityPolygon: jest.fn(),
@@ -7,7 +7,7 @@ jest.mock('./overpass', () => ({ fetchOSMData: jest.fn() }));
 jest.mock('./prisma', () => ({ prisma: { statsCache: { upsert: jest.fn() } } }));
 
 import { recomputeStats } from './statsCompute';
-import { fetchCyclingRiddenRoads } from './strava';
+import { fetchCyclingRiddenRoads, fetchMountainBikeGearIds } from './strava';
 import { prisma } from './prisma';
 
 const MI = 1609.344;
@@ -20,10 +20,12 @@ function persisted() {
 
 beforeEach(() => {
     jest.clearAllMocks();
+    (fetchMountainBikeGearIds as jest.Mock).mockResolvedValue(new Set(['mtb']));
     (fetchCyclingRiddenRoads as jest.Mock).mockResolvedValue({
         riddenRoads: [track, track, track],
         activityElevations: [500, 100, 200],
         activityTypes: ['MountainBikeRide', 'Ride', 'GravelRide'],
+        activityGearIds: ['road', 'road', 'road'],
         activityDistances: [10 * MI, 30 * MI, 20 * MI],
         activityStartDates: ['2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z'],
         totalCyclingActivities: 3,
@@ -44,5 +46,27 @@ describe('recomputeStats ride type breakdown', () => {
     it('omits the breakdown for running', async () => {
         await recomputeStats('42', undefined, 'running');
         expect(persisted().rideTypeBreakdown).toBeUndefined();
+        expect(fetchMountainBikeGearIds).not.toHaveBeenCalled();
+    });
+
+    it('counts plain rides on a mountain bike as MTB, per year too (#136)', async () => {
+        (fetchCyclingRiddenRoads as jest.Mock).mockResolvedValueOnce({
+            riddenRoads: [track, track],
+            activityElevations: [0, 0],
+            activityTypes: ['Ride', 'Ride'],
+            activityGearIds: ['mtb', 'road'],
+            activityDistances: [10 * MI, 30 * MI],
+            activityStartDates: ['2015-01-01T00:00:00Z', '2026-01-02T00:00:00Z'],
+            totalCyclingActivities: 2,
+            totalCyclingElevationGainMeters: 0,
+        });
+        await recomputeStats('42', { refreshToken: 'r' }, 'cycling');
+        expect(fetchMountainBikeGearIds).toHaveBeenCalledWith({ refreshToken: 'r' }, ['mtb', 'road']);
+        const { rideTypeBreakdown } = persisted();
+        expect(rideTypeBreakdown.mountain.rides).toBe(1);
+        expect(rideTypeBreakdown.perYear).toEqual([
+            { year: 2015, mountainMiles: expect.closeTo(10, 5), roadGravelMiles: 0 },
+            { year: 2026, mountainMiles: 0, roadGravelMiles: expect.closeTo(30, 5) },
+        ]);
     });
 });

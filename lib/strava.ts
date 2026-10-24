@@ -34,6 +34,7 @@ export interface StravaActivity {
     total_elevation_gain?: number; // meters; Strava returns 0 if unknown
     type: string;
     sport_type?: string;
+    gear_id?: string | null;
     comment_count?: number;
 }
 
@@ -41,6 +42,7 @@ export interface RiddenActivities {
     riddenRoads: [number, number][][];
     activityElevations: number[];
     activityTypes: string[];
+    activityGearIds: string[];
     activityDistances: number[]; // meters
     activityStartDates: string[]; // ISO
     // Broader than riddenRoads: also includes VirtualRide (real cycling
@@ -109,6 +111,7 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         riddenRoads: real.map(r => r.poly),
         activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),
         activityTypes: real.map(r => r.a.sport_type || r.a.type || ''),
+        activityGearIds: real.map(r => r.a.gear_id ?? ''),
         activityDistances: real.map(r => r.a.distance ?? 0),
         activityStartDates: real.map(r => r.a.start_date ?? ''),
         totalCyclingActivities: allCycling.length,
@@ -326,10 +329,33 @@ export async function fetchStravaActivity(accessToken: string, activityId: strin
             total_elevation_gain: d.total_elevation_gain,
             type: d.type,
             sport_type: d.sport_type,
+            gear_id: d.gear_id,
             comment_count: d.comment_count,
         },
         fullPolyline: d.map.polyline || undefined,
     };
+}
+
+// Strava gear frame_type 1 = mountain bike. A bike's frame type is fixed, so
+// it's looked up once per process; a failed lookup is retried next time.
+const MOUNTAIN_BIKE_FRAME_TYPE = 1;
+const GEAR_FRAME_TYPE_CACHE = new Map<string, number | null>();
+
+export async function fetchMountainBikeGearIds(creds: { clientId?: string; clientSecret?: string; refreshToken?: string } | undefined, gearIds: string[]): Promise<Set<string>> {
+    const unknown = Array.from(new Set(gearIds.filter(g => g && !GEAR_FRAME_TYPE_CACHE.has(g))));
+    if (unknown.length > 0) {
+        const accessToken = await getStravaAccessToken(creds);
+        for (const gearId of unknown) {
+            const res = await fetch(`https://www.strava.com/api/v3/gear/${gearId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            if (!res.ok) {
+                console.warn(`[Strava] Gear ${gearId} lookup failed: ${res.status}`);
+                continue;
+            }
+            const gear = await res.json() as { frame_type?: number };
+            GEAR_FRAME_TYPE_CACHE.set(gearId, gear.frame_type ?? null);
+        }
+    }
+    return new Set(gearIds.filter(g => GEAR_FRAME_TYPE_CACHE.get(g) === MOUNTAIN_BIKE_FRAME_TYPE));
 }
 
 // Cap per call so a rider with a large backlog of un-backfilled rides doesn't

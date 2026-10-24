@@ -65,6 +65,8 @@ describe('StatsDialog ride types', () => {
         mountain: { rides: 4, miles: 50, elevationFeet: 6000 },
         roadGravel: { rides: 7, miles: 150, elevationFeet: 4000 },
     };
+    const ridesPerYear = [{ year: 2016, rides: 5, miles: 100 }, { year: 2026, rides: 6, miles: 100 }];
+    const perYear = [{ year: 2016, mountainMiles: 75, roadGravelMiles: 25 }, { year: 2026, mountainMiles: 0, roadGravelMiles: 100 }];
 
     it('shows mountain bike vs road/gravel totals', async () => {
         renderStats('imperial', { rideTypeBreakdown });
@@ -82,5 +84,11 @@ describe('StatsDialog ride types', () => {
         renderStats('imperial');
         expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
         expect(screen.queryByText('Ride Types')).not.toBeInTheDocument();
+    });
+
+    it('stacks the mountain bike share into each year bar (#136)', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear });
+        expect(await screen.findByTestId('mtb-bar-2016')).toHaveStyle({ height: '75%' });
+        expect(screen.getByTestId('mtb-bar-2026')).toHaveStyle({ height: '0%' });
     });
 });
