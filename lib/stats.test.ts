@@ -215,19 +215,19 @@ describe('stats.computeRideTypeBreakdown', () => {
         });
     });
 
-    it('counts a plain Ride on a mountain bike as MTB (#136)', () => {
+    it('lets the bike frame type decide over the activity type (#136)', () => {
         const r = computeRideTypeBreakdown(
-            ['Ride', 'Ride', 'GravelRide', 'MountainBikeRide'],
+            ['Ride', 'MountainBikeRide', 'GravelRide', 'MountainBikeRide'],
             [10 * MI, 20 * MI, 5 * MI, 7 * MI],
             [0, 0, 0, 0],
             [],
-            ['mtb', 'road', 'mtb', 'road'],
-            new Set(['mtb'])
+            ['mtb', 'road', 'mtb', ''],
+            new Map([['mtb', 1], ['road', 3]])
         );
-        expect(r.mountain.rides).toBe(2);
-        expect(r.mountain.miles).toBeCloseTo(17, 5);
-        expect(r.roadGravel.rides).toBe(2);
-        expect(r.roadGravel.miles).toBeCloseTo(25, 5);
+        expect(r.mountain.rides).toBe(3);
+        expect(r.mountain.miles).toBeCloseTo(22, 5);
+        expect(r.roadGravel.rides).toBe(1);
+        expect(r.roadGravel.miles).toBeCloseTo(20, 5);
     });
 
     it('splits miles per year (#136)', () => {
@@ -246,15 +246,17 @@ describe('stats.computeRideTypeBreakdown', () => {
 });
 
 describe('stats.isMountainBikeRide (#136)', () => {
-    const mtb = new Set(['b1']);
-    it('trusts an explicit sport type over the bike', () => {
-        expect(isMountainBikeRide('MountainBikeRide', 'road', mtb)).toBe(true);
-        expect(isMountainBikeRide('GravelRide', 'b1', mtb)).toBe(false);
+    const frames = new Map([['mtb', 1], ['road', 3], ['gravel', 5]]);
+    it('uses the bike frame type when the bike is known', () => {
+        expect(isMountainBikeRide('Ride', 'mtb', frames)).toBe(true);
+        expect(isMountainBikeRide('GravelRide', 'mtb', frames)).toBe(true);
+        expect(isMountainBikeRide('MountainBikeRide', 'road', frames)).toBe(false);
+        expect(isMountainBikeRide('MountainBikeRide', 'gravel', frames)).toBe(false);
     });
 
-    it('uses the bike frame type for a plain Ride', () => {
-        expect(isMountainBikeRide('Ride', 'b1', mtb)).toBe(true);
-        expect(isMountainBikeRide('Ride', 'b2', mtb)).toBe(false);
-        expect(isMountainBikeRide('Ride', '', mtb)).toBe(false);
+    it('falls back to the activity type without a known bike', () => {
+        expect(isMountainBikeRide('MountainBikeRide', '', frames)).toBe(true);
+        expect(isMountainBikeRide('MountainBikeRide', 'unlooked', frames)).toBe(true);
+        expect(isMountainBikeRide('Ride', '', frames)).toBe(false);
     });
 });

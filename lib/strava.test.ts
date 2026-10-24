@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchMountainBikeGearIds } from './strava';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 
@@ -485,7 +485,7 @@ describe('fetchFtpReadings incremental scan (#148)', () => {
     });
 });
 
-describe('fetchMountainBikeGearIds (#136)', () => {
+describe('fetchGearFrameTypes (#136)', () => {
     const frameTypes: Record<string, number> = { mtb1: 1, road1: 3, gravel1: 5 };
     beforeEach(() => {
         global.fetch = jest.fn((url: string) => {
@@ -496,16 +496,16 @@ describe('fetchMountainBikeGearIds (#136)', () => {
         }) as any;
     });
 
-    it('returns only the bikes Strava says are mountain bikes', async () => {
-        const ids = await fetchMountainBikeGearIds(creds, ['mtb1', 'road1', 'gravel1', 'mtb1', '', 'gone1']);
-        expect(Array.from(ids)).toEqual(['mtb1']);
+    it('returns the frame type of each bike Strava could look up', async () => {
+        const frames = await fetchGearFrameTypes(creds, ['mtb1', 'road1', 'gravel1', 'mtb1', '', 'gone1']);
+        expect(Object.fromEntries(frames)).toEqual({ mtb1: 1, road1: 3, gravel1: 5 });
     });
 
     it('looks each bike up only once', async () => {
-        await fetchMountainBikeGearIds(creds, ['mtb1', 'road1']);
+        await fetchGearFrameTypes(creds, ['mtb1', 'road1']);
         const gearCalls = () => (global.fetch as jest.Mock).mock.calls.filter(([u]) => u.includes('/gear/'));
         expect(gearCalls()).toHaveLength(0);
-        expect(Array.from(await fetchMountainBikeGearIds(creds, ['mtb1', 'gone1']))).toEqual(['mtb1']);
+        expect(Object.fromEntries(await fetchGearFrameTypes(creds, ['mtb1', 'gone1']))).toEqual({ mtb1: 1 });
         expect(gearCalls().map(([u]) => u)).toEqual(['https://www.strava.com/api/v3/gear/gone1']);
     });
 });

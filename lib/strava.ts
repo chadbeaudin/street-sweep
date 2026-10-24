@@ -336,12 +336,11 @@ export async function fetchStravaActivity(accessToken: string, activityId: strin
     };
 }
 
-// Strava gear frame_type 1 = mountain bike. A bike's frame type is fixed, so
-// it's looked up once per process; a failed lookup is retried next time.
-const MOUNTAIN_BIKE_FRAME_TYPE = 1;
-const GEAR_FRAME_TYPE_CACHE = new Map<string, number | null>();
+// A bike's Strava frame_type (1 mountain, 2 cross, 3 road, 4 TT, 5 gravel),
+// looked up once per process; a failed lookup is retried next time.
+const GEAR_FRAME_TYPE_CACHE = new Map<string, number>();
 
-export async function fetchMountainBikeGearIds(creds: { clientId?: string; clientSecret?: string; refreshToken?: string } | undefined, gearIds: string[]): Promise<Set<string>> {
+export async function fetchGearFrameTypes(creds: { clientId?: string; clientSecret?: string; refreshToken?: string } | undefined, gearIds: string[]): Promise<Map<string, number>> {
     const unknown = Array.from(new Set(gearIds.filter(g => g && !GEAR_FRAME_TYPE_CACHE.has(g))));
     if (unknown.length > 0) {
         const accessToken = await getStravaAccessToken(creds);
@@ -352,10 +351,10 @@ export async function fetchMountainBikeGearIds(creds: { clientId?: string; clien
                 continue;
             }
             const gear = await res.json() as { frame_type?: number };
-            GEAR_FRAME_TYPE_CACHE.set(gearId, gear.frame_type ?? null);
+            if (gear.frame_type !== undefined) GEAR_FRAME_TYPE_CACHE.set(gearId, gear.frame_type);
         }
     }
-    return new Set(gearIds.filter(g => GEAR_FRAME_TYPE_CACHE.get(g) === MOUNTAIN_BIKE_FRAME_TYPE));
+    return new Map(gearIds.filter(g => GEAR_FRAME_TYPE_CACHE.has(g)).map(g => [g, GEAR_FRAME_TYPE_CACHE.get(g)!]));
 }
 
 // Cap per call so a rider with a large backlog of un-backfilled rides doesn't
