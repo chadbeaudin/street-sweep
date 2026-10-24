@@ -5,6 +5,7 @@ import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
 import { encryptToken } from './tokenCrypto';
 import { touchUserLastSeen } from './metrics';
+import { sendTelegramMessage } from './telegram';
 
 const providers: NextAuthOptions['providers'] = [];
 
@@ -97,7 +98,11 @@ export const authOptions: NextAuthOptions = {
         // The adapter only stores tokens when an account is first linked, so a
         // returning user who re-consents (e.g. to grant activity:write) would
         // keep their old token and scope without this.
-        async signIn({ account }) {
+        async signIn({ user, account, isNewUser }) {
+            if (isNewUser) {
+                const athleteId = (user as { athleteId?: string }).athleteId ?? account?.providerAccountId;
+                void sendTelegramMessage(`StreetSweep: new user signed up: ${user.name ?? 'unknown'} (https://www.strava.com/athletes/${athleteId})`);
+            }
             if (account?.provider !== 'strava' || !account.refresh_token) return;
             await prisma.account.updateMany({
                 where: { provider: 'strava', providerAccountId: account.providerAccountId },
