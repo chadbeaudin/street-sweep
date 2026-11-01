@@ -41,8 +41,8 @@ jobs:
       - name: Build
         run: npm run build
 
-  # Runs alongside `test`; only deploy-fly waits on tests. Pushing an untested
-  # image is harmless because Fly is the only consumer and nothing pulls :latest.
+  # Runs alongside `test`; deploy-fly and publish-ghcr wait on tests. Pushing an
+  # untested image here is harmless because nothing pulls it until they run.
   build-and-push:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -77,6 +77,38 @@ jobs:
           tags: registry.fly.io/streetsweep:v${{ steps.version.outputs.version }}
           build-args: |
             VERSION=v${{ steps.version.outputs.version }}
+
+  # Nastromo's worker container auto-pulls :latest, so only retag after tests pass.
+  publish-ghcr:
+    needs: [test, build-and-push]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    permissions:
+      packages: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Fly registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.fly.io
+          username: x
+          password: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy image to GHCR
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/chadbeaudin/streetsweep:v${{ needs.build-and-push.outputs.version }} \
+            -t ghcr.io/chadbeaudin/streetsweep:latest \
+            registry.fly.io/streetsweep:v${{ needs.build-and-push.outputs.version }}
 
   deploy-fly:
     needs: [test, build-and-push]

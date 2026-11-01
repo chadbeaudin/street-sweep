@@ -63,7 +63,7 @@ RUN mkdir -p .cache && chown nextjs:nodejs .cache
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# The `worker` Fly process group (fly.toml [processes]) runs this same
+# The worker container on Nastromo (scripts/worker-tick-loop.js) runs this same
 # server.js plus a small self-ticking loop (scripts/worker-tick-loop.js) that
 # calls its own internal-only endpoint (app/api/internal/ridden-roads-tick) --
 # see lib/riddenRoadsRefresh.ts for why: a large ridden-roads recompute used

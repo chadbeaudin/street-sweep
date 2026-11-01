@@ -1,6 +1,6 @@
-// The actual recompute pipeline, run only by the separate `worker` Fly
-// process group (see app/api/internal/ridden-roads-tick/route.ts and
-// fly.toml) -- never inline in a web-serving request. This used to run
+// The actual recompute pipeline, run only by the separate worker container
+// (see app/api/internal/ridden-roads-tick/route.ts and
+// scripts/worker-tick-loop.js) -- never inline in a web-serving request. This used to run
 // fire-and-forget inside the same process as web traffic and could OOM-crash
 // or block the whole app's event loop for 10+ minutes (a real prod incident);
 // see lib/riddenRoadsRefresh.ts's own comment for the full story.

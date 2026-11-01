@@ -1,5 +1,5 @@
 // Processes the per-athlete queue fed by the Strava webhook (#118), run only
-// by the `worker` Fly machine's tick loop (app/api/internal/ridden-roads-tick).
+// by the worker container's tick loop (app/api/internal/ridden-roads-tick).
 // Each tick handles one athlete: apply that athlete's queued activity changes
 // to the cached activity list, recompute stats, and re-match only the
 // ridden-roads tiles the changed rides cross.
