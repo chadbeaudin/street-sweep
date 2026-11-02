@@ -435,23 +435,47 @@ export async function forceSyncStravaActivities(creds?: { clientId?: string; cli
     if (changed) await enqueueAthleteSync(athleteId, 'recompute', { creds });
 }
 
+// activityId -> comment_count when that activity was last scanned.
+export type FtpScanState = Record<string, number>;
+
+export interface FtpScanResult {
+    readings: FtpReading[];
+    scanned: FtpScanState;
+}
+
 // Scans the athlete's own comments on their activities for FTP mentions (#76).
 // The activity list already carries comment_count, so only activities that
 // actually have comments cost an extra API call. Activities named "FTP ..."
 // (e.g. "FTP Test") also get their full description checked — that field only
 // comes back from the per-activity detail endpoint, so it's reserved for
 // name-matched activities to avoid one detail call per activity in the history.
-export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<FtpReading[]> {
-    const accessToken = await getStravaAccessToken(creds);
+// Incremental (#148): an activity whose comment_count hasn't changed since the
+// previous scan keeps its previous readings without any API call, so a refresh
+// costs one call per new or newly-commented activity instead of one per
+// commented activity in the whole history.
+export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }, previous?: FtpScanResult): Promise<FtpScanResult> {
     const activities = await getCachedOrFetchActivities(creds);
-    const authHeaders = { Authorization: `Bearer ${accessToken}` };
+    const previousScanned = previous?.scanned ?? {};
+    const previousReadings = previous?.readings ?? [];
 
     const readings: FtpReading[] = [];
+    const scanned: FtpScanState = {};
+    let authHeaders: { Authorization: string } | undefined;
+    const headers = async () => authHeaders ??= { Authorization: `Bearer ${await getStravaAccessToken(creds)}` };
+
     for (const activity of activities) {
+        const key = activity.id.toString();
+        const commentCount = activity.comment_count ?? 0;
+        scanned[key] = commentCount;
+        if (previousScanned[key] === commentCount) {
+            readings.push(...previousReadings.filter(r => r.activityId === activity.id));
+            continue;
+        }
+
         const nameSignalsFtp = /ftp/i.test(activity.name);
 
         if (nameSignalsFtp) {
-            const detailRes = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}`, { headers: authHeaders });
+            const detailRes = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}`, { headers: await headers() });
             if (detailRes.ok) {
                 const detail = await detailRes.json() as { description?: string };
                 if (detail.description) {
@@ -461,9 +485,12 @@ export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret
             }
         }
 
-        if ((activity.comment_count ?? 0) === 0) continue;
-        const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}/comments`, { headers: authHeaders });
-        if (!res.ok) continue;
+        if (commentCount === 0) continue;
+        const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}/comments`, { headers: await headers() });
+        if (!res.ok) {
+            delete scanned[key]; // retry on the next refresh
+            continue;
+        }
         const comments = await res.json() as { text: string }[];
         for (const comment of comments) {
             const value = nameSignalsFtp
@@ -472,5 +499,5 @@ export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret
             if (value !== null) readings.push({ value, date: activity.start_date, activityId: activity.id });
         }
     }
-    return readings.sort((a, b) => a.date.localeCompare(b.date));
+    return { readings: readings.sort((a, b) => a.date.localeCompare(b.date)), scanned };
 }

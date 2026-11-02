@@ -14,13 +14,14 @@ jest.mock('@/lib/prisma', () => ({
 jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 
 import { POST } from './route';
-import { resolveAthleteId } from '@/lib/strava';
+import { resolveAthleteId, fetchFtpReadings } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const mockedResolveAthleteId = resolveAthleteId as jest.MockedFunction<typeof resolveAthleteId>;
 const mockedFindUnique = prisma.ftpReadingCache.findUnique as jest.MockedFunction<typeof prisma.ftpReadingCache.findUnique>;
 const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
+const mockedFetchFtp = fetchFtpReadings as jest.MockedFunction<typeof fetchFtpReadings>;
 const SIGNED_IN = { refreshToken: 'session-tok' };
 
 beforeEach(() => {
@@ -52,5 +53,23 @@ describe('POST /api/ftp', () => {
         await POST(makeRequest({ stravaCredentials: sent }));
         expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
         expect(mockedResolveAthleteId).toHaveBeenCalledWith(SIGNED_IN);
+    });
+
+    it('refreshes a stale cache incrementally from its stored scan state (#148)', async () => {
+        const readings = [{ value: 250, date: '2024-01-01T00:00:00Z', activityId: 1 }];
+        const scanned = { '1': 1 };
+        mockedFindUnique.mockResolvedValueOnce({ athleteId: 'athlete-1', readings, scanned, refreshedAt: new Date(0) } as any);
+        mockedFetchFtp.mockResolvedValueOnce({ readings, scanned });
+        await POST(makeRequest({}));
+        expect(mockedFetchFtp).toHaveBeenCalledWith(SIGNED_IN, { readings, scanned });
+        await new Promise(r => setImmediate(r));
+        expect(prisma.ftpReadingCache.upsert).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ scanned }) }));
+    });
+
+    it('does a full scan for a row cached before scan state existed', async () => {
+        mockedFindUnique.mockResolvedValueOnce({ athleteId: 'athlete-1', readings: [], scanned: null, refreshedAt: new Date(0) } as any);
+        mockedFetchFtp.mockResolvedValueOnce({ readings: [], scanned: {} });
+        await POST(makeRequest({}));
+        expect(mockedFetchFtp).toHaveBeenCalledWith(SIGNED_IN, undefined);
     });
 });
