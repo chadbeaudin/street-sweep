@@ -44,6 +44,7 @@ import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, til
 import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles, expandBBox, flattenRiddenTiles, type RiddenTileRoads } from '@/lib/roadTiles';
 import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
 import { listKeyAction } from '@/lib/listNavigation';
+import { useAvoidedRoadsSync } from '@/lib/useAvoidedRoadsSync';
 
 const RIDDEN_PREFETCH_FRACTION = 0.5;
 
@@ -120,6 +121,8 @@ export default function Home() {
         if (routingOptionsFirstSaveRef.current) { routingOptionsFirstSaveRef.current = false; return; }
         try { localStorage.setItem('streetsweep_routing_options', JSON.stringify(routingOptions)); } catch { /* ignore */ }
     }, [routingOptions]);
+    const setAvoidedRoads = useCallback((avoidedRoads: [number, number][][]) => setRoutingOptions(ro => ({ ...ro, avoidedRoads })), []);
+    useAvoidedRoadsSync(sessionStatus, routingOptions.avoidedRoads, setAvoidedRoads);
     const [showOptions, setShowOptions] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [showMobileExport, setShowMobileExport] = useState(false);
