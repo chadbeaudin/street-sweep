@@ -12,6 +12,7 @@ import { isModeActivity } from './stats';
 import { recomputeStats, statsCacheKey } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { creditMatchingActivities } from './routeCredit';
+import { forwardToBridge } from './bridgeForward';
 import { decryptJobCreds, refreshRiddenRoadsInBackground, riddenRoadsCacheKey, tilesForBbox, ActivityMode, Creds } from './riddenRoadsRefresh';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -142,6 +143,7 @@ async function processAthlete(athleteId: string, events: StravaSyncEvent[]): Pro
     }
     const { creds } = resolved;
     const accessToken = await getStravaAccessToken(creds);
+    await forwardToBridge(athleteId, accessToken, events);
 
     const latest = new Map<string, string>();
     for (const e of events) if (e.activityId && ['create', 'update', 'delete'].includes(e.aspect)) latest.set(e.activityId, e.aspect);
