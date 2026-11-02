@@ -30,6 +30,11 @@ describe('deploy config', () => {
         expect(fs.existsSync(path.join(root, 'public/icons/icon-512.png'))).toBe(true);
     });
 
+    it('reaches Postgres by its certificate hostname, mapped to the LAN IP', () => {
+        expect(unraidTemplate).toMatch(/<ExtraParams>[^<]*--add-host=postgres\.bigtimber\.cloud:192\.168\.1\.138[^<]*<\/ExtraParams>/);
+        expect(unraidTemplate).toContain('@postgres.bigtimber.cloud:5435/postgres?sslmode=verify-full');
+    });
+
     it('binds the server to all interfaces so the worker tick loop can reach it on localhost', () => {
         const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
         expect(dockerfile).toMatch(/^ENV HOSTNAME 0\.0\.0\.0$/m);

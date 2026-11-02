@@ -14,7 +14,7 @@
   <WebUI/>
   <TemplateURL>https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/templates/streetsweep-worker.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/chadbeaudin/street-sweep/main/public/icons/icon-512.png</Icon>
-  <ExtraParams>--memory=4g --restart=unless-stopped</ExtraParams>
+  <ExtraParams>--memory=4g --restart=unless-stopped --add-host=postgres.bigtimber.cloud:192.168.1.138</ExtraParams>
   <PostArgs>sh -c 'node server.js &amp; sleep 5 &amp;&amp; node scripts/worker-tick-loop.js'</PostArgs>
   <CPUset/>
   <DateInstalled/>
@@ -28,7 +28,7 @@
   <Data/>
   <Environment/>
   <Labels/>
-  <Config Name="Database URL" Target="DATABASE_URL" Default="" Mode="" Description="Prod Postgres connection string, pointed at Nastromo's LAN IP (database: postgres)." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Database URL" Target="DATABASE_URL" Default="" Mode="" Description="Prod Postgres connection string using the hostname, e.g. postgres://USER:PASSWORD@postgres.bigtimber.cloud:5435/postgres?sslmode=verify-full. Extra Parameters maps the hostname to the LAN IP; an IP here fails TLS verification." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Overpass URL" Target="OVERPASS_URL" Default="" Mode="" Description="Self-hosted Overpass API endpoint on the LAN." Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Account Token Encryption Key" Target="ACCOUNT_TOKEN_ENCRYPTION_KEY" Default="" Mode="" Description="Must exactly match the Fly app's value; decrypts users' stored Strava tokens." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Strava Client ID" Target="STRAVA_CLIENT_ID" Default="" Mode="" Description="Same as the Fly app." Type="Variable" Display="always" Required="true" Mask="false"/>
