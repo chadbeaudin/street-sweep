@@ -45,7 +45,7 @@ describe('StatsDialog units', () => {
         expect(screen.getByText('100.0')).toBeInTheDocument();
         expect(screen.getByText('10,000')).toBeInTheDocument();
         expect(screen.getByText('ft total')).toBeInTheDocument();
-        expect(screen.getByText('of miles were new')).toBeInTheDocument();
+        expect(screen.getByText('of IRL miles were new')).toBeInTheDocument();
     });
 
     it('shows kilometers and meters in metric', async () => {
@@ -56,7 +56,7 @@ describe('StatsDialog units', () => {
         expect(screen.getByText('m total')).toBeInTheDocument();
         expect(screen.getByText('322')).toBeInTheDocument();
         expect(screen.getByText('914')).toBeInTheDocument();
-        expect(screen.getByText('of km were new')).toBeInTheDocument();
+        expect(screen.getByText('of IRL km were new')).toBeInTheDocument();
     });
 });
 
@@ -90,5 +90,23 @@ describe('StatsDialog ride types', () => {
         renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear });
         expect(await screen.findByTestId('mtb-bar-2016')).toHaveStyle({ height: '75%' });
         expect(screen.getByTestId('mtb-bar-2026')).toHaveStyle({ height: '0%' });
+    });
+});
+
+describe('StatsDialog IRL vs virtual split', () => {
+    const totals = (activities: number, distanceMiles: number) => ({ activities, distanceMiles, elevationFeet: 1000, longestRideMiles: 10, biggestClimbFeet: 500, activeDays: activities });
+
+    it('shows IRL and virtual under each combined total', async () => {
+        renderStats('imperial', { split: { irl: totals(2, 150), virtual: totals(1, 50) } });
+        expect(await screen.findByText('IRL 150')).toBeInTheDocument();
+        expect(screen.getByText('Virtual 50')).toBeInTheDocument();
+        expect(screen.getAllByText('IRL 2')).toHaveLength(2); // activities and active days
+        expect(screen.getAllByText('Virtual 1,000')).toHaveLength(1); // climbed
+    });
+
+    it('is hidden for stats cached before the split existed', async () => {
+        renderStats('imperial');
+        expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
+        expect(screen.queryByText(/^IRL /)).not.toBeInTheDocument();
     });
 });

@@ -99,6 +99,8 @@ describe('fetchCyclingRiddenRoads', () => {
         expect(result.riddenRoads.length).toBe(1); // VirtualRide excluded from real-world roads
         expect(result.totalCyclingActivities).toBe(2); // but counted in the broader total
         expect(result.totalCyclingElevationGainMeters).toBe(150); // 100 + 50
+        expect(result.virtualElevations).toEqual([50]);
+        expect(result.virtualDistances).toHaveLength(1);
     });
 
     it('excludes non-cycling activities (Run/Hike) from both real and cycling totals', async () => {

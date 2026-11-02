@@ -49,6 +49,27 @@ export function computeRideRecords(distancesM: number[], elevationsM: number[], 
     };
 }
 
+export interface ActivityTotals {
+    activities: number;
+    distanceMiles: number;
+    elevationFeet: number;
+    longestRideMiles: number;
+    biggestClimbFeet: number;
+    activeDays: number;
+}
+
+export function computeActivityTotals(distancesM: number[], elevationsM: number[], startDates: string[]): ActivityTotals {
+    const records = computeRideRecords(distancesM, elevationsM, startDates);
+    return {
+        activities: distancesM.length,
+        distanceMiles: records.totalDistanceMiles,
+        elevationFeet: elevationsM.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET,
+        longestRideMiles: records.longestRideMiles,
+        biggestClimbFeet: records.biggestClimbFeet,
+        activeDays: records.activeDays,
+    };
+}
+
 export interface RideTypeTotals {
     rides: number;
     miles: number;

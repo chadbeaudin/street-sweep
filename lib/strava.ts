@@ -50,6 +50,11 @@ export interface RiddenActivities {
     // totals — see isCyclingActivity.
     totalCyclingActivities: number;
     totalCyclingElevationGainMeters: number;
+    // The broad set minus the real-world tracks above: VirtualRide/VirtualRun
+    // plus indoor trainer and GPS-less rides.
+    virtualDistances: number[]; // meters
+    virtualElevations: number[];
+    virtualStartDates: string[]; // ISO
 }
 
 // Single source of truth for what the app treats as "ridden": real-world
@@ -107,6 +112,8 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
     }
 
     const allCycling = all.filter(a => isModeActivityBroad(a.sport_type || a.type, mode));
+    const realIds = new Set(real.map(r => r.a.id));
+    const virtual = allCycling.filter(a => !realIds.has(a.id));
     return {
         riddenRoads: real.map(r => r.poly),
         activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),
@@ -116,6 +123,9 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         activityStartDates: real.map(r => r.a.start_date ?? ''),
         totalCyclingActivities: allCycling.length,
         totalCyclingElevationGainMeters: allCycling.reduce((sum, a) => sum + (a.total_elevation_gain ?? 0), 0),
+        virtualDistances: virtual.map(a => a.distance ?? 0),
+        virtualElevations: virtual.map(a => a.total_elevation_gain ?? 0),
+        virtualStartDates: virtual.map(a => a.start_date ?? ''),
     };
 }
 

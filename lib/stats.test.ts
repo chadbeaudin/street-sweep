@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeRideTypeBreakdown, isMountainBikeRide } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, isMountainBikeRide } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -188,6 +188,19 @@ describe('stats.computeRideRecords', () => {
         expect(r.longestRideMiles).toBe(0);
         expect(r.activeDays).toBe(0);
         expect(r.ridesPerYear).toEqual([]);
+    });
+});
+
+describe('stats.computeActivityTotals', () => {
+    const MI = 1609.344;
+    it('counts activities and sums elevation alongside the records', () => {
+        const t = computeActivityTotals([10 * MI, 25 * MI], [100, 500], ['2024-05-01T10:00:00Z', '2024-05-02T10:00:00Z']);
+        expect(t.activities).toBe(2);
+        expect(t.distanceMiles).toBeCloseTo(35, 5);
+        expect(t.elevationFeet).toBeCloseTo(600 * 3.28084, 3);
+        expect(t.longestRideMiles).toBeCloseTo(25, 5);
+        expect(t.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
+        expect(t.activeDays).toBe(2);
     });
 });
 

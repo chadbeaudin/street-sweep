@@ -16,6 +16,7 @@ interface CityStats {
 }
 
 interface RideTypeTotals { rides: number; miles: number; elevationFeet: number }
+interface ActivityTotals { activities: number; distanceMiles: number; elevationFeet: number; longestRideMiles: number; biggestClimbFeet: number; activeDays: number }
 
 interface StatsResponse {
     totalActivities?: number;
@@ -28,6 +29,7 @@ interface StatsResponse {
     activeDays?: number;
     ridesPerYear?: { year: number; rides: number; miles: number }[];
     rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals> & { perYear?: { year: number; mountainMiles: number; roadGravelMiles: number }[] };
+    split?: { irl: ActivityTotals; virtual: ActivityTotals };
     cities?: CityStats[];
     bikingStats?: BikingGeographies;
     refreshedAt?: string | null;
@@ -115,6 +117,15 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     const { units } = useUnits();
     const dist = (miles: number) => distanceFromMiles(miles, units);
     const elev = (feet: number) => elevationFromFeet(feet, units);
+    const splitOf = (pick: (t: ActivityTotals) => number) =>
+        stats?.split ? { irl: Math.round(pick(stats.split.irl)).toLocaleString(), virtual: Math.round(pick(stats.split.virtual)).toLocaleString() } : null;
+    const splitLines = (split: { irl: string; virtual: string } | null, className: string) =>
+        split ? (
+            <div className={`text-[10px] tabular-nums leading-tight mt-1 ${className}`}>
+                <div>IRL {split.irl}</div>
+                <div>Virtual {split.virtual}</div>
+            </div>
+        ) : null;
     const activityNoun = activityMode === 'running' ? 'run' : 'ride';
     const activityNounPlural = activityMode === 'running' ? 'runs' : 'rides';
     const activityVerbPast = activityMode === 'running' ? 'run' : 'ridden';
@@ -269,6 +280,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <Activity className="w-4 h-4 text-gray-400 mb-1.5" />
                                     <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Activities</div>
                                     <div className="text-2xl font-bold text-gray-900 mt-0.5 tabular-nums whitespace-nowrap">{stats.totalActivities?.toLocaleString()}</div>
+                                    {splitLines(splitOf(t => t.activities), 'text-gray-500')}
                                 </div>
                                 <div className="bg-gradient-to-br from-indigo-50 to-indigo-100/60 rounded-xl p-4 border border-indigo-100">
                                     <Route className="w-4 h-4 text-indigo-400 mb-1.5" />
@@ -281,6 +293,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <div className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">Climbed</div>
                                     <div className="text-2xl font-bold text-amber-900 mt-0.5 tabular-nums whitespace-nowrap">{Math.round(elev(stats.totalElevationFeet ?? 0)).toLocaleString()}</div>
                                     <div className="text-[11px] text-amber-500 mt-0.5">{elevationUnit(units)} total</div>
+                                    {splitLines(splitOf(t => elev(t.elevationFeet)), 'text-amber-600')}
                                 </div>
                             </div>
 
@@ -371,16 +384,17 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     <h3 className="text-sm font-semibold text-gray-700 mb-3">Records</h3>
                                     <div className="grid grid-cols-3 gap-2">
                                         {[
-                                            { label: 'Total Distance', value: `${Math.round(dist(stats.totalDistanceMiles)).toLocaleString()}`, unit: distanceUnit(units) },
-                                            { label: 'New Ground', value: `${Math.round(stats.explorationPct ?? 0)}%`, unit: `of ${distanceUnit(units, true)} were new` },
-                                            { label: activityMode === 'running' ? 'Longest Run' : 'Longest Ride', value: `${Math.round(dist(stats.longestRideMiles ?? 0))}`, unit: distanceUnit(units) },
-                                            { label: 'Biggest Climb', value: `${Math.round(elev(stats.biggestClimbFeet ?? 0)).toLocaleString()}`, unit: elevationUnit(units) },
-                                            { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days' },
+                                            { label: 'Total Distance', value: `${Math.round(dist(stats.totalDistanceMiles)).toLocaleString()}`, unit: distanceUnit(units), split: splitOf(t => dist(t.distanceMiles)) },
+                                            { label: 'New Ground', value: `${Math.round(stats.explorationPct ?? 0)}%`, unit: `of IRL ${distanceUnit(units, true)} were new`, split: null },
+                                            { label: activityMode === 'running' ? 'Longest Run' : 'Longest Ride', value: `${Math.round(dist(stats.longestRideMiles ?? 0))}`, unit: distanceUnit(units), split: splitOf(t => dist(t.longestRideMiles)) },
+                                            { label: 'Biggest Climb', value: `${Math.round(elev(stats.biggestClimbFeet ?? 0)).toLocaleString()}`, unit: elevationUnit(units), split: splitOf(t => elev(t.biggestClimbFeet)) },
+                                            { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days', split: splitOf(t => t.activeDays) },
                                         ].map(r => (
                                             <div key={r.label} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{r.label}</div>
                                                 <div className="text-xl font-bold text-gray-900 mt-0.5 tabular-nums whitespace-nowrap">{r.value}</div>
                                                 <div className="text-[10px] text-gray-400">{r.unit}</div>
+                                                {splitLines(r.split, 'text-gray-500')}
                                             </div>
                                         ))}
                                     </div>

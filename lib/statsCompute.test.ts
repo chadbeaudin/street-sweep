@@ -30,6 +30,9 @@ beforeEach(() => {
         activityStartDates: ['2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z'],
         totalCyclingActivities: 3,
         totalCyclingElevationGainMeters: 800,
+        virtualDistances: [],
+        virtualElevations: [],
+        virtualStartDates: [],
     });
 });
 
@@ -59,6 +62,9 @@ describe('recomputeStats ride type breakdown', () => {
             activityStartDates: ['2015-01-01T00:00:00Z', '2026-01-02T00:00:00Z'],
             totalCyclingActivities: 2,
             totalCyclingElevationGainMeters: 0,
+            virtualDistances: [],
+            virtualElevations: [],
+            virtualStartDates: [],
         });
         await recomputeStats('42', { refreshToken: 'r' }, 'cycling');
         expect(fetchGearFrameTypes).toHaveBeenCalledWith({ refreshToken: 'r' }, ['mtb', 'road']);
@@ -68,5 +74,33 @@ describe('recomputeStats ride type breakdown', () => {
             { year: 2015, mountainMiles: expect.closeTo(10, 5), roadGravelMiles: 0 },
             { year: 2026, mountainMiles: 0, roadGravelMiles: expect.closeTo(30, 5) },
         ]);
+    });
+});
+
+describe('recomputeStats IRL vs virtual split', () => {
+    it('splits totals and reports combined records', async () => {
+        (fetchCyclingRiddenRoads as jest.Mock).mockResolvedValueOnce({
+            riddenRoads: [track, track],
+            activityElevations: [100, 300],
+            activityTypes: ['Ride', 'Ride'],
+            activityGearIds: ['', ''],
+            activityDistances: [20 * MI, 30 * MI],
+            activityStartDates: ['2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'],
+            totalCyclingActivities: 3,
+            totalCyclingElevationGainMeters: 900,
+            virtualDistances: [40 * MI],
+            virtualElevations: [500],
+            virtualStartDates: ['2026-01-02T18:00:00Z'],
+        });
+        await recomputeStats('42', undefined, 'cycling');
+        const stats = persisted();
+        expect(stats.split.irl).toMatchObject({ activities: 2, distanceMiles: expect.closeTo(50, 5), longestRideMiles: expect.closeTo(30, 5), activeDays: 2 });
+        expect(stats.split.irl.elevationFeet).toBeCloseTo(400 * 3.28084, 3);
+        expect(stats.split.virtual).toMatchObject({ activities: 1, distanceMiles: expect.closeTo(40, 5), activeDays: 1 });
+        expect(stats.totalActivities).toBe(3);
+        expect(stats.totalDistanceMiles).toBeCloseTo(90, 5);
+        expect(stats.longestRideMiles).toBeCloseTo(40, 5);
+        expect(stats.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
+        expect(stats.activeDays).toBe(2); // the virtual ride shares a day with an IRL ride
     });
 });
