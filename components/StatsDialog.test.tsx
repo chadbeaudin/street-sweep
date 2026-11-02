@@ -3,7 +3,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { StatsDialog } from './StatsDialog';
 import { UnitsProvider } from './UnitsContext';
 
@@ -90,6 +90,20 @@ describe('StatsDialog ride types', () => {
         renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear });
         expect(await screen.findByTestId('mtb-bar-2016')).toHaveStyle({ height: '75%' });
         expect(screen.getByTestId('mtb-bar-2026')).toHaveStyle({ height: '0%' });
+    });
+
+    it('shows the year breakdown in a tooltip on hover', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear });
+        const column = (await screen.findByText("'16")).parentElement!;
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+        fireEvent.mouseEnter(column);
+        const tip = screen.getByRole('tooltip');
+        expect(tip).toHaveTextContent('2016');
+        expect(tip).toHaveTextContent('100 mi · 5 rides');
+        expect(tip).toHaveTextContent('Mountain Bike 75 mi');
+        expect(tip).toHaveTextContent('Road / Gravel 25 mi');
+        fireEvent.mouseLeave(column);
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
     });
 });
 

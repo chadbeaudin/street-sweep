@@ -134,6 +134,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [drill, setDrill] = useState<DrillStep[]>([]);
+    const [hoveredYear, setHoveredYear] = useState<number | null>(null);
 
     useEffect(() => { if (!isOpen) setDrill([]); }, [isOpen]);
 
@@ -406,18 +407,34 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                             <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">{units === 'metric' ? 'Kilometers' : 'Miles'} per Year</div>
                                                 <div className="flex gap-1.5 h-24">
-                                                    {stats.ridesPerYear.map(y => (
-                                                        <div key={y.year} className="flex-1 flex flex-col items-center gap-1 min-w-0" title={`${y.year}: ${Math.round(dist(y.miles)).toLocaleString()} ${distanceUnit(units)} · ${y.rides} ${activityNounPlural}${typeByYear.has(y.year) ? ` · MTB ${Math.round(dist(typeByYear.get(y.year)!.mountainMiles)).toLocaleString()} / Road-Gravel ${Math.round(dist(typeByYear.get(y.year)!.roadGravelMiles)).toLocaleString()} ${distanceUnit(units)}` : ''}`}>
+                                                    {stats.ridesPerYear.map((y, i, years) => {
+                                                        const type = typeByYear.get(y.year);
+                                                        const align = i < 2 ? 'left-0' : i > years.length - 3 ? 'right-0' : 'left-1/2 -translate-x-1/2';
+                                                        return (
+                                                        <div key={y.year} className="relative flex-1 flex flex-col items-center gap-1 min-w-0" onMouseEnter={() => setHoveredYear(y.year)} onMouseLeave={() => setHoveredYear(null)}>
+                                                            {hoveredYear === y.year && (
+                                                                <div role="tooltip" className={`absolute bottom-full mb-1 z-10 ${align} whitespace-nowrap rounded-lg bg-gray-900 text-white text-[11px] px-2.5 py-1.5 shadow-lg pointer-events-none`}>
+                                                                    <div className="font-semibold">{y.year}</div>
+                                                                    <div className="tabular-nums text-gray-300">{Math.round(dist(y.miles)).toLocaleString()} {distanceUnit(units)} · {y.rides} {activityNounPlural}</div>
+                                                                    {type && (
+                                                                        <>
+                                                                            <div className="flex items-center gap-1.5 tabular-nums"><span className="w-2 h-2 rounded-sm bg-emerald-500" />Mountain Bike {Math.round(dist(type.mountainMiles)).toLocaleString()} {distanceUnit(units)}</div>
+                                                                            <div className="flex items-center gap-1.5 tabular-nums"><span className="w-2 h-2 rounded-sm bg-indigo-400" />Road / Gravel {Math.round(dist(type.roadGravelMiles)).toLocaleString()} {distanceUnit(units)}</div>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                             <div className="w-full flex-1 flex items-end">
                                                                 <div className="w-full rounded-t overflow-hidden flex flex-col-reverse bg-indigo-400 hover:opacity-90 transition-opacity" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }}>
-                                                                    {typeByYear.has(y.year) && y.miles > 0 && (
-                                                                        <div data-testid={`mtb-bar-${y.year}`} className="w-full bg-emerald-500" style={{ height: `${(typeByYear.get(y.year)!.mountainMiles / y.miles) * 100}%` }} />
+                                                                    {type && y.miles > 0 && (
+                                                                        <div data-testid={`mtb-bar-${y.year}`} className="w-full bg-emerald-500" style={{ height: `${(type.mountainMiles / y.miles) * 100}%` }} />
                                                                     )}
                                                                 </div>
                                                             </div>
                                                             <span className="text-[9px] text-gray-500 tabular-nums">{`'${String(y.year).slice(2)}`}</span>
                                                         </div>
-                                                    ))}
+                                                        );
+                                                    })}
                                                 </div>
                                             </div>
                                         );
