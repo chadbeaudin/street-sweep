@@ -29,4 +29,9 @@ describe('deploy config', () => {
         expect(unraidTemplate).toContain("<PostArgs>sh -c 'node server.js &amp; sleep 5 &amp;&amp; node scripts/worker-tick-loop.js'</PostArgs>");
         expect(fs.existsSync(path.join(root, 'public/icons/icon-512.png'))).toBe(true);
     });
+
+    it('binds the server to all interfaces so the worker tick loop can reach it on localhost', () => {
+        const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
+        expect(dockerfile).toMatch(/^ENV HOSTNAME 0\.0\.0\.0$/m);
+    });
 });
