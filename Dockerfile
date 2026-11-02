@@ -77,5 +77,8 @@ USER nextjs
 EXPOSE 3888
 
 ENV PORT 3888
+# server.js binds to $HOSTNAME, which Docker sets to the container ID; without
+# this the worker's tick loop can't reach its own server on localhost.
+ENV HOSTNAME 0.0.0.0
 
 CMD ["node", "server.js"]
