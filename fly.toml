@@ -6,18 +6,10 @@ primary_region = 'sjc'
 
 [build]
 
-# `worker` is a second machine running the same server.js image, isolated
-# from public traffic -- see lib/riddenRoadsRefresh.ts,
-# lib/riddenRoadsWorkerJob.ts, and app/api/internal/ridden-roads-tick. A large
-# ridden-roads recompute previously ran inline in the web process and could
-# OOM-crash or block its event loop for 10+ minutes, taking the whole app
-# down; it now only ever enqueues a job row, and this separate machine (which
-# never receives public HTTP traffic -- [http_service].processes only routes
-# to `app`) ticks its own internal-only endpoint on a loop to process jobs to
-# completion, one at a time, with periodic checkpoints for resumability.
+# The ridden-roads/stats worker runs as a Docker container on Nastromo, not
+# on Fly -- see scripts/worker-tick-loop.js.
 [processes]
   app = "node server.js"
-  worker = "sh -c 'node server.js & sleep 5 && node scripts/worker-tick-loop.js'"
 
 [http_service]
   internal_port = 3888
@@ -33,9 +25,3 @@ primary_region = 'sjc'
   cpus = 1
   processes = ['app']
 
-# 2GB since it runs the stats recompute (#123): a large city's road network OOM-killed it at 1GB.
-[[vm]]
-  memory = '2048mb'
-  cpu_kind = 'shared'
-  cpus = 1
-  processes = ['worker']

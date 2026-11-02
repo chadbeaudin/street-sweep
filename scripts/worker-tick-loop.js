@@ -1,5 +1,6 @@
-// Ticks the internal ridden-roads worker endpoint on a loop. Run only on the
-// isolated `worker` Fly machine (see fly.toml [processes].worker) -- never
+// Ticks the internal ridden-roads worker endpoint on a loop. Run only in the
+// worker container on Nastromo, started with
+// `sh -c 'node server.js & sleep 5 && node scripts/worker-tick-loop.js'` -- never
 // receives public traffic itself, just repeatedly asks the Next.js server
 // running alongside it (same machine, loopback only) to process one queued
 // recompute job to completion. Zero non-dotenv dependencies (uses Node's
@@ -15,8 +16,8 @@ const SECRET = process.env.INTERNAL_WORKER_SECRET;
 const POLL_INTERVAL_MS = 5000;
 // If the local server.js dies, every tick fails forever with no way to recover
 // on its own (this loop doesn't restart it). Past this many consecutive
-// connection failures, exit non-zero so the container's init sees process 1's
-// job fail and Fly restarts the whole machine, respawning both processes.
+// connection failures, exit non-zero so the container exits and Docker's
+// restart policy restarts it, respawning both processes.
 const MAX_CONSECUTIVE_FAILURES = 12; // ~1 minute at POLL_INTERVAL_MS
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,7 +39,7 @@ async function tick(fetchFn = fetch, exitFn = process.exit) {
         consecutiveFailures = recordTickResult(false);
         console.warn(`[worker-tick-loop] tick failed: ${e.message} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES} consecutive)`);
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            console.error('[worker-tick-loop] too many consecutive failures, exiting so Fly restarts the machine');
+            console.error('[worker-tick-loop] too many consecutive failures, exiting so the container restarts');
             exitFn(1);
         }
     }
