@@ -12,10 +12,10 @@ function jobBlock(name: string): string {
 }
 
 describe('deploy config', () => {
-    it('only publishes the GHCR :latest image the worker auto-pulls after tests pass', () => {
-        const job = jobBlock('publish-ghcr');
+    it('only publishes the DockerHub :latest image the worker auto-pulls after tests pass', () => {
+        const job = jobBlock('publish-dockerhub');
         expect(job).toMatch(/needs: \[.*\btest\b.*\]/);
-        expect(job).toContain('ghcr.io/chadbeaudin/streetsweep:latest');
+        expect(job).toContain('docker.io/bigtimber/streetsweep:latest');
     });
 
     it('no longer runs the worker on Fly', () => {
