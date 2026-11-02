@@ -139,6 +139,28 @@ describe('tickAthleteSyncWorker (#118)', () => {
         expect(creditMatchingActivities).not.toHaveBeenCalled();
     });
 
+    it('forwards the owner\'s new ride to the bridge, and finishes the batch when the bridge is down (#138)', async () => {
+        const env = process.env;
+        const originalFetch = global.fetch;
+        process.env = { ...env, BRIDGE_URL: 'http://bridge:8095/events', BRIDGE_SECRET: 's', BRIDGE_ATHLETE_ID: '42' };
+        global.fetch = jest.fn().mockRejectedValue(new Error('connect ECONNREFUSED'));
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+            queue(event({ id: 7, aspect: 'create', activityId: '2' }));
+            p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [] });
+            (fetchStravaActivity as jest.Mock).mockResolvedValue({ activity: ride(2) });
+
+            expect(await tick()).toEqual({ processed: true, athleteId: '42' });
+
+            expect(global.fetch).toHaveBeenCalledWith('https://www.strava.com/api/v3/activities/2', expect.anything());
+            expect(recomputeStats).toHaveBeenCalled();
+            expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [7] } } });
+        } finally {
+            process.env = env;
+            global.fetch = originalFetch;
+        }
+    });
+
     it('does not run the credit check when the activity list did not change (#122)', async () => {
         queue(event({ aspect: 'recompute', mode: 'cycling' }));
         await tick();
