@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
-import { fetchFtpReadings, resolveAthleteId } from '@/lib/strava';
+import { fetchFtpReadings, resolveAthleteId, FtpScanResult, FtpScanState } from '@/lib/strava';
+import type { FtpReading } from '@/lib/ftp';
 import { prisma } from '@/lib/prisma';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
@@ -11,16 +12,16 @@ interface Creds { clientId?: string; clientSecret?: string; refreshToken?: strin
 
 const REFRESHING = new Set<string>();
 
-async function refreshInBackground(athleteId: string, creds: Creds) {
+async function refreshInBackground(athleteId: string, creds: Creds, previous?: FtpScanResult) {
     if (REFRESHING.has(athleteId)) return;
     REFRESHING.add(athleteId);
     try {
         console.log(`${ts()} Ftp: refresh starting for ${athleteId}`);
-        const readings = await fetchFtpReadings(creds);
+        const { readings, scanned } = await fetchFtpReadings(creds, previous);
         await prisma.ftpReadingCache.upsert({
             where: { athleteId },
-            create: { athleteId, readings: readings as any, refreshedAt: new Date() },
-            update: { readings: readings as any, refreshedAt: new Date() },
+            create: { athleteId, readings: readings as any, scanned, refreshedAt: new Date() },
+            update: { readings: readings as any, scanned, refreshedAt: new Date() },
         });
         console.log(`${ts()} Ftp: cached ${readings.length} readings for ${athleteId}`);
     } catch (e: any) {
@@ -40,7 +41,8 @@ async function handlePOST(request: Request) {
 
         if (cached) {
             const stale = Date.now() - cached.refreshedAt.getTime() > FRESH_TTL_MS;
-            if (stale) refreshInBackground(athleteId, stravaCredentials);
+            // Rows cached before #148 have no scan state, so their first refresh is a full scan.
+            if (stale) refreshInBackground(athleteId, stravaCredentials, cached.scanned ? { readings: cached.readings as unknown as FtpReading[], scanned: cached.scanned as FtpScanState } : undefined);
             return NextResponse.json({
                 readings: cached.readings,
                 refreshedAt: cached.refreshedAt.toISOString(),

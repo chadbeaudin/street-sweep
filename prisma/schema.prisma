@@ -161,6 +161,7 @@ model StravaActivityStream {
 model FtpReadingCache {
   athleteId   String   @id
   readings    Json
+  scanned     Json?
   refreshedAt DateTime @default(now())
 
   @@map("ftp_reading_cache")

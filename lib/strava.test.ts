@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity } from './strava';
+import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 
@@ -427,5 +427,60 @@ describe('fetchStravaActivity (#118)', () => {
     it('throws on rate limits and server errors so the event is retried', async () => {
         respond(429);
         await expect(fetchStravaActivity('token', '5')).rejects.toThrow('429');
+    });
+});
+
+describe('fetchFtpReadings incremental scan (#148)', () => {
+    const activities = [
+        mockActivity({ id: 1, comment_count: 1, start_date: '2024-01-01T00:00:00Z' }),
+        mockActivity({ id: 2, comment_count: 0, start_date: '2024-02-01T00:00:00Z' }),
+        mockActivity({ id: 3, comment_count: 2, start_date: '2024-03-01T00:00:00Z' }),
+    ];
+    let commentCalls: string[];
+
+    beforeEach(() => {
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue(null);
+        (prisma.stravaActivityCache.upsert as jest.Mock).mockResolvedValue({});
+        commentCalls = [];
+        global.fetch = jest.fn((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+            if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 999 }) });
+            const comments = url.match(/\/activities\/(\d+)\/comments$/);
+            if (comments) {
+                commentCalls.push(comments[1]);
+                return Promise.resolve({ ok: true, json: async () => [{ text: comments[1] === '1' ? 'new FTP 250' : 'FTP is 260 now' }] });
+            }
+            if (url.includes('/activities')) return Promise.resolve({ ok: true, json: async () => (url.includes('page=1&') ? activities : []) });
+            throw new Error('unexpected fetch: ' + url);
+        }) as any;
+    });
+
+    it('scans every commented activity on the first run and records comment counts', async () => {
+        const result = await fetchFtpReadings({ ...creds, refreshToken: 'ftp-full' });
+        expect(commentCalls.sort()).toEqual(['1', '3']);
+        expect(result.scanned).toEqual({ '1': 1, '2': 0, '3': 2 });
+        expect(result.readings.map(r => r.activityId)).toEqual([1, 3]);
+    });
+
+    it('skips activities whose comment count is unchanged, keeping their readings', async () => {
+        const previous = {
+            readings: [{ value: 240, date: '2024-01-01T00:00:00Z', activityId: 1 }, { value: 999, date: '2024-03-01T00:00:00Z', activityId: 3 }],
+            scanned: { '1': 1, '2': 0, '3': 1 }, // activity 3 got a new comment since
+        };
+        const result = await fetchFtpReadings({ ...creds, refreshToken: 'ftp-incremental' }, previous);
+        expect(commentCalls).toEqual(['3']);
+        expect(result.readings).toEqual([
+            { value: 240, date: '2024-01-01T00:00:00Z', activityId: 1 },
+            { value: 260, date: '2024-03-01T00:00:00Z', activityId: 3 },
+        ]);
+        expect(result.scanned['3']).toBe(2);
+    });
+
+    it('drops readings for activities that no longer exist', async () => {
+        const previous = { readings: [{ value: 200, date: '2023-01-01T00:00:00Z', activityId: 42 }], scanned: { '1': 1, '2': 0, '3': 2, '42': 1 } };
+        const result = await fetchFtpReadings({ ...creds, refreshToken: 'ftp-deleted' }, previous);
+        expect(commentCalls).toEqual([]);
+        expect(result.readings).toEqual([]);
+        expect(result.scanned['42']).toBeUndefined();
     });
 });
