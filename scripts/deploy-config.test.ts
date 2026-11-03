@@ -35,6 +35,10 @@ describe('deploy config', () => {
         expect(unraidTemplate).toContain('@postgres.bigtimber.cloud:5435/postgres?sslmode=verify-full');
     });
 
+    it("inherits the host's timezone, which Unraid passes to every container as TZ", () => {
+        expect(unraidTemplate).not.toContain('Target="TZ"');
+    });
+
     it('binds the server to all interfaces so the worker tick loop can reach it on localhost', () => {
         const dockerfile = fs.readFileSync(path.join(root, 'Dockerfile'), 'utf8');
         expect(dockerfile).toMatch(/^ENV HOSTNAME 0\.0\.0\.0$/m);

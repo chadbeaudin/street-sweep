@@ -41,5 +41,4 @@
   <Config Name="Telegram Bot Token" Target="TELEGRAM_BOT_TOKEN" Default="" Mode="" Description="Bot token for alerts sent from the worker." Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="Telegram Chat ID" Target="TELEGRAM_CHAT_ID" Default="" Mode="" Description="Chat that receives alerts." Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="Node Options" Target="NODE_OPTIONS" Default="--max-old-space-size=3072" Mode="" Description="Node heap cap; keep below the --memory limit in Extra Parameters." Type="Variable" Display="advanced" Required="false" Mask="false">--max-old-space-size=3072</Config>
-  <Config Name="Timezone" Target="TZ" Default="America/Denver" Mode="" Description="Container timezone (log timestamps)." Type="Variable" Display="advanced" Required="false" Mask="false">America/Denver</Config>
 </Container>
