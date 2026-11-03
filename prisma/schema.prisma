@@ -186,8 +186,20 @@ model User {
   accounts      Account[]
   sessions      Session[]
   exportedRoutes ExportedRoute[]
+  avoidedRoads  AvoidedRoads?
 
   @@map("users")
+}
+
+// User-marked avoided roads (#45), kept on the account so they follow the
+// user across devices instead of living in one browser's localStorage (#150).
+model AvoidedRoads {
+  userId    String   @id
+  roads     Json // [lat, lon][][]
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("avoided_roads")
 }
 
 // A route the user downloaded or sent to a device, kept so a later Strava
