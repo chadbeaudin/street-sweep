@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeRideTypeBreakdown } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, isMountainBikeRide } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -191,6 +191,19 @@ describe('stats.computeRideRecords', () => {
     });
 });
 
+describe('stats.computeActivityTotals', () => {
+    const MI = 1609.344;
+    it('counts activities and sums elevation alongside the records', () => {
+        const t = computeActivityTotals([10 * MI, 25 * MI], [100, 500], ['2024-05-01T10:00:00Z', '2024-05-02T10:00:00Z']);
+        expect(t.activities).toBe(2);
+        expect(t.distanceMiles).toBeCloseTo(35, 5);
+        expect(t.elevationFeet).toBeCloseTo(600 * 3.28084, 3);
+        expect(t.longestRideMiles).toBeCloseTo(25, 5);
+        expect(t.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
+        expect(t.activeDays).toBe(2);
+    });
+});
+
 describe('stats.computeRideTypeBreakdown', () => {
     const MI = 1609.344;
     it('splits mountain bike rides from road and gravel combined', () => {
@@ -211,6 +224,52 @@ describe('stats.computeRideTypeBreakdown', () => {
         expect(computeRideTypeBreakdown([], [], [])).toEqual({
             mountain: { rides: 0, miles: 0, elevationFeet: 0 },
             roadGravel: { rides: 0, miles: 0, elevationFeet: 0 },
+            perYear: [],
         });
+    });
+
+    it('lets the bike frame type decide over the activity type (#136)', () => {
+        const r = computeRideTypeBreakdown(
+            ['Ride', 'MountainBikeRide', 'GravelRide', 'MountainBikeRide'],
+            [10 * MI, 20 * MI, 5 * MI, 7 * MI],
+            [0, 0, 0, 0],
+            [],
+            ['mtb', 'road', 'mtb', ''],
+            new Map([['mtb', 1], ['road', 3]])
+        );
+        expect(r.mountain.rides).toBe(3);
+        expect(r.mountain.miles).toBeCloseTo(22, 5);
+        expect(r.roadGravel.rides).toBe(1);
+        expect(r.roadGravel.miles).toBeCloseTo(20, 5);
+    });
+
+    it('splits miles per year (#136)', () => {
+        const r = computeRideTypeBreakdown(
+            ['MountainBikeRide', 'Ride', 'Ride', 'MountainBikeRide'],
+            [10 * MI, 20 * MI, 5 * MI, 7 * MI],
+            [0, 0, 0, 0],
+            ['2016-05-01T00:00:00Z', '2016-06-01T00:00:00Z', '2015-01-01T00:00:00Z', ''],
+        );
+        expect(r.perYear.map(y => y.year)).toEqual([2015, 2016]);
+        expect(r.perYear[0].mountainMiles).toBe(0);
+        expect(r.perYear[0].roadGravelMiles).toBeCloseTo(5, 5);
+        expect(r.perYear[1].mountainMiles).toBeCloseTo(10, 5);
+        expect(r.perYear[1].roadGravelMiles).toBeCloseTo(20, 5);
+    });
+});
+
+describe('stats.isMountainBikeRide (#136)', () => {
+    const frames = new Map([['mtb', 1], ['road', 3], ['gravel', 5]]);
+    it('uses the bike frame type when the bike is known', () => {
+        expect(isMountainBikeRide('Ride', 'mtb', frames)).toBe(true);
+        expect(isMountainBikeRide('GravelRide', 'mtb', frames)).toBe(true);
+        expect(isMountainBikeRide('MountainBikeRide', 'road', frames)).toBe(false);
+        expect(isMountainBikeRide('MountainBikeRide', 'gravel', frames)).toBe(false);
+    });
+
+    it('falls back to the activity type without a known bike', () => {
+        expect(isMountainBikeRide('MountainBikeRide', '', frames)).toBe(true);
+        expect(isMountainBikeRide('MountainBikeRide', 'unlooked', frames)).toBe(true);
+        expect(isMountainBikeRide('Ride', '', frames)).toBe(false);
     });
 });

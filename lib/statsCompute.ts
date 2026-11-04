@@ -6,11 +6,13 @@ import {
     pointInPolygon,
     polylineCentroid,
     computeRideRecords,
+    computeActivityTotals,
     computeRideTypeBreakdown,
+    ActivityTotals,
     RideRecords,
     RideTypeBreakdown
 } from './stats';
-import { fetchCyclingRiddenRoads } from './strava';
+import { fetchCyclingRiddenRoads, fetchGearFrameTypes } from './strava';
 import { prisma } from './prisma';
 import type { ActivityMode, Creds } from './riddenRoadsRefresh';
 
@@ -28,7 +30,9 @@ const MAX_CITIES = 5;
 // v7: records added (total distance, exploration %, longest ride, climb, active days, per-year).
 // v8: totalActivities/totalElevationFeet include VirtualRide.
 // v9: rideTypeBreakdown (mountain bike vs road/gravel) added.
-export const STATS_VERSION = 9;
+// v10: ride type decided by the bike's frame type; per-year ride type split.
+// v11: totals split into IRL vs virtual; records are combined.
+export const STATS_VERSION = 11;
 
 interface CityStats {
     name: string;
@@ -51,6 +55,7 @@ export interface StatsPayload {
     activeDays?: number;
     ridesPerYear?: RideRecords['ridesPerYear'];
     rideTypeBreakdown?: RideTypeBreakdown;
+    split?: { irl: ActivityTotals; virtual: ActivityTotals };
     cities: CityStats[];
     bikingStats?: BikingGeographies;
 }
@@ -65,6 +70,12 @@ interface BikingGeographies {
 // Cycling stays on the bare athleteId key so existing cached rows keep
 // matching (no DB migration needed); running gets a distinct suffixed key so
 // switching modes never mixes the two activity sets in the same cache row.
+interface VirtualActivities {
+    distances: number[];
+    elevations: number[];
+    startDates: string[];
+}
+
 export const statsCacheKey = (athleteId: string, mode: ActivityMode) => mode === 'running' ? `${athleteId}__running` : athleteId;
 
 function networkPolylinesFromOSM(data: { elements: any[] }): [number, number][][] {
@@ -111,9 +122,16 @@ const METERS_TO_FEET = 3.28084;
 // — they also include VirtualRide (indoor trainer rides have no real-world
 // location, but their elevation/activity count are still real) — so the
 // "Activities" and "Climbed" dashboard totals aren't missing indoor rides.
-async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = [], activityTypes: string[] = [], mode: ActivityMode = 'cycling', totalCyclingActivities: number = riddenRoads.length, totalCyclingElevationGainMeters: number = activityElevations.reduce((sum, m) => sum + (m || 0), 0)): Promise<StatsPayload> {
+async function computeStats(riddenRoads: [number, number][][], activityElevations: number[], activityDistances: number[] = [], activityStartDates: string[] = [], activityTypes: string[] = [], activityGearIds: string[] = [], gearFrameTypes: Map<string, number> = new Map(), mode: ActivityMode = 'cycling', totalCyclingActivities: number = riddenRoads.length, totalCyclingElevationGainMeters: number = activityElevations.reduce((sum, m) => sum + (m || 0), 0), virtual: VirtualActivities = { distances: [], elevations: [], startDates: [] }): Promise<StatsPayload> {
     console.log(`${ts()} Stats: computing coverage cells for ${riddenRoads.length} cycling activities`);
     const records = computeRideRecords(activityDistances, activityElevations, activityStartDates);
+    const irl = computeActivityTotals(activityDistances, activityElevations, activityStartDates);
+    const virtualTotals = computeActivityTotals(virtual.distances, virtual.elevations, virtual.startDates);
+    const combined = computeRideRecords(
+        [...activityDistances, ...virtual.distances],
+        [...activityElevations, ...virtual.elevations],
+        [...activityStartDates, ...virtual.startDates]
+    );
     const totalCells = buildCoverageCells(riddenRoads);
     const totalUniqueMiles = cellsToMiles(totalCells.size);
     const totalElevationFeet = totalCyclingElevationGainMeters * METERS_TO_FEET;
@@ -247,8 +265,9 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         cities: Array.from(cityMap.values()).sort(byName),
     };
 
-    const explorationPct = records.totalDistanceMiles > 0
-        ? (totalUniqueMiles / records.totalDistanceMiles) * 100
+    // Virtual rides cover no real roads, so new ground is measured against IRL distance only.
+    const explorationPct = irl.distanceMiles > 0
+        ? (totalUniqueMiles / irl.distanceMiles) * 100
         : 0;
 
     return {
@@ -256,13 +275,14 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         totalActivities: totalCyclingActivities,
         totalUniqueMiles,
         totalElevationFeet,
-        totalDistanceMiles: records.totalDistanceMiles,
+        totalDistanceMiles: combined.totalDistanceMiles,
         explorationPct,
-        longestRideMiles: records.longestRideMiles,
-        biggestClimbFeet: records.biggestClimbFeet,
-        activeDays: records.activeDays,
+        longestRideMiles: combined.longestRideMiles,
+        biggestClimbFeet: combined.biggestClimbFeet,
+        activeDays: combined.activeDays,
         ridesPerYear: records.ridesPerYear,
-        rideTypeBreakdown: mode === 'cycling' ? computeRideTypeBreakdown(activityTypes, activityDistances, activityElevations) : undefined,
+        rideTypeBreakdown: mode === 'cycling' ? computeRideTypeBreakdown(activityTypes, activityDistances, activityElevations, activityStartDates, activityGearIds, gearFrameTypes) : undefined,
+        split: { irl, virtual: virtualTotals },
         cities,
         bikingStats,
     };
@@ -298,8 +318,9 @@ async function persistStats(athleteId: string, stats: StatsPayload): Promise<voi
 export async function recomputeStats(athleteId: string, creds: Creds | undefined, mode: ActivityMode): Promise<void> {
     const key = statsCacheKey(athleteId, mode);
     console.log(`${ts()} Stats: recompute starting for ${key}`);
-    const { riddenRoads, activityElevations, activityDistances, activityStartDates, activityTypes, totalCyclingActivities, totalCyclingElevationGainMeters } = await fetchCyclingRiddenRoads(creds, mode);
-    const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, activityTypes, mode, totalCyclingActivities, totalCyclingElevationGainMeters);
+    const { riddenRoads, activityElevations, activityDistances, activityStartDates, activityTypes, activityGearIds, totalCyclingActivities, totalCyclingElevationGainMeters, virtualDistances, virtualElevations, virtualStartDates } = await fetchCyclingRiddenRoads(creds, mode);
+    const gearFrameTypes = mode === 'cycling' ? await fetchGearFrameTypes(creds, activityGearIds) : new Map<string, number>();
+    const fresh = await computeStats(riddenRoads, activityElevations, activityDistances, activityStartDates, activityTypes, activityGearIds, gearFrameTypes, mode, totalCyclingActivities, totalCyclingElevationGainMeters, { distances: virtualDistances, elevations: virtualElevations, startDates: virtualStartDates });
     await persistStats(key, fresh);
     console.log(`${ts()} Stats: recompute complete for ${key}`);
 }

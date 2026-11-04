@@ -34,6 +34,7 @@ export interface StravaActivity {
     total_elevation_gain?: number; // meters; Strava returns 0 if unknown
     type: string;
     sport_type?: string;
+    gear_id?: string | null;
     comment_count?: number;
 }
 
@@ -41,6 +42,7 @@ export interface RiddenActivities {
     riddenRoads: [number, number][][];
     activityElevations: number[];
     activityTypes: string[];
+    activityGearIds: string[];
     activityDistances: number[]; // meters
     activityStartDates: string[]; // ISO
     // Broader than riddenRoads: also includes VirtualRide (real cycling
@@ -48,6 +50,11 @@ export interface RiddenActivities {
     // totals — see isCyclingActivity.
     totalCyclingActivities: number;
     totalCyclingElevationGainMeters: number;
+    // The broad set minus the real-world tracks above: VirtualRide/VirtualRun
+    // plus indoor trainer and GPS-less rides.
+    virtualDistances: number[]; // meters
+    virtualElevations: number[];
+    virtualStartDates: string[]; // ISO
 }
 
 // Single source of truth for what the app treats as "ridden": real-world
@@ -105,14 +112,20 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
     }
 
     const allCycling = all.filter(a => isModeActivityBroad(a.sport_type || a.type, mode));
+    const realIds = new Set(real.map(r => r.a.id));
+    const virtual = allCycling.filter(a => !realIds.has(a.id));
     return {
         riddenRoads: real.map(r => r.poly),
         activityElevations: real.map(r => r.a.total_elevation_gain ?? 0),
         activityTypes: real.map(r => r.a.sport_type || r.a.type || ''),
+        activityGearIds: real.map(r => r.a.gear_id ?? ''),
         activityDistances: real.map(r => r.a.distance ?? 0),
         activityStartDates: real.map(r => r.a.start_date ?? ''),
         totalCyclingActivities: allCycling.length,
         totalCyclingElevationGainMeters: allCycling.reduce((sum, a) => sum + (a.total_elevation_gain ?? 0), 0),
+        virtualDistances: virtual.map(a => a.distance ?? 0),
+        virtualElevations: virtual.map(a => a.total_elevation_gain ?? 0),
+        virtualStartDates: virtual.map(a => a.start_date ?? ''),
     };
 }
 
@@ -326,10 +339,32 @@ export async function fetchStravaActivity(accessToken: string, activityId: strin
             total_elevation_gain: d.total_elevation_gain,
             type: d.type,
             sport_type: d.sport_type,
+            gear_id: d.gear_id,
             comment_count: d.comment_count,
         },
         fullPolyline: d.map.polyline || undefined,
     };
+}
+
+// A bike's Strava frame_type (1 mountain, 2 cross, 3 road, 4 TT, 5 gravel),
+// looked up once per process; a failed lookup is retried next time.
+const GEAR_FRAME_TYPE_CACHE = new Map<string, number>();
+
+export async function fetchGearFrameTypes(creds: { clientId?: string; clientSecret?: string; refreshToken?: string } | undefined, gearIds: string[]): Promise<Map<string, number>> {
+    const unknown = Array.from(new Set(gearIds.filter(g => g && !GEAR_FRAME_TYPE_CACHE.has(g))));
+    if (unknown.length > 0) {
+        const accessToken = await getStravaAccessToken(creds);
+        for (const gearId of unknown) {
+            const res = await fetch(`https://www.strava.com/api/v3/gear/${gearId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            if (!res.ok) {
+                console.warn(`[Strava] Gear ${gearId} lookup failed: ${res.status}`);
+                continue;
+            }
+            const gear = await res.json() as { frame_type?: number };
+            if (gear.frame_type !== undefined) GEAR_FRAME_TYPE_CACHE.set(gearId, gear.frame_type);
+        }
+    }
+    return new Map(gearIds.filter(g => GEAR_FRAME_TYPE_CACHE.has(g)).map(g => [g, GEAR_FRAME_TYPE_CACHE.get(g)!]));
 }
 
 // Cap per call so a rider with a large backlog of un-backfilled rides doesn't

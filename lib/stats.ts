@@ -49,6 +49,27 @@ export function computeRideRecords(distancesM: number[], elevationsM: number[], 
     };
 }
 
+export interface ActivityTotals {
+    activities: number;
+    distanceMiles: number;
+    elevationFeet: number;
+    longestRideMiles: number;
+    biggestClimbFeet: number;
+    activeDays: number;
+}
+
+export function computeActivityTotals(distancesM: number[], elevationsM: number[], startDates: string[]): ActivityTotals {
+    const records = computeRideRecords(distancesM, elevationsM, startDates);
+    return {
+        activities: distancesM.length,
+        distanceMiles: records.totalDistanceMiles,
+        elevationFeet: elevationsM.reduce((sum, m) => sum + (m || 0), 0) * METERS_TO_FEET,
+        longestRideMiles: records.longestRideMiles,
+        biggestClimbFeet: records.biggestClimbFeet,
+        activeDays: records.activeDays,
+    };
+}
+
 export interface RideTypeTotals {
     rides: number;
     miles: number;
@@ -58,19 +79,42 @@ export interface RideTypeTotals {
 export interface RideTypeBreakdown {
     mountain: RideTypeTotals;
     roadGravel: RideTypeTotals;
+    perYear: { year: number; mountainMiles: number; roadGravelMiles: number }[];
+}
+
+const MOUNTAIN_BIKE_FRAME_TYPE = 1;
+
+// The bike decides: Strava's activity type is unreliable (MountainBikeRide only
+// arrived in 2022, so older MTB rides are plain "Ride"). Rides with no bike, or
+// a bike whose frame type couldn't be looked up, fall back to the activity type.
+export function isMountainBikeRide(type: string, gearId: string, gearFrameTypes: Map<string, number>): boolean {
+    const frameType = gearFrameTypes.get(gearId);
+    if (frameType !== undefined) return frameType === MOUNTAIN_BIKE_FRAME_TYPE;
+    return type?.toLowerCase() === 'mountainbikeride';
 }
 
 // Splits real-world rides into mountain bike vs everything else (road and
 // gravel combined). Arrays are parallel, distances/elevations in meters.
-export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[]): RideTypeBreakdown {
+export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[], startDates: string[] = [], gearIds: string[] = [], gearFrameTypes: Map<string, number> = new Map()): RideTypeBreakdown {
     const empty = (): RideTypeTotals => ({ rides: 0, miles: 0, elevationFeet: 0 });
-    const breakdown: RideTypeBreakdown = { mountain: empty(), roadGravel: empty() };
+    const breakdown: RideTypeBreakdown = { mountain: empty(), roadGravel: empty(), perYear: [] };
+    const perYear = new Map<number, { year: number; mountainMiles: number; roadGravelMiles: number }>();
     for (let i = 0; i < types.length; i++) {
-        const bucket = types[i]?.toLowerCase() === 'mountainbikeride' ? breakdown.mountain : breakdown.roadGravel;
+        const isMountain = isMountainBikeRide(types[i], gearIds[i] ?? '', gearFrameTypes);
+        const bucket = isMountain ? breakdown.mountain : breakdown.roadGravel;
+        const miles = (distancesM[i] || 0) / METERS_PER_MILE;
         bucket.rides += 1;
-        bucket.miles += (distancesM[i] || 0) / METERS_PER_MILE;
+        bucket.miles += miles;
         bucket.elevationFeet += (elevationsM[i] || 0) * METERS_TO_FEET;
+
+        const year = Number(startDates[i]?.slice(0, 4));
+        if (year) {
+            const y = perYear.get(year) ?? { year, mountainMiles: 0, roadGravelMiles: 0 };
+            if (isMountain) y.mountainMiles += miles; else y.roadGravelMiles += miles;
+            perYear.set(year, y);
+        }
     }
+    breakdown.perYear = Array.from(perYear.values()).sort((a, b) => a.year - b.year);
     return breakdown;
 }
 

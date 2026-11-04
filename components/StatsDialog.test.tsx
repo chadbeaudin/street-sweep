@@ -3,7 +3,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { StatsDialog } from './StatsDialog';
 import { UnitsProvider } from './UnitsContext';
 
@@ -45,7 +45,7 @@ describe('StatsDialog units', () => {
         expect(screen.getByText('100.0')).toBeInTheDocument();
         expect(screen.getByText('10,000')).toBeInTheDocument();
         expect(screen.getByText('ft total')).toBeInTheDocument();
-        expect(screen.getByText('of miles were new')).toBeInTheDocument();
+        expect(screen.getByText('of IRL miles were new')).toBeInTheDocument();
     });
 
     it('shows kilometers and meters in metric', async () => {
@@ -56,7 +56,7 @@ describe('StatsDialog units', () => {
         expect(screen.getByText('m total')).toBeInTheDocument();
         expect(screen.getByText('322')).toBeInTheDocument();
         expect(screen.getByText('914')).toBeInTheDocument();
-        expect(screen.getByText('of km were new')).toBeInTheDocument();
+        expect(screen.getByText('of IRL km were new')).toBeInTheDocument();
     });
 });
 
@@ -65,6 +65,8 @@ describe('StatsDialog ride types', () => {
         mountain: { rides: 4, miles: 50, elevationFeet: 6000 },
         roadGravel: { rides: 7, miles: 150, elevationFeet: 4000 },
     };
+    const ridesPerYear = [{ year: 2016, rides: 5, miles: 100 }, { year: 2026, rides: 6, miles: 100 }];
+    const perYear = [{ year: 2016, mountainMiles: 75, roadGravelMiles: 25 }, { year: 2026, mountainMiles: 0, roadGravelMiles: 100 }];
 
     it('shows mountain bike vs road/gravel totals', async () => {
         renderStats('imperial', { rideTypeBreakdown });
@@ -82,5 +84,43 @@ describe('StatsDialog ride types', () => {
         renderStats('imperial');
         expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
         expect(screen.queryByText('Ride Types')).not.toBeInTheDocument();
+    });
+
+    it('stacks the mountain bike share into each year bar (#136)', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear });
+        expect(await screen.findByTestId('mtb-bar-2016')).toHaveStyle({ height: '75%' });
+        expect(screen.getByTestId('mtb-bar-2026')).toHaveStyle({ height: '0%' });
+    });
+
+    it('shows the year breakdown in a tooltip on hover', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear });
+        const column = (await screen.findByText("'16")).parentElement!;
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+        fireEvent.mouseEnter(column);
+        const tip = screen.getByRole('tooltip');
+        expect(tip).toHaveTextContent('2016');
+        expect(tip).toHaveTextContent('100 mi · 5 rides');
+        expect(tip).toHaveTextContent('Mountain Bike 75 mi');
+        expect(tip).toHaveTextContent('Road / Gravel 25 mi');
+        fireEvent.mouseLeave(column);
+        expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+});
+
+describe('StatsDialog IRL vs virtual split', () => {
+    const totals = (activities: number, distanceMiles: number) => ({ activities, distanceMiles, elevationFeet: 1000, longestRideMiles: 10, biggestClimbFeet: 500, activeDays: activities });
+
+    it('shows IRL and virtual under each combined total', async () => {
+        renderStats('imperial', { split: { irl: totals(2, 150), virtual: totals(1, 50) } });
+        expect(await screen.findByText('IRL 150')).toBeInTheDocument();
+        expect(screen.getByText('Virtual 50')).toBeInTheDocument();
+        expect(screen.getAllByText('IRL 2')).toHaveLength(2); // activities and active days
+        expect(screen.getAllByText('Virtual 1,000')).toHaveLength(1); // climbed
+    });
+
+    it('is hidden for stats cached before the split existed', async () => {
+        renderStats('imperial');
+        expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
+        expect(screen.queryByText(/^IRL /)).not.toBeInTheDocument();
     });
 });
