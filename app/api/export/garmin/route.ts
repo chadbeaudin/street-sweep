@@ -1,6 +1,8 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
 import { GarminConnect } from 'garmin-connect';
+import { authOptions } from '@/lib/auth';
 import { haversineM } from '@/lib/geometry';
 import { z } from 'zod';
 import { Polyline, parseBody } from '@/lib/validation';
@@ -14,6 +16,12 @@ const Body = z.object({
 
 async function handlePOST(req: Request) {
     try {
+        // Without this, anyone could use the server to test Garmin logins (#93).
+        const session = await getServerSession(authOptions);
+        if (!(session?.user as { id?: string } | undefined)?.id) {
+            return NextResponse.json({ error: 'Sign in to send routes to Garmin' }, { status: 401 });
+        }
+
         const parsed = await parseBody(req, Body);
         if ('error' in parsed) return parsed.error;
         const { route, name, email, password } = parsed.data;
