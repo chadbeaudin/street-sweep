@@ -1,6 +1,6 @@
 #!/bin/sh
 # Auto-bump the patch version on every commit so the local working tree is
-# always ahead of prod (Vercel deploys main). Runs locally only — no CI, no
+# always ahead of prod (Fly deploys main). Runs locally only — no CI, no
 # remote mutation. Skips during merge/rebase to avoid double-bumps and
 # version-line conflicts.
 if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] || \
