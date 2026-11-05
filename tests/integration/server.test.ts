@@ -68,75 +68,19 @@ describe('Integration: server logs', () => {
         logs.length = 0;
     });
 
-    // ── Garmin elevation ───────────────────────────────────────────────────────
+    // ── Garmin export ──────────────────────────────────────────────────────────
 
-    describe('Garmin export — elevation logging', () => {
-        const routeWithElevation = [
-            [-104.700, 39.020, 280],
-            [-104.710, 39.025, 285],
-            [-104.720, 39.030, 290],
-            [-104.715, 39.035, 283],
-            [-104.700, 39.020, 278],
-        ];
-
-        it('logs totalAscent and totalDescent before attempting Garmin login', async () => {
-            await post('/api/export/garmin', {
-                route: routeWithElevation,
+    describe('Garmin export', () => {
+        it('rejects a caller with no session before contacting Garmin (#93)', async () => {
+            const res = await post('/api/export/garmin', {
+                route: [[-104.700, 39.020, 280], [-104.710, 39.025, 285]],
                 name: 'Integration Test',
                 email: 'test@example.com',
                 password: 'fake_password_for_test',
             });
 
-            const match = await waitForLog(logs, /\[Garmin\] totalAscent=(\d+)m totalDescent=(\d+)m points=(\d+)/);
-            expect(match).not.toBeNull();
-
-            const ascent = parseInt(match![1]);
-            const descent = parseInt(match![2]);
-            const points = parseInt(match![3]);
-
-            expect(ascent).toBeGreaterThan(0);
-            expect(descent).toBeGreaterThan(0);
-            expect(points).toBe(routeWithElevation.length);
-        });
-
-        it('totalAscent matches expected value for known route (+10m)', async () => {
-            const climbRoute = [
-                [-104.700, 39.020, 280],
-                [-104.710, 39.025, 285],
-                [-104.720, 39.030, 290],
-            ];
-
-            await post('/api/export/garmin', {
-                route: climbRoute,
-                name: 'Climb Test',
-                email: 'test@example.com',
-                password: 'fake_password_for_test',
-            });
-
-            const match = await waitForLog(logs, /\[Garmin\] totalAscent=(\d+)m totalDescent=(\d+)m/);
-            expect(match).not.toBeNull();
-            expect(parseInt(match![1])).toBe(10); // 280→285→290 = +10m
-            expect(parseInt(match![2])).toBe(0);  // no descent
-        });
-
-        it('logs zero elevation when route has no elevation data', async () => {
-            const flatRoute = [
-                [-104.700, 39.020],
-                [-104.710, 39.025],
-                [-104.720, 39.030],
-            ];
-
-            await post('/api/export/garmin', {
-                route: flatRoute,
-                name: 'Flat Test',
-                email: 'test@example.com',
-                password: 'fake_password_for_test',
-            });
-
-            const match = await waitForLog(logs, /\[Garmin\] totalAscent=(\d+)m totalDescent=(\d+)m/);
-            expect(match).not.toBeNull();
-            expect(parseInt(match![1])).toBe(0);
-            expect(parseInt(match![2])).toBe(0);
+            expect(res.status).toBe(401);
+            expect(await res.json()).toEqual({ error: 'Sign in to send routes to Garmin' });
         });
     });
 

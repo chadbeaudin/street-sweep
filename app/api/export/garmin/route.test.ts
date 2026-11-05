@@ -4,6 +4,8 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 }));
 
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
+jest.mock('next-auth', () => ({ getServerSession: jest.fn() }));
+jest.mock('@/lib/auth', () => ({ authOptions: {} }));
 jest.mock('garmin-connect', () => ({
     GarminConnect: jest.fn().mockImplementation(() => ({
         login: jest.fn(),
@@ -14,10 +16,14 @@ jest.mock('@/lib/geometry', () => ({ haversineM: jest.fn(() => 100) }));
 
 import { POST } from './route';
 import { GarminConnect } from 'garmin-connect';
+import { getServerSession } from 'next-auth';
 import { haversineM } from '@/lib/geometry';
+
+const mockedSession = getServerSession as jest.Mock;
 
 beforeEach(() => {
     (haversineM as jest.Mock).mockReturnValue(100);
+    mockedSession.mockResolvedValue({ user: { id: 'user-1' } });
 });
 
 function makeRequest(body: any): Request {
@@ -57,6 +63,32 @@ describe('POST /api/export/garmin — validation', () => {
 // ── Security ─────────────────────────────────────────────────────────────────
 
 describe('POST /api/export/garmin — security', () => {
+    const body = { route: [[-104.7, 39.02, 100]], email: 'a@b.com', password: 'pw' };
+
+    it('rejects a caller with no session without contacting Garmin (#93)', async () => {
+        mockedSession.mockResolvedValue(null);
+        await POST(makeRequest(body));
+        expect(mockJson).toHaveBeenLastCalledWith({ error: 'Sign in to send routes to Garmin' }, { status: 401 });
+        expect(GarminConnect).not.toHaveBeenCalled();
+    });
+
+    it('rejects a session with no user id (#93)', async () => {
+        mockedSession.mockResolvedValue({ user: {} });
+        await POST(makeRequest(body));
+        expect(mockJson.mock.lastCall?.[1]?.status).toBe(401);
+        expect(GarminConnect).not.toHaveBeenCalled();
+    });
+
+    it('lets a signed-in user through to Garmin (#93)', async () => {
+        (GarminConnect as jest.Mock).mockImplementationOnce(() => ({
+            login: jest.fn(),
+            client: { post: jest.fn().mockResolvedValue({}) },
+        }));
+        await POST(makeRequest(body));
+        expect(GarminConnect).toHaveBeenCalledWith({ username: 'a@b.com', password: 'pw' });
+        expect(mockJson.mock.lastCall?.[0]).toMatchObject({ success: true });
+    });
+
     it('does not include password in error response', async () => {
         (GarminConnect as jest.Mock).mockImplementationOnce(() => ({
             login: jest.fn().mockRejectedValue(new Error('Invalid credentials')),
