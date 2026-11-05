@@ -29,9 +29,6 @@ ts-debug.log*
 .env*.local
 .env
 
-# vercel
-.vercel
-
 # Local environment variables (contains secrets)
 .env.local
 
