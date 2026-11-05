@@ -1,3 +1,4 @@
+import { readPostgresCertExpiry } from './postgresCert';
 import { prisma } from './prisma';
 import { sendTelegramMessage } from './telegram';
 
@@ -9,6 +10,9 @@ export type ServiceStatus = Record<ServiceName, boolean>;
 const PROBE_TIMEOUT_MS = 4000;
 const CACHE_MS = 30 * 1000;
 const LABELS: Record<ServiceName, string> = { database: 'Postgres', overpass: 'Overpass', elevation: 'Open Topo Data' };
+const CERT_CHECK_MS = 60 * 60 * 1000;
+const CERT_WARN_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function withTimeout<T>(p: Promise<T>): Promise<T> {
     return Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timed out')), PROBE_TIMEOUT_MS))]);
@@ -44,6 +48,24 @@ async function alertTransitions(results: Record<ServiceName, string | null>, now
     if (messages.length > 0) await sendTelegramMessage(messages.join('\n'));
 }
 
+let certCheckedAt: number | null = null;
+let certWarned = false;
+
+// Catches a broken cert sync job before it becomes an outage (#155). Expired certs already alert as DOWN.
+async function warnIfPostgresCertExpiring(now: number): Promise<void> {
+    if (certCheckedAt !== null && now - certCheckedAt < CERT_CHECK_MS) return;
+    certCheckedAt = now;
+    const expiry = await readPostgresCertExpiry(process.env.DATABASE_URL!).catch(() => null);
+    if (!expiry) return;
+    const daysLeft = Math.ceil((expiry.getTime() - now) / DAY_MS);
+    if (daysLeft > CERT_WARN_DAYS) {
+        certWarned = false;
+    } else if (daysLeft > 0 && !certWarned) {
+        certWarned = true;
+        await sendTelegramMessage(`StreetSweep: Postgres TLS certificate expires in ${daysLeft} days`);
+    }
+}
+
 let cached: { at: number; status: ServiceStatus } | null = null;
 let inFlight: Promise<ServiceStatus> | null = null;
 
@@ -57,6 +79,7 @@ export async function checkServices(now = Date.now()): Promise<ServiceStatus> {
             return [n, r.status === 'rejected' ? (r.reason?.message ?? String(r.reason)) : null];
         })) as Record<ServiceName, string | null>;
         await alertTransitions(results, now);
+        await warnIfPostgresCertExpiring(now);
         const status = Object.fromEntries(names.map(n => [n, results[n] === null])) as ServiceStatus;
         cached = { at: now, status };
         return status;
