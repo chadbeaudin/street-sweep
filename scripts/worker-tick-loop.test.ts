@@ -2,6 +2,8 @@ let recordTickResult: typeof import('./worker-tick-loop').recordTickResult;
 let tick: typeof import('./worker-tick-loop').tick;
 let MAX_CONSECUTIVE_FAILURES: number;
 
+const mockExit = () => jest.fn<never, Parameters<typeof process.exit>>();
+
 describe('worker-tick-loop failure tracking', () => {
     beforeEach(() => {
         jest.resetModules();
@@ -18,7 +20,7 @@ describe('worker-tick-loop failure tracking', () => {
 
     test('tick exits the process once consecutive failures hit the threshold', async () => {
         const failingFetch = jest.fn().mockRejectedValue(new Error('fetch failed'));
-        const exitFn = jest.fn();
+        const exitFn = mockExit();
 
         for (let i = 0; i < MAX_CONSECUTIVE_FAILURES; i++) {
             await tick(failingFetch, exitFn);
@@ -33,7 +35,7 @@ describe('worker-tick-loop failure tracking', () => {
             .fn()
             .mockRejectedValueOnce(new Error('fetch failed'))
             .mockResolvedValueOnce(undefined);
-        const exitFn = jest.fn();
+        const exitFn = mockExit();
 
         await tick(fetchFn, exitFn);
         await tick(fetchFn, exitFn);
