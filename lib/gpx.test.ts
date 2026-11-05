@@ -43,7 +43,7 @@ describe('buildGpxCourse', () => {
         expect(gpx).toContain('<?xml version="1.0"');
         expect(gpx).toContain('</gpx>');
         // Should not contain unescaped special chars inside element content
-        const nameContent = gpx.match(/<name>(.*?)<\/name>/s)?.[1] ?? '';
+        const nameContent = gpx.match(/<name>([\s\S]*?)<\/name>/)?.[1] ?? '';
         expect(nameContent).not.toContain('<');
         expect(nameContent).not.toContain('>');
         expect(nameContent).not.toMatch(/&(?!amp;|lt;|gt;|quot;|apos;)/);

@@ -47,14 +47,14 @@ describe('POST /api/ridden-roads', () => {
         mockedResolveCreds.mockResolvedValueOnce(null);
         await POST(makeRequest({ stravaCredentials: { refreshToken: 'client-supplied' }, bbox }));
         const [, init] = mockJson.mock.calls[0];
-        expect(init.status).toBe(401);
+        expect(init?.status).toBe(401);
         expect(mockResolveAthleteId).not.toHaveBeenCalled();
     });
 
     it('requires a bbox -- it never matches a rider'+"'"+'s whole history in one shot', async () => {
         await POST(makeRequest({ stravaCredentials: { refreshToken: 'tok' } }));
         const [data, init] = mockJson.mock.calls[0];
-        expect(init.status).toBe(400);
+        expect(init?.status).toBe(400);
         expect(data.error).toMatch(/bbox/);
     });
 
