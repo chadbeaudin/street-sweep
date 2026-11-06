@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, isMountainBikeRide } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, computeYearDetail, isMountainBikeRide, ridesInMonth, summarizeRides } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -271,5 +271,54 @@ describe('stats.isMountainBikeRide (#136)', () => {
         expect(isMountainBikeRide('MountainBikeRide', '', frames)).toBe(true);
         expect(isMountainBikeRide('MountainBikeRide', 'unlooked', frames)).toBe(true);
         expect(isMountainBikeRide('Ride', '', frames)).toBe(false);
+    });
+});
+
+describe('stats.computeYearDetail', () => {
+    const ride = (id: number, start_date: string, miles: number, extra: Record<string, unknown> = {}) => ({
+        id, name: `Ride ${id}`, start_date, distance: miles * 1609.344, total_elevation_gain: 100, type: 'Ride', ...extra,
+    });
+
+    it('lists the year\'s rides newest first', () => {
+        const detail = computeYearDetail(2025, [ride(1, '2025-01-05T10:00:00Z', 10), ride(2, '2025-03-09T10:00:00Z', 20), ride(3, '2025-03-09T15:00:00Z', 5)]);
+        expect(detail.rides.map(r => r.id)).toEqual([3, 2, 1]);
+        expect(detail.rides[0]).toMatchObject({ name: 'Ride 3', date: '2025-03-09T15:00:00Z' });
+        expect(detail.rides[0].miles).toBeCloseTo(5);
+    });
+
+    it('fills all twelve months and splits them by the bike', () => {
+        const frames = new Map([['mtb', 1], ['road', 3]]);
+        const { months } = computeYearDetail(2025, [
+            ride(1, '2025-03-01T10:00:00Z', 10, { gear_id: 'mtb' }),
+            ride(2, '2025-03-02T10:00:00Z', 20, { gear_id: 'road' }),
+            ride(3, '2025-12-31T10:00:00Z', 5, { sport_type: 'MountainBikeRide' }),
+        ], frames);
+        expect(months).toHaveLength(12);
+        expect(months[0]).toEqual({ month: 1, rides: 0, mountainMiles: 0, roadGravelMiles: 0 });
+        expect(months[2].rides).toBe(2);
+        expect(months[2].mountainMiles).toBeCloseTo(10);
+        expect(months[2].roadGravelMiles).toBeCloseTo(20);
+        expect(months[11].mountainMiles).toBeCloseTo(5);
+    });
+
+    it('returns an empty year without failing', () => {
+        const detail = computeYearDetail(2025, []);
+        expect(detail.rides).toEqual([]);
+    });
+
+    it('narrows to a month using the same bucket as the chart', () => {
+        const { rides, months } = computeYearDetail(2025, [ride(1, '2025-03-31T23:30:00Z', 10), ride(2, '2025-04-01T00:30:00Z', 20)]);
+        expect(ridesInMonth(rides, 3).map(r => r.id)).toEqual([1]);
+        expect(ridesInMonth(rides, 4).map(r => r.id)).toEqual([2]);
+        expect(ridesInMonth(rides, 3)).toHaveLength(months[2].rides);
+        expect(ridesInMonth(rides, 5)).toEqual([]);
+    });
+
+    it('summarizes a set of rides', () => {
+        const { rides } = computeYearDetail(2025, [ride(1, '2025-03-09T10:00:00Z', 20), ride(2, '2025-03-09T15:00:00Z', 5), ride(3, '2025-03-10T10:00:00Z', 10)]);
+        const summary = summarizeRides(rides);
+        expect(summary).toMatchObject({ rides: 3, activeDays: 2 });
+        expect(summary.miles).toBeCloseTo(35);
+        expect(summary.elevationFeet).toBeCloseTo(984.25, 1);
     });
 });

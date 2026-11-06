@@ -23,6 +23,10 @@ function trackSpanMeters(poly: [number, number][]): number {
     return haversineM(minLat, minLon, maxLat, maxLon);
 }
 
+function isRealTrack(poly: [number, number][]): boolean {
+    return poly.length >= 2 && trackSpanMeters(poly) >= MIN_TRACK_SPAN_METERS;
+}
+
 export interface StravaActivity {
     id: number;
     name: string;
@@ -98,7 +102,7 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
             const id = a.id.toString();
             return { a, poly: polyline.decode(streamByActivity.get(id) || detailByActivity.get(id) || a.map.summary_polyline) as [number, number][] };
         })
-        .filter(({ poly }) => poly.length >= 2 && trackSpanMeters(poly) >= MIN_TRACK_SPAN_METERS);
+        .filter(({ poly }) => isRealTrack(poly));
 
     // Gradually backfill detail for real rides not yet cached, bounded per call so
     // a rider with a long backlog catches up over several syncs instead of one
@@ -127,6 +131,18 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         virtualElevations: virtual.map(a => a.total_elevation_gain ?? 0),
         virtualStartDates: virtual.map(a => a.start_date ?? ''),
     };
+}
+
+// The same real-world set fetchCyclingRiddenRoads counts, narrowed to one year,
+// so a year's rides add up to its bar on the stats chart. Years are UTC there too.
+export async function fetchActivitiesForYear(creds: { clientId?: string; clientSecret?: string; refreshToken?: string } | undefined, mode: ActivityMode, year: number): Promise<StravaActivity[]> {
+    const all = await getCachedOrFetchActivities(creds);
+    const candidates = all.filter(a => a.start_date?.startsWith(`${year}-`) && isModeActivity(a.sport_type || a.type, mode));
+    const detailRows = await prisma.stravaActivityDetail.findMany({
+        where: { activityId: { in: candidates.map(a => a.id.toString()) } },
+    }).catch(() => [] as { activityId: string; polyline: string }[]);
+    const detailByActivity = new Map(detailRows.map(d => [d.activityId, d.polyline]));
+    return candidates.filter(a => isRealTrack(polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][]));
 }
 
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {

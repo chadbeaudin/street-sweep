@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { X, Loader2, MapPin, RefreshCw, ChevronDown, ChevronRight, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route, Zap } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, X, Loader2, MapPin, RefreshCw, ChevronDown, ChevronRight, Globe, Map as MapIcon, Landmark, Building2, Activity, Mountain, Route, Zap } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useUnits } from './UnitsContext';
+import { StatsBarChart } from './StatsBarChart';
+import { StatsYearDetail } from './StatsYearDetail';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
 
 interface CityStats {
@@ -134,9 +136,37 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [drill, setDrill] = useState<DrillStep[]>([]);
-    const [hoveredYear, setHoveredYear] = useState<number | null>(null);
+    const [selectedYear, setSelectedYear] = useState<number | null>(null);
+    const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+    const panelRef = useRef<HTMLDivElement>(null);
+    const scrollStack = useRef<number[]>([]);
+    const nextScrollTop = useRef(0);
 
-    useEffect(() => { if (!isOpen) setDrill([]); }, [isOpen]);
+    useEffect(() => {
+        if (isOpen) return;
+        setDrill([]);
+        setSelectedYear(null);
+        setSelectedMonth(null);
+        scrollStack.current = [];
+    }, [isOpen]);
+
+    // Drilling in starts at the top; Back returns to the chart the rider clicked.
+    useEffect(() => {
+        if (panelRef.current) panelRef.current.scrollTop = nextScrollTop.current;
+        nextScrollTop.current = 0;
+    }, [selectedYear, selectedMonth]);
+
+    const drillInto = (select: () => void) => {
+        scrollStack.current.push(panelRef.current?.scrollTop ?? 0);
+        select();
+    };
+    const goBack = () => {
+        nextScrollTop.current = scrollStack.current.pop() ?? 0;
+        if (selectedMonth !== null) setSelectedMonth(null); else setSelectedYear(null);
+    };
+    const selectedMonthName = selectedYear !== null && selectedMonth !== null
+        ? new Date(Date.UTC(selectedYear, selectedMonth - 1)).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+        : null;
 
     useEffect(() => {
         if (!isOpen) return;
@@ -233,41 +263,55 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
             onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}
         >
-            <div className="bg-white rounded-xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-y-auto">
+            <div ref={panelRef} className="bg-white rounded-xl shadow-2xl max-w-xl w-full max-h-[85vh] overflow-y-auto">
                 <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 sticky top-0 bg-white z-10">
-                    <div>
-                        <h2 className="text-lg font-semibold text-gray-900">Your Coverage</h2>
-                        {stats?.refreshedAt && (
-                            <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
-                                <span>Updated {formatAge(stats.refreshedAt)}</span>
-                                {stats.refreshing && (
-                                    <span className="inline-flex items-center gap-1 text-indigo-600">
-                                        <RefreshCw className="w-3 h-3 animate-spin" /> refreshing
-                                    </span>
-                                )}
+                    {selectedYear !== null ? (
+                        <div className="flex items-center gap-2">
+                            <button onClick={goBack} aria-label={selectedMonthName ? `Back to ${selectedYear}` : 'Back to Your Coverage'} className="text-gray-400 hover:text-gray-600 transition-colors">
+                                <ArrowLeft className="w-5 h-5" />
+                            </button>
+                            <div>
+                                <h2 className="text-lg font-semibold text-gray-900">{selectedMonthName ?? selectedYear}</h2>
+                                <div className="text-xs text-gray-500 mt-0.5">Outdoor {activityNounPlural}</div>
                             </div>
-                        )}
-                    </div>
+                        </div>
+                    ) : (
+                        <div>
+                            <h2 className="text-lg font-semibold text-gray-900">Your Coverage</h2>
+                            {stats?.refreshedAt && (
+                                <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                                    <span>Updated {formatAge(stats.refreshedAt)}</span>
+                                    {stats.refreshing && (
+                                        <span className="inline-flex items-center gap-1 text-indigo-600">
+                                            <RefreshCw className="w-3 h-3 animate-spin" /> refreshing
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
 
                 <div className="p-6 space-y-6">
-                    {loading && (
+                    {selectedYear !== null && <StatsYearDetail year={selectedYear} month={selectedMonth} onSelectMonth={month => drillInto(() => setSelectedMonth(month))} stravaCredentials={stravaCredentials} activityMode={activityMode} activityNounPlural={activityNounPlural} />}
+
+                    {selectedYear === null && loading && (
                         <div className="flex flex-col items-center gap-3 py-12 text-gray-500">
                             <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
                             <p className="text-sm">Crunching your {activityNounPlural}…</p>
                         </div>
                     )}
 
-                    {error && (
+                    {selectedYear === null && error && (
                         <div className="rounded-md bg-red-50 border border-red-200 p-4 text-sm text-red-700">
                             {error}
                         </div>
                     )}
 
-                    {!loading && !error && stats && stats.computing && (
+                    {selectedYear === null && !loading && !error && stats && stats.computing && (
                         <div className="flex flex-col items-center gap-3 py-12 text-gray-500">
                             <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
                             <p className="text-sm font-medium">Computing your first stats…</p>
@@ -278,7 +322,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                         </div>
                     )}
 
-                    {!loading && !error && stats && !stats.computing && stats.totalActivities !== undefined && (
+                    {selectedYear === null && !loading && !error && stats && !stats.computing && stats.totalActivities !== undefined && (
                         <>
                             <div className="grid grid-cols-3 gap-3">
                                 <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl p-4 border border-gray-100">
@@ -405,41 +449,22 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                     </div>
 
                                     {stats.ridesPerYear && stats.ridesPerYear.length > 1 && (() => {
-                                        const maxMiles = Math.max(...stats.ridesPerYear.map(y => y.miles), 1);
                                         const typeByYear = new Map((activityMode === 'cycling' ? stats.rideTypeBreakdown?.perYear ?? [] : []).map(t => [t.year, t]));
                                         return (
-                                            <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-3">
-                                                <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider mb-2">{units === 'metric' ? 'Kilometers' : 'Miles'} per Year</div>
-                                                <div className="flex gap-1.5 h-24">
-                                                    {stats.ridesPerYear.map((y, i, years) => {
-                                                        const type = typeByYear.get(y.year);
-                                                        const align = i < 2 ? 'left-0' : i > years.length - 3 ? 'right-0' : 'left-1/2 -translate-x-1/2';
-                                                        return (
-                                                        <div key={y.year} className="relative flex-1 flex flex-col items-center gap-1 min-w-0" onMouseEnter={() => setHoveredYear(y.year)} onMouseLeave={() => setHoveredYear(null)}>
-                                                            {hoveredYear === y.year && (
-                                                                <div role="tooltip" className={`absolute bottom-full mb-1 z-10 ${align} whitespace-nowrap rounded-lg bg-gray-900 text-white text-[11px] px-2.5 py-1.5 shadow-lg pointer-events-none`}>
-                                                                    <div className="font-semibold">{y.year}</div>
-                                                                    <div className="tabular-nums text-gray-300">{Math.round(dist(y.miles)).toLocaleString()} {distanceUnit(units)} · {y.rides} {activityNounPlural}</div>
-                                                                    {type && (
-                                                                        <>
-                                                                            <div className="flex items-center gap-1.5 tabular-nums"><span className="w-2 h-2 rounded-sm bg-emerald-500" />Mountain Bike {Math.round(dist(type.mountainMiles)).toLocaleString()} {distanceUnit(units)}</div>
-                                                                            <div className="flex items-center gap-1.5 tabular-nums"><span className="w-2 h-2 rounded-sm bg-indigo-400" />Road / Gravel {Math.round(dist(type.roadGravelMiles)).toLocaleString()} {distanceUnit(units)}</div>
-                                                                        </>
-                                                                    )}
-                                                                </div>
-                                                            )}
-                                                            <div className="w-full flex-1 flex items-end">
-                                                                <div className="w-full rounded-t overflow-hidden flex flex-col-reverse bg-indigo-400 hover:opacity-90 transition-opacity" style={{ height: `${Math.max(3, (y.miles / maxMiles) * 100)}%` }}>
-                                                                    {type && y.miles > 0 && (
-                                                                        <div data-testid={`mtb-bar-${y.year}`} className="w-full bg-emerald-500" style={{ height: `${(type.mountainMiles / y.miles) * 100}%` }} />
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                            <span className="text-[9px] text-gray-500 tabular-nums">{`'${String(y.year).slice(2)}`}</span>
-                                                        </div>
-                                                        );
-                                                    })}
-                                                </div>
+                                            <div className="mt-3">
+                                                <StatsBarChart
+                                                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'} per Year`}
+                                                    activityNounPlural={activityNounPlural}
+                                                    onSelect={year => drillInto(() => setSelectedYear(year))}
+                                                    bars={stats.ridesPerYear.map(y => ({
+                                                        key: y.year,
+                                                        label: `'${String(y.year).slice(2)}`,
+                                                        tooltipTitle: String(y.year),
+                                                        miles: y.miles,
+                                                        rides: y.rides,
+                                                        type: typeByYear.get(y.year),
+                                                    }))}
+                                                />
                                             </div>
                                         );
                                     })()}
