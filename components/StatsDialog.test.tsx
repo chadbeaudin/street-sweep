@@ -24,14 +24,14 @@ const stats: Record<string, unknown> = {
     cities: [{ name: 'Bend', state: 'OR', activityCount: 3, riddenMiles: 10, totalMiles: 100, percent: 10 }],
 };
 
-function renderStats(units: 'imperial' | 'metric', overrides: Record<string, unknown> = {}) {
+function renderStats(units: 'imperial' | 'metric', overrides: Record<string, unknown> = {}, onClose = jest.fn()) {
     localStorage.setItem('unit_system', units);
     global.fetch = jest.fn((url: string) => Promise.resolve({
         json: async () => (url === '/api/stats' ? { ...stats, ...overrides } : { readings: [] }),
     })) as unknown as typeof fetch;
     render(
         <UnitsProvider>
-            <StatsDialog isOpen onClose={jest.fn()} riddenRoads={[[[44, -121], [44.1, -121]]]} activityElevations={[]} activityTypes={[]} stravaCredentials={{}} activityMode="cycling" />
+            <StatsDialog isOpen onClose={onClose} riddenRoads={[[[44, -121], [44.1, -121]]]} activityElevations={[]} activityTypes={[]} stravaCredentials={{}} activityMode="cycling" />
         </UnitsProvider>
     );
 }
@@ -122,5 +122,22 @@ describe('StatsDialog IRL vs virtual split', () => {
         renderStats('imperial');
         expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
         expect(screen.queryByText(/^IRL /)).not.toBeInTheDocument();
+    });
+});
+
+describe('StatsDialog click away', () => {
+    it('closes when the backdrop is clicked', async () => {
+        const onClose = jest.fn();
+        renderStats('imperial', {}, onClose);
+        await screen.findByText('Unique Miles');
+        fireEvent.mouseDown(document.querySelector('.fixed.inset-0')!);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays open when the panel is clicked', async () => {
+        const onClose = jest.fn();
+        renderStats('imperial', {}, onClose);
+        fireEvent.mouseDown(await screen.findByText('Unique Miles'));
+        expect(onClose).not.toHaveBeenCalled();
     });
 });
