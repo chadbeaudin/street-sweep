@@ -118,6 +118,65 @@ export function computeRideTypeBreakdown(types: string[], distancesM: number[], 
     return breakdown;
 }
 
+export interface YearRide {
+    id: number;
+    name: string;
+    date: string;
+    miles: number;
+    elevationFeet: number;
+    mountainBike: boolean;
+}
+
+export interface YearDetail {
+    year: number;
+    months: { month: number; rides: number; mountainMiles: number; roadGravelMiles: number }[];
+    rides: YearRide[]; // newest first
+}
+
+interface YearActivity {
+    id: number;
+    name: string;
+    start_date: string;
+    distance?: number;
+    total_elevation_gain?: number;
+    type: string;
+    sport_type?: string;
+    gear_id?: string | null;
+}
+
+export function computeYearDetail(year: number, activities: YearActivity[], gearFrameTypes: Map<string, number> = new Map()): YearDetail {
+    const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, rides: 0, mountainMiles: 0, roadGravelMiles: 0 }));
+    const rides = activities.map(a => {
+        const ride: YearRide = {
+            id: a.id,
+            name: a.name,
+            date: a.start_date,
+            miles: (a.distance || 0) / METERS_PER_MILE,
+            elevationFeet: (a.total_elevation_gain || 0) * METERS_TO_FEET,
+            mountainBike: isMountainBikeRide(a.sport_type || a.type, a.gear_id ?? '', gearFrameTypes),
+        };
+        const month = months[Number(a.start_date.slice(5, 7)) - 1];
+        month.rides += 1;
+        if (ride.mountainBike) month.mountainMiles += ride.miles; else month.roadGravelMiles += ride.miles;
+        return ride;
+    });
+    return { year, months, rides: rides.sort((a, b) => b.date.localeCompare(a.date)) };
+}
+
+// UTC month, matching the bucket computeYearDetail put the ride in.
+export function ridesInMonth(rides: YearRide[], month: number): YearRide[] {
+    return rides.filter(r => Number(r.date.slice(5, 7)) === month);
+}
+
+export function summarizeRides(rides: YearRide[]) {
+    return {
+        rides: rides.length,
+        miles: rides.reduce((sum, r) => sum + r.miles, 0),
+        elevationFeet: rides.reduce((sum, r) => sum + r.elevationFeet, 0),
+        activeDays: new Set(rides.map(r => r.date.slice(0, 10))).size,
+    };
+}
+
 // Cell side ≈ 15m. Small enough to capture a single road segment without
 // merging adjacent parallel roads; large enough that GPS noise on the same
 // segment maps to the same cell across activities.

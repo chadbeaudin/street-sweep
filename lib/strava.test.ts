@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes } from './strava';
+import { fetchActivitiesForYear, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 
@@ -509,5 +509,44 @@ describe('fetchGearFrameTypes (#136)', () => {
         expect(gearCalls()).toHaveLength(0);
         expect(Object.fromEntries(await fetchGearFrameTypes(creds, ['mtb1', 'gone1']))).toEqual({ mtb1: 1 });
         expect(gearCalls().map(([u]) => u)).toEqual(['https://www.strava.com/api/v3/gear/gone1']);
+    });
+});
+
+describe('fetchActivitiesForYear', () => {
+    const STATIONARY_POLYLINE = require('@mapbox/polyline').encode([[47.65, -117.42], [47.65001, -117.42001]]);
+    const mockCache = (activities: unknown[]) => (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '999', activities, syncedAt: new Date() });
+
+    beforeEach(() => {
+        (prisma.stravaActivityDetail.findMany as jest.Mock).mockResolvedValue([]);
+        global.fetch = jest.fn((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+            if (url.includes('/athlete')) return Promise.resolve({ ok: true, json: async () => ({ id: 999 }) });
+            throw new Error('unexpected fetch: ' + url);
+        }) as any;
+    });
+
+    it('keeps only that year\'s real-world rides', async () => {
+        mockCache([
+            mockActivity({ id: 1, start_date: '2025-06-01T00:00:00Z' }),
+            mockActivity({ id: 2, start_date: '2024-12-31T23:00:00Z' }),
+            mockActivity({ id: 3, start_date: '2025-06-02T00:00:00Z', type: 'VirtualRide' }),
+            mockActivity({ id: 4, start_date: '2025-06-03T00:00:00Z', type: 'Run' }),
+            mockActivity({ id: 5, start_date: '2025-06-04T00:00:00Z', map: { summary_polyline: STATIONARY_POLYLINE } }),
+        ]);
+        const activities = await fetchActivitiesForYear(creds, 'cycling', 2025);
+        expect(activities.map(a => a.id)).toEqual([1]);
+    });
+
+    it('judges a track by its detail polyline when it has one, as the stats do', async () => {
+        mockCache([mockActivity({ id: 6, start_date: '2025-06-01T00:00:00Z', map: { summary_polyline: STATIONARY_POLYLINE } })]);
+        (prisma.stravaActivityDetail.findMany as jest.Mock).mockResolvedValue([{ activityId: '6', polyline: DETAIL_POLYLINE }]);
+        const activities = await fetchActivitiesForYear(creds, 'cycling', 2025);
+        expect(activities.map(a => a.id)).toEqual([6]);
+    });
+
+    it('selects by mode', async () => {
+        mockCache([mockActivity({ id: 7, start_date: '2025-06-01T00:00:00Z', type: 'Run' }), mockActivity({ id: 8, start_date: '2025-06-01T00:00:00Z' })]);
+        const activities = await fetchActivitiesForYear(creds, 'running', 2025);
+        expect(activities.map(a => a.id)).toEqual([7]);
     });
 });

@@ -1,0 +1,26 @@
+import { withApiMetrics } from '@/lib/metrics';
+import { NextResponse } from 'next/server';
+import { fetchActivitiesForYear, fetchGearFrameTypes } from '@/lib/strava';
+import { computeYearDetail } from '@/lib/stats';
+import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
+import type { ActivityMode, Creds } from '@/lib/riddenRoadsRefresh';
+
+async function handlePOST(request: Request) {
+    try {
+        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; year?: unknown };
+        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
+        const { year } = body;
+        if (typeof year !== 'number' || !Number.isInteger(year)) return NextResponse.json({ error: 'A year is required' }, { status: 400 });
+        const mode: ActivityMode = body.activityMode === 'running' ? 'running' : 'cycling';
+
+        const activities = await fetchActivitiesForYear(stravaCredentials, mode, year);
+        const gearFrameTypes = mode === 'cycling' ? await fetchGearFrameTypes(stravaCredentials, activities.map(a => a.gear_id ?? '')) : new Map<string, number>();
+        return NextResponse.json(computeYearDetail(year, activities, gearFrameTypes));
+    } catch (error: any) {
+        console.error('Stats year route error:', error);
+        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    }
+}
+
+export const POST = withApiMetrics('POST', '/api/stats/year', handlePOST);

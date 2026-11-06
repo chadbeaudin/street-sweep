@@ -84,6 +84,15 @@ describe('Integration: server logs', () => {
         });
     });
 
+    describe('Stats year detail', () => {
+        it('rejects a caller with no session', async () => {
+            const res = await post('/api/stats/year', { year: 2025 });
+
+            expect(res.status).toBe(401);
+            expect(await res.json()).toEqual({ error: 'Sign in with Strava first' });
+        });
+    });
+
     // ── Route segment insertion ────────────────────────────────────────────────
 
     describe('Route segment insertion — step API sequence', () => {
