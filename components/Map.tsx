@@ -10,6 +10,9 @@ import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox } from
 import { bboxFromLatLngs } from '@/lib/selectionBox';
 import { unmatchedRuns, indexRoadBounds, roadsIntersecting } from '@/lib/roadTiles';
 import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
+import { useMapStyle } from './MapStyleContext';
+import { MapStylePicker } from './MapStylePicker';
+import { tileLayerProps } from '@/lib/mapStyles';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -484,6 +487,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
+    const { style: tileStyle } = useMapStyle();
     const [zoom, setZoom] = React.useState(13);
     const selectionStartRef = React.useRef<L.Point | null>(null);
     const isDrawingLassoRef = React.useRef(false);
@@ -866,10 +870,8 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 zoomControl={false}
                 className={`absolute inset-0 ${isSelectionMode ? 'selection-mode' : ''} ${isEraserMode ? 'eraser-mode' : ''} ${!isSelectionMode && !isEraserMode ? 'point-mode' : ''}`}
             >
-                <TileLayer
-                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
+                {/* Keyed so a style change remounts the layer: react-leaflet only updates the url in place, not zoom limits or attribution. */}
+                <TileLayer key={tileStyle.id} {...tileLayerProps(tileStyle)} />
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
                 {startPoint && (
                     <Marker
@@ -1285,6 +1287,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onWheel={handleOverlayWheel}
                 />
             )}
+
+            <div className="absolute top-3 left-3 z-[1000]">
+                <MapStylePicker />
+            </div>
 
             {/* Custom map controls */}
             <div className="absolute bottom-8 right-3 z-[1000] flex flex-col gap-1">
