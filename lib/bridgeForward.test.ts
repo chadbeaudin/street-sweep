@@ -21,7 +21,7 @@ describe('createdActivityIds (#138)', () => {
 });
 
 describe('forwardToBridge (#138)', () => {
-    it('fetches the new activity and posts its identifying fields with the shared secret', async () => {
+    it('fetches the new activity and posts its identifying fields and name with the shared secret', async () => {
         await forwardToBridge('42', 'token', [event('create', '7')]);
         const [stravaUrl, stravaInit] = (global.fetch as jest.Mock).mock.calls[0];
         expect(stravaUrl).toBe('https://www.strava.com/api/v3/activities/7');
@@ -31,7 +31,7 @@ describe('forwardToBridge (#138)', () => {
         expect(init.headers['X-Bridge-Secret']).toBe('s3cret');
         expect(JSON.parse(init.body)).toEqual({
             id: 7, athlete_id: 42, aspect_type: 'create', start_date: '2026-11-02T16:00:00Z',
-            device_name: 'MyWhoosh', sport_type: 'VirtualRide', total_photo_count: 1,
+            device_name: 'MyWhoosh', sport_type: 'VirtualRide', total_photo_count: 1, name: 'ride',
         });
     });
 
