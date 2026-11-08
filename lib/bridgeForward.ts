@@ -40,6 +40,7 @@ export async function forwardToBridge(athleteId: string, accessToken: string, ev
                     device_name: a.device_name ?? null,
                     sport_type: a.sport_type ?? null,
                     total_photo_count: a.total_photo_count ?? 0,
+                    name: a.name ?? null,
                 }),
                 signal: AbortSignal.timeout(TIMEOUT_MS),
             });
