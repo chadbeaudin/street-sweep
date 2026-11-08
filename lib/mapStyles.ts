@@ -12,13 +12,27 @@ export interface MapStyle {
     subdomains?: string;
     // Light styles are inverted in dark mode; already-dark styles aren't.
     invertInDark: boolean;
+    // For styles whose own markings would hide the default blue ridden-roads overlay.
+    riddenColor?: string;
+}
+
+export const DEFAULT_RIDDEN_COLOR = '#1D4ED8';
+
+export const riddenColorFor = (style: MapStyle) => style.riddenColor ?? DEFAULT_RIDDEN_COLOR;
+
+// Rides still being matched to roads draw faint and dashed; matched ones solid.
+export function riddenPathOptionsFor(color: string) {
+    return {
+        pending: { color, weight: 2, opacity: 0.35, dashArray: '4 6' },
+        matched: { color, weight: 3, opacity: 0.9 },
+    };
 }
 
 const OSM = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 
 export const MAP_STYLES: MapStyle[] = [
     { id: 'osm', label: 'OSM Standard', url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: OSM, maxNativeZoom: 19, invertInDark: true },
-    { id: 'cyclosm', label: 'CyclOSM (cycling)', url: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', attribution: `<a href="https://www.cyclosm.org">CyclOSM</a> | ${OSM}`, maxNativeZoom: 20, subdomains: 'abc', invertInDark: true },
+    { id: 'cyclosm', label: 'CyclOSM (cycling)', url: 'https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', attribution: `<a href="https://www.cyclosm.org">CyclOSM</a> | ${OSM}`, maxNativeZoom: 20, subdomains: 'abc', invertInDark: true, riddenColor: '#EA580C' },
     { id: 'usgs-topo', label: 'USGS Topo (US only)', url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}', attribution: 'Tiles courtesy of the <a href="https://usgs.gov/">U.S. Geological Survey</a>', maxNativeZoom: 16, invertInDark: true },
 ];
 

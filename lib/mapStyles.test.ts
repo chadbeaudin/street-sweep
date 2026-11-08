@@ -1,5 +1,5 @@
 import fs from 'fs';
-import { MAP_STYLES, MAP_MAX_ZOOM, DEFAULT_MAP_STYLE_ID, resolveMapStyle, tileLayerProps } from './mapStyles';
+import { MAP_STYLES, MAP_MAX_ZOOM, DEFAULT_MAP_STYLE_ID, DEFAULT_RIDDEN_COLOR, resolveMapStyle, riddenColorFor, riddenPathOptionsFor, tileLayerProps } from './mapStyles';
 
 const byId = (id: string) => MAP_STYLES.find(s => s.id === id)!;
 
@@ -18,6 +18,26 @@ describe('MAP_STYLES', () => {
 
     it('inverts every remaining style in dark mode, since none is dark already', () => {
         expect(MAP_STYLES.every(s => s.invertInDark)).toBe(true);
+    });
+});
+
+describe('riddenColorFor', () => {
+    it('draws ridden roads orange on CyclOSM, whose bike lanes are blue', () => {
+        expect(riddenColorFor(byId('cyclosm'))).toBe('#EA580C');
+    });
+
+    it('keeps the usual blue on every other style', () => {
+        expect(DEFAULT_RIDDEN_COLOR).toBe('#1D4ED8');
+        for (const style of MAP_STYLES.filter(s => s.id !== 'cyclosm')) expect(riddenColorFor(style)).toBe(DEFAULT_RIDDEN_COLOR);
+    });
+});
+
+describe('riddenPathOptionsFor', () => {
+    it('keeps the pending and matched line looks, in the given color', () => {
+        expect(riddenPathOptionsFor('#EA580C')).toEqual({
+            pending: { color: '#EA580C', weight: 2, opacity: 0.35, dashArray: '4 6' },
+            matched: { color: '#EA580C', weight: 3, opacity: 0.9 },
+        });
     });
 });
 
