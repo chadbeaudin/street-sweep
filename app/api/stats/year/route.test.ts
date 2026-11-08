@@ -39,6 +39,13 @@ describe('POST /api/stats/year', () => {
         expect(lastResponse()[0].rides[0]).toMatchObject({ id: 1, mountainBike: true });
     });
 
+    it('still returns the year when the gear lookup fails (#165)', async () => {
+        (fetchGearFrameTypes as jest.Mock).mockRejectedValue(new Error('Failed to refresh Strava token: 429'));
+        await post({ year: 2025 });
+        expect(lastResponse()[1]).toBeUndefined();
+        expect(lastResponse()[0].rides[0]).toMatchObject({ id: 1, mountainBike: false });
+    });
+
     it('skips gear lookups for a running year', async () => {
         await post({ year: 2025, activityMode: 'running' });
         expect(fetchActivitiesForYear).toHaveBeenCalledWith(creds, 'running', 2025);

@@ -1,6 +1,10 @@
 import { haversineM } from './geometry';
 
 const METERS_PER_MILE = 1609.344;
+
+// A manual refresh pulls the rider's whole Strava history against the app-wide
+// rate limit, so it's allowed at most this often per athlete.
+export const STATS_REFRESH_COOLDOWN_MS = 15 * 60 * 1000;
 const METERS_TO_FEET = 3.28084;
 
 export interface RideRecords {

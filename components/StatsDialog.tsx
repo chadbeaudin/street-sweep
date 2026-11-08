@@ -7,6 +7,7 @@ import { useUnits } from './UnitsContext';
 import { StatsBarChart } from './StatsBarChart';
 import { StatsYearDetail } from './StatsYearDetail';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
+import { STATS_REFRESH_COOLDOWN_MS } from '@/lib/stats';
 
 interface CityStats {
     name: string;
@@ -30,6 +31,7 @@ interface StatsResponse {
     biggestClimbFeet?: number;
     activeDays?: number;
     ridesPerYear?: { year: number; rides: number; miles: number }[];
+    virtualPerYear?: { year: number; rides: number; miles: number }[];
     rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals> & { perYear?: { year: number; mountainMiles: number; roadGravelMiles: number }[] };
     split?: { irl: ActivityTotals; virtual: ActivityTotals };
     cities?: CityStats[];
@@ -138,6 +140,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
     const [drill, setDrill] = useState<DrillStep[]>([]);
     const [selectedYear, setSelectedYear] = useState<number | null>(null);
     const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+    const [refreshRequest, setRefreshRequest] = useState(0);
     const panelRef = useRef<HTMLDivElement>(null);
     const scrollStack = useRef<number[]>([]);
     const nextScrollTop = useRef(0);
@@ -147,6 +150,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
         setDrill([]);
         setSelectedYear(null);
         setSelectedMonth(null);
+        setRefreshRequest(0);
         scrollStack.current = [];
     }, [isOpen]);
 
@@ -178,7 +182,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
         let cancelled = false;
         let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
-        const fetchOnce = async (isInitial: boolean) => {
+        const fetchOnce = async (isInitial: boolean, refresh = false) => {
             if (isInitial) setLoading(true);
             try {
                 // Only credentials are sent — the server fetches the ride set
@@ -187,7 +191,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                 const res = await fetch('/api/stats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stravaCredentials, activityMode })
+                    body: JSON.stringify({ stravaCredentials, activityMode, ...(refresh && { refresh: true }) })
                 });
                 const data = await res.json();
                 if (cancelled) return;
@@ -209,13 +213,18 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
         };
 
         setError(null);
-        fetchOnce(true);
+        fetchOnce(refreshRequest === 0, refreshRequest > 0);
 
         return () => {
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, riddenRoads, stravaCredentials, activityMode]);
+    }, [isOpen, riddenRoads, stravaCredentials, activityMode, refreshRequest]);
+
+    const refreshFromStrava = () => {
+        setStats(s => s && { ...s, refreshing: true });
+        setRefreshRequest(n => n + 1);
+    };
 
     const [ftpReadings, setFtpReadings] = useState<FtpReading[] | null>(null);
     const [showFtpDetail, setShowFtpDetail] = useState(false);
@@ -281,11 +290,21 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                             {stats?.refreshedAt && (
                                 <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
                                     <span>Updated {formatAge(stats.refreshedAt)}</span>
-                                    {stats.refreshing && (
-                                        <span className="inline-flex items-center gap-1 text-indigo-600">
-                                            <RefreshCw className="w-3 h-3 animate-spin" /> refreshing
-                                        </span>
-                                    )}
+                                    {(() => {
+                                        const coolingDown = Date.now() - new Date(stats.refreshedAt).getTime() < STATS_REFRESH_COOLDOWN_MS;
+                                        return (
+                                            <button
+                                                onClick={refreshFromStrava}
+                                                disabled={stats.refreshing || coolingDown}
+                                                aria-label="Refresh from Strava"
+                                                title={stats.refreshing ? 'Refreshing from Strava' : coolingDown ? 'Updated in the last 15 minutes' : 'Refresh from Strava'}
+                                                className={`inline-flex items-center gap-1 transition-colors disabled:cursor-default ${stats.refreshing ? 'text-indigo-600' : coolingDown ? 'text-gray-300' : 'text-gray-600 hover:text-indigo-600'}`}
+                                            >
+                                                <RefreshCw className={`w-3 h-3 ${stats.refreshing ? 'animate-spin' : ''}`} />
+                                                {stats.refreshing && 'refreshing'}
+                                            </button>
+                                        );
+                                    })()}
                                 </div>
                             )}
                         </div>
@@ -448,21 +467,26 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                         ))}
                                     </div>
 
-                                    {stats.ridesPerYear && stats.ridesPerYear.length > 1 && (() => {
+                                    {stats.ridesPerYear && (() => {
                                         const typeByYear = new Map((activityMode === 'cycling' ? stats.rideTypeBreakdown?.perYear ?? [] : []).map(t => [t.year, t]));
+                                        const outdoorByYear = new Map(stats.ridesPerYear!.map(y => [y.year, y]));
+                                        const virtualByYear = new Map((stats.virtualPerYear ?? []).map(y => [y.year, y]));
+                                        const years = [...new Set([...outdoorByYear.keys(), ...virtualByYear.keys()])].sort((a, b) => a - b);
+                                        if (years.length < 2) return null;
                                         return (
                                             <div className="mt-3">
                                                 <StatsBarChart
                                                     title={`${units === 'metric' ? 'Kilometers' : 'Miles'} per Year`}
                                                     activityNounPlural={activityNounPlural}
                                                     onSelect={year => drillInto(() => setSelectedYear(year))}
-                                                    bars={stats.ridesPerYear.map(y => ({
-                                                        key: y.year,
-                                                        label: `'${String(y.year).slice(2)}`,
-                                                        tooltipTitle: String(y.year),
-                                                        miles: y.miles,
-                                                        rides: y.rides,
-                                                        type: typeByYear.get(y.year),
+                                                    bars={years.map(year => ({
+                                                        key: year,
+                                                        label: `'${String(year).slice(2)}`,
+                                                        tooltipTitle: String(year),
+                                                        miles: outdoorByYear.get(year)?.miles ?? 0,
+                                                        rides: outdoorByYear.get(year)?.rides ?? 0,
+                                                        type: typeByYear.get(year),
+                                                        virtual: virtualByYear.get(year),
                                                     }))}
                                                 />
                                             </div>
@@ -518,6 +542,10 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                             <div className="flex-1 min-w-0">
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">FTP</div>
                                                 <div className="text-xl font-bold text-gray-900 tabular-nums leading-none mt-0.5">{latest.value}<span className="text-sm font-medium text-gray-400 ml-1">w</span></div>
+                                            </div>
+                                            <div className="text-right text-xs text-gray-500 tabular-nums flex-shrink-0">
+                                                <div>{new Date(latest.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</div>
+                                                <div className="text-gray-400">{formatDaysAgo(latest.date)}</div>
                                             </div>
                                             <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
                                         </button>

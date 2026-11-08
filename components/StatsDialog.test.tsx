@@ -3,7 +3,7 @@
  */
 
 import '@testing-library/jest-dom';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { StatsDialog } from './StatsDialog';
 import { UnitsProvider } from './UnitsContext';
 
@@ -25,7 +25,7 @@ const stats: Record<string, unknown> = {
 };
 
 const RIDDEN: [number, number][][] = [[[44, -121], [44.1, -121]]];
-const CREDS = {};
+const CREDS = { sessionLinked: true };
 
 const yearRide = (id: number, name: string, miles: number, mountainBike = false, date = '2016-06-15T17:00:00Z') => ({ id, name, date, miles, elevationFeet: 1000, mountainBike });
 
@@ -49,12 +49,17 @@ const dialog = (isOpen: boolean, onClose = jest.fn()) => (
 function renderStats(units: 'imperial' | 'metric', overrides: Record<string, unknown> = {}, onClose = jest.fn()) {
     localStorage.setItem('unit_system', units);
     global.fetch = jest.fn((url: string) => Promise.resolve({
-        json: async () => (url === '/api/stats' ? { ...stats, ...overrides } : url === '/api/stats/year' ? yearDetail : { readings: [] }),
+        json: async () => (url === '/api/stats' ? { ...stats, ...overrides } : url === '/api/stats/year' ? yearDetail : { readings: ftpReadings }),
     })) as unknown as typeof fetch;
     return render(dialog(true, onClose));
 }
 
-beforeEach(() => localStorage.clear());
+let ftpReadings: { value: number; date: string; activityId: number }[] = [];
+
+beforeEach(() => {
+    localStorage.clear();
+    ftpReadings = [];
+});
 
 describe('StatsDialog units', () => {
     it('shows miles and feet in imperial', async () => {
@@ -122,6 +127,45 @@ describe('StatsDialog ride types', () => {
         expect(tip).toHaveTextContent('Road / Gravel 25 mi');
         fireEvent.mouseLeave(column);
         expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    });
+});
+
+describe('StatsDialog virtual miles per year', () => {
+    const rideTypeBreakdown = { mountain: { rides: 4, miles: 75, elevationFeet: 0 }, roadGravel: { rides: 1, miles: 25, elevationFeet: 0 } };
+    const ridesPerYear = [{ year: 2016, rides: 5, miles: 100 }];
+    const perYear = [{ year: 2016, mountainMiles: 75, roadGravelMiles: 25 }];
+    const virtualPerYear = [{ year: 2016, rides: 3, miles: 100 }, { year: 2020, rides: 10, miles: 300 }];
+
+    it('stacks virtual miles at the bottom of each year', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear, virtualPerYear });
+        expect(await screen.findByTestId('virtual-bar-2016')).toHaveStyle({ height: '50%' });
+        expect(screen.getByTestId('mtb-bar-2016')).toHaveStyle({ height: '37.5%' });
+        const stack = screen.getByTestId('virtual-bar-2016').parentElement!.children;
+        expect(stack[0]).toBe(screen.getByTestId('virtual-bar-2016')); // flex-col-reverse: first child is the bottom
+        expect(screen.getByText('Virtual')).toBeInTheDocument();
+    });
+
+    it('includes virtual rides in the tooltip', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear, virtualPerYear });
+        fireEvent.mouseEnter((await screen.findByText("'16")).parentElement!);
+        const tip = screen.getByRole('tooltip');
+        expect(tip).toHaveTextContent('200 mi · 8 rides');
+        expect(tip).toHaveTextContent('Mountain Bike 75 mi');
+        expect(tip).toHaveTextContent('Road / Gravel 25 mi');
+        expect(tip).toHaveTextContent('Virtual 100 mi');
+    });
+
+    it('shows a virtual-only year that cannot be drilled into', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear, virtualPerYear });
+        expect(await screen.findByTestId('virtual-bar-2020')).toHaveStyle({ height: '100%' });
+        expect(screen.getByRole('button', { name: 'View 2016 details' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'View 2020 details' })).not.toBeInTheDocument();
+    });
+
+    it('leaves the chart as it was for stats cached before virtual years existed', async () => {
+        renderStats('imperial', { rideTypeBreakdown: { ...rideTypeBreakdown, perYear }, ridesPerYear: [...ridesPerYear, { year: 2017, rides: 1, miles: 10 }] });
+        expect(await screen.findByTestId('mtb-bar-2016')).toHaveStyle({ height: '75%' });
+        expect(screen.queryByText('Virtual')).not.toBeInTheDocument();
     });
 });
 
@@ -241,6 +285,58 @@ describe('StatsDialog year drilldown', () => {
         }));
         fireEvent.click(await screen.findByRole('button', { name: 'View 2016 details' }));
         expect(await screen.findByText('Strava is down')).toBeInTheDocument();
+    });
+});
+
+describe('StatsDialog refresh from Strava', () => {
+    const hourAgo = () => new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const statsCalls = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === '/api/stats').map(([, init]) => JSON.parse(init.body));
+
+    it('asks the server to refresh and spins until it is done', async () => {
+        renderStats('imperial', { refreshedAt: hourAgo(), refreshing: false });
+        const button = await screen.findByRole('button', { name: 'Refresh from Strava' });
+        expect(button).toBeEnabled();
+        expect(button).toHaveClass('text-gray-600');
+        expect(screen.queryByText('refreshing')).not.toBeInTheDocument();
+
+        fireEvent.click(button);
+        expect(screen.getByText('refreshing')).toBeInTheDocument();
+        expect(button).toBeDisabled();
+        await waitFor(() => expect(statsCalls()).toHaveLength(2));
+        expect(statsCalls()[0].refresh).toBeUndefined();
+        expect(statsCalls()[1]).toMatchObject({ refresh: true, activityMode: 'cycling' });
+    });
+
+    it('keeps the overview on screen while refreshing', async () => {
+        renderStats('imperial', { refreshedAt: hourAgo(), refreshing: false });
+        fireEvent.click(await screen.findByRole('button', { name: 'Refresh from Strava' }));
+        expect(screen.getByText('Unique Miles')).toBeInTheDocument();
+        expect(screen.queryByText(/Crunching your/)).not.toBeInTheDocument();
+    });
+
+    it('is disabled within 15 minutes of the last update', async () => {
+        renderStats('imperial', { refreshedAt: new Date().toISOString(), refreshing: false });
+        const button = await screen.findByRole('button', { name: 'Refresh from Strava' });
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute('title', 'Updated in the last 15 minutes');
+        expect(button).toHaveClass('text-gray-300');
+    });
+
+    it('is disabled while a refresh is already running', async () => {
+        renderStats('imperial', { refreshedAt: hourAgo(), refreshing: true });
+        expect(await screen.findByRole('button', { name: 'Refresh from Strava' })).toBeDisabled();
+        expect(screen.getByText('refreshing')).toBeInTheDocument();
+    });
+});
+
+describe('StatsDialog FTP', () => {
+    it('shows when the latest FTP was measured and how long ago', async () => {
+        const measured = new Date(Date.now() - 12 * 24 * 60 * 60 * 1000);
+        ftpReadings = [{ value: 210, date: '2025-01-01T12:00:00Z', activityId: 1 }, { value: 222, date: measured.toISOString(), activityId: 2 }];
+        renderStats('imperial');
+        expect(await screen.findByText((_, el) => el?.textContent === '222w')).toBeInTheDocument();
+        expect(screen.getByText(measured.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }))).toBeInTheDocument();
+        expect(screen.getByText('12 days ago')).toBeInTheDocument();
     });
 });
 

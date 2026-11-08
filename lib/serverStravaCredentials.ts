@@ -10,7 +10,7 @@ import { featureFlags } from './featureFlags';
 // clientId/clientSecret aren't needed here: they fall back to the shared
 // STRAVA_CLIENT_ID/SECRET app env vars in lib/strava.ts, the same app this
 // session's Strava sign-in itself used (lib/auth.ts).
-export async function getSessionStravaCredentials(): Promise<{ refreshToken: string } | null> {
+export async function getSessionStravaCredentials(): Promise<{ refreshToken: string; athleteId: string } | null> {
     const session = await getServerSession(authOptions);
     const userId = (session?.user as any)?.id as string | undefined;
     if (!userId) return null;
@@ -19,13 +19,14 @@ export async function getSessionStravaCredentials(): Promise<{ refreshToken: str
     if (!account?.refresh_token) return null;
 
     try {
-        return { refreshToken: decryptToken(account.refresh_token) };
+        // The Strava account id is the athlete id, so lookups never need Strava to be up (#165).
+        return { refreshToken: decryptToken(account.refresh_token), athleteId: account.providerAccountId };
     } catch {
         return null;
     }
 }
 
-interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
+interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string; athleteId?: string }
 
 // The one place a Strava-backed API route gets credentials (#126): the signed-in
 // user's own token, or -- only with advancedStravaIntegration -- a power user's
