@@ -5,6 +5,7 @@ import ServiceWorkerRegister from './ServiceWorkerRegister';
 import AuthProvider from './AuthProvider';
 import { UnitsProvider } from '@/components/UnitsContext';
 import { ThemeProvider } from '@/components/ThemeContext';
+import { MapStyleProvider } from '@/components/MapStyleContext';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
 const inter = Inter({ subsets: ["latin"] });
@@ -50,7 +51,9 @@ export default function RootLayout({
                 <AuthProvider>
                     <ThemeProvider>
                         <UnitsProvider>
-                            {children}
+                            <MapStyleProvider>
+                                {children}
+                            </MapStyleProvider>
                         </UnitsProvider>
                     </ThemeProvider>
                 </AuthProvider>
