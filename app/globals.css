@@ -26,3 +26,38 @@ body {
 .safe-t {
     padding-top: env(safe-area-inset-top);
 }
+
+body {
+    background-color: rgb(var(--c-bg-white));
+}
+
+/* Dark mode map (#173): darken the street tiles in place; route and ridden-road
+   lines live in other panes and keep their colors. */
+.dark .leaflet-container {
+    background: #1f2937;
+}
+.dark .leaflet-tile-pane {
+    filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.85);
+}
+.dark .leaflet-bar a,
+.dark .leaflet-bar a:hover {
+    background-color: #1f2937;
+    color: #e5e7eb;
+    border-bottom-color: #374151;
+}
+.dark .leaflet-control-attribution {
+    background: rgba(17, 24, 39, 0.8) !important;
+    color: #9ca3af;
+}
+.dark .leaflet-control-attribution a {
+    color: #a5b4fc;
+}
+.dark .leaflet-tooltip {
+    background-color: #1f2937;
+    color: #f3f4f6;
+    border-color: #374151;
+}
+.dark .leaflet-tooltip-top:before { border-top-color: #1f2937; }
+.dark .leaflet-tooltip-bottom:before { border-bottom-color: #1f2937; }
+.dark .leaflet-tooltip-left:before { border-left-color: #1f2937; }
+.dark .leaflet-tooltip-right:before { border-right-color: #1f2937; }
