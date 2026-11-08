@@ -9,7 +9,7 @@ import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { featureFlags } from '@/lib/featureFlags';
 import { AccountButton } from '@/components/AccountButton';
-import { StatsDialog } from '@/components/StatsDialog';
+import { StatsDialog, shouldShowStatsButton } from '@/components/StatsDialog';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { RwgpsSettingsDialog } from '@/components/RwgpsSettingsDialog';
 import { RouteNameDialog } from '@/components/RouteNameDialog';
@@ -1712,7 +1712,7 @@ export default function Home() {
                         </button>
                     )}
 
-                    {stravaRoads && stravaRoads.length > 0 && (
+                    {shouldShowStatsButton(hasStravaCreds(stravaCredentials), !!(session?.user as { athleteId?: string } | undefined)?.athleteId, stravaRoads) && (
                         <button
                             onClick={() => setShowStats(true)}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"

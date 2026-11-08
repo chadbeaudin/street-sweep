@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
-import { StatsDialog } from './StatsDialog';
+import { StatsDialog, shouldShowStatsButton } from './StatsDialog';
 import { UnitsProvider } from './UnitsContext';
 
 jest.mock('recharts', () => {
@@ -40,9 +40,9 @@ const yearDetail: Record<string, unknown> = {
     rides: [yearRide(1, 'Morning Spin', 10, false, '2016-07-02T17:00:00Z'), yearRide(2, 'Epic Day', 50, true), yearRide(3, 'Commute', 15), yearRide(4, 'Gravel Loop', 25)],
 };
 
-const dialog = (isOpen: boolean, onClose = jest.fn()) => (
+const dialog = (isOpen: boolean, onClose = jest.fn(), riddenRoads: [number, number][][] | null = RIDDEN) => (
     <UnitsProvider>
-        <StatsDialog isOpen={isOpen} onClose={onClose} riddenRoads={RIDDEN} activityElevations={[]} activityTypes={[]} stravaCredentials={CREDS} activityMode="cycling" />
+        <StatsDialog isOpen={isOpen} onClose={onClose} riddenRoads={riddenRoads} activityElevations={[]} activityTypes={[]} stravaCredentials={CREDS} activityMode="cycling" />
     </UnitsProvider>
 );
 
@@ -335,8 +335,55 @@ describe('StatsDialog FTP', () => {
         ftpReadings = [{ value: 210, date: '2025-01-01T12:00:00Z', activityId: 1 }, { value: 222, date: measured.toISOString(), activityId: 2 }];
         renderStats('imperial');
         expect(await screen.findByText((_, el) => el?.textContent === '222w')).toBeInTheDocument();
-        expect(screen.getByText(measured.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }))).toBeInTheDocument();
+        expect(screen.getByText(measured.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }))).toHaveClass('text-gray-700');
         expect(screen.getByText('12 days ago')).toBeInTheDocument();
+    });
+});
+
+describe('Stats button visibility', () => {
+    it('shows as soon as the rider is on Strava, before their rides load', () => {
+        expect(shouldShowStatsButton(true, false, null)).toBe(true);
+        expect(shouldShowStatsButton(false, true, null)).toBe(true);
+    });
+
+    it('stays hidden for someone not on Strava, or with no rides', () => {
+        expect(shouldShowStatsButton(false, false, null)).toBe(false);
+        expect(shouldShowStatsButton(false, false, RIDDEN)).toBe(false);
+        expect(shouldShowStatsButton(true, true, [])).toBe(false);
+    });
+
+    it('stays shown once rides have loaded', () => {
+        expect(shouldShowStatsButton(true, true, RIDDEN)).toBe(true);
+    });
+});
+
+describe('StatsDialog before rides load', () => {
+    const renderWith = (riddenRoads: [number, number][][] | null) => {
+        global.fetch = jest.fn((url: string) => Promise.resolve({
+            json: async () => (url === '/api/stats' ? stats : { readings: [] }),
+        })) as unknown as typeof fetch;
+        return render(dialog(true, jest.fn(), riddenRoads));
+    };
+    const statsFetches = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => url === '/api/stats').length;
+
+    it('loads stats from the server while the rides are still loading', async () => {
+        renderWith(null);
+        expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
+        expect(screen.getByText('100.0')).toBeInTheDocument();
+    });
+
+    it('does not refetch when the rides finish loading', async () => {
+        const { rerender } = renderWith(null);
+        await screen.findByText('Unique Miles');
+        rerender(dialog(true, jest.fn(), RIDDEN));
+        await screen.findByText('Unique Miles');
+        expect(statsFetches()).toBe(1);
+    });
+
+    it('shows zeros without asking the server when there are no rides', async () => {
+        renderWith([]);
+        expect(await screen.findByText('Unique Miles')).toBeInTheDocument();
+        expect(statsFetches()).toBe(0);
     });
 });
 

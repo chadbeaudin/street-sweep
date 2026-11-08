@@ -117,6 +117,12 @@ function formatAge(refreshedAt?: string): string | null {
     return `${days}d ago`;
 }
 
+// Shown as soon as the rider is known to be on Strava, without waiting for their
+// rides to load; the dialog fetches its own numbers. Hidden only once we know there are none.
+export function shouldShowStatsButton(stravaConnected: boolean, signedInWithStrava: boolean, riddenRoads: unknown[] | null): boolean {
+    return (stravaConnected || signedInWithStrava) && riddenRoads?.length !== 0;
+}
+
 export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials, activityMode }: StatsDialogProps) {
     const { units } = useUnits();
     const dist = (miles: number) => distanceFromMiles(miles, units);
@@ -172,9 +178,11 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
         ? new Date(Date.UTC(selectedYear, selectedMonth - 1)).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
         : null;
 
+    // null means the rides are still loading, which shouldn't hold up (or restart) the fetch.
+    const hasNoRides = riddenRoads?.length === 0;
     useEffect(() => {
         if (!isOpen) return;
-        if (!riddenRoads || riddenRoads.length === 0) {
+        if (hasNoRides) {
             setStats({ totalActivities: 0, totalUniqueMiles: 0, totalElevationFeet: 0, cities: [] });
             return;
         }
@@ -219,7 +227,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
             cancelled = true;
             if (pollTimer) clearTimeout(pollTimer);
         };
-    }, [isOpen, riddenRoads, stravaCredentials, activityMode, refreshRequest]);
+    }, [isOpen, hasNoRides, stravaCredentials, activityMode, refreshRequest]);
 
     const refreshFromStrava = () => {
         setStats(s => s && { ...s, refreshing: true });
@@ -543,8 +551,8 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">FTP</div>
                                                 <div className="text-xl font-bold text-gray-900 tabular-nums leading-none mt-0.5">{latest.value}<span className="text-sm font-medium text-gray-400 ml-1">w</span></div>
                                             </div>
-                                            <div className="text-right text-xs text-gray-500 tabular-nums flex-shrink-0">
-                                                <div>{new Date(latest.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</div>
+                                            <div className="text-right text-xs tabular-nums flex-shrink-0">
+                                                <div className="font-medium text-gray-700">{new Date(latest.date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</div>
                                                 <div className="text-gray-400">{formatDaysAgo(latest.date)}</div>
                                             </div>
                                             <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
