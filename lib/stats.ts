@@ -317,3 +317,10 @@ export function isModeActivity(type: string | undefined, mode: ActivityMode): bo
 export function isModeActivityBroad(type: string | undefined, mode: ActivityMode): boolean {
     return mode === 'cycling' ? isCyclingActivity(type) : isRunningActivityBroad(type);
 }
+
+// Shown as soon as the rider is known to be on Strava, without waiting for their
+// rides to load; the dialog fetches its own numbers. Hidden only once we know there are none.
+// Lives here rather than in StatsDialog so the page can use it without loading the dialog's chart code (#182).
+export function shouldShowStatsButton(stravaConnected: boolean, signedInWithStrava: boolean, riddenRoads: unknown[] | null): boolean {
+    return (stravaConnected || signedInWithStrava) && riddenRoads?.length !== 0;
+}

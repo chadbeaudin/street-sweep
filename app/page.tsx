@@ -9,7 +9,9 @@ import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
 import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { featureFlags } from '@/lib/featureFlags';
 import { AccountButton } from '@/components/AccountButton';
-import { StatsDialog, shouldShowStatsButton } from '@/components/StatsDialog';
+import { shouldShowStatsButton } from '@/lib/stats';
+import { preloadAfter } from '@/lib/deferredPreload';
+import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { RwgpsSettingsDialog } from '@/components/RwgpsSettingsDialog';
@@ -36,7 +38,14 @@ const Map = dynamic<any>(() => import('@/components/Map'), {
     loading: () => <div className="flex-1 bg-gray-100 flex items-center justify-center">Loading map...</div>
 });
 
-import { ElevationProfile } from '@/components/ElevationProfile';
+// Both pull in the charting library, the largest chunk, so they load after the page instead of before it (#182).
+const loadStatsDialog = () => import('@/components/StatsDialog');
+const loadElevationProfile = () => import('@/components/ElevationProfile');
+const StatsDialog = dynamic(() => loadStatsDialog().then(m => m.StatsDialog), { ssr: false });
+const ElevationProfile = dynamic(() => loadElevationProfile().then(m => m.ElevationProfile), { ssr: false });
+const CHART_PRELOAD_DELAY_MS = 5000;
+const RIDDEN_MATCHING_NOTICE_DELAY_MS = 3000;
+
 import pkg from '@/package.json';
 import { haversineM, toSemicircles } from '@/lib/geometry';
 import { shareOrDownloadGpx } from '@/lib/gpxShare';
@@ -71,6 +80,8 @@ export default function Home() {
     // isStravaLoading, which only covers the quick raw-activity-list fetch and
     // clears well before this finishes on a first connect with real history.
     const [isRiddenComputing, setIsRiddenComputing] = useState(false);
+    // Small pans match in well under a second; only announce matching that's actually taking a while (#183).
+    const showRiddenMatchingNotice = useDelayedFlag(isRiddenComputing, RIDDEN_MATCHING_NOTICE_DELAY_MS);
     const [selectedPoints, setSelectedPoints] = useState<{ lat: number; lon: number; id: string }[]>([]);
     const [manualRoute, setManualRoute] = useState<[number, number][][]>([]);
     const [history, setHistory] = useState<RouteSnapshot[]>([]);
@@ -158,6 +169,9 @@ export default function Home() {
     // Prompted once on first run, then persisted; changeable later from
     // Routing Preferences.
     const { units, setUnits } = useUnits();
+
+    const [chartsPreloaded, setChartsPreloaded] = useState(false);
+    useEffect(() => preloadAfter(CHART_PRELOAD_DELAY_MS, [loadStatsDialog, loadElevationProfile], () => setChartsPreloaded(true)), []);
     const ACTIVITY_MODE_KEY = 'activity_mode';
     const [activityMode, setActivityMode] = useState<'cycling' | 'running'>('cycling');
     const [showActivityModePrompt, setShowActivityModePrompt] = useState(false);
@@ -2311,7 +2325,7 @@ export default function Home() {
                     first-time connect (isStravaLoading clears once the raw activity list is
                     fetched) landed the user on what looked like a plain, empty map for up to
                     several minutes while the server-side ridden-road overlay was still computing. */}
-                {isRiddenComputing && !isStravaLoading && (
+                {showRiddenMatchingNotice && !isStravaLoading && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="relative flex items-center justify-center">
                             <div className="w-3 h-3 bg-[#FC4C02] rounded-full animate-ping absolute"></div>
@@ -2648,15 +2662,19 @@ export default function Home() {
                     />
                 )}
 
-                <StatsDialog
-                    isOpen={showStats}
-                    onClose={() => setShowStats(false)}
-                    riddenRoads={stravaRoads}
-                    activityElevations={stravaElevations}
-                    activityTypes={stravaTypes}
-                    stravaCredentials={stravaCredentials}
-                    activityMode={activityMode}
-                />
+                {/* Not mounted until preloaded or opened: rendering it closed any earlier would download its chunk
+                    right away. Once mounted it stays, so reopening shows the last numbers while they refresh. */}
+                {(chartsPreloaded || showStats) && (
+                    <StatsDialog
+                        isOpen={showStats}
+                        onClose={() => setShowStats(false)}
+                        riddenRoads={stravaRoads}
+                        activityElevations={stravaElevations}
+                        activityTypes={stravaTypes}
+                        stravaCredentials={stravaCredentials}
+                        activityMode={activityMode}
+                    />
+                )}
 
                 {error && (
                     <ErrorDialog

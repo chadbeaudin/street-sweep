@@ -117,12 +117,6 @@ function formatAge(refreshedAt?: string): string | null {
     return `${days}d ago`;
 }
 
-// Shown as soon as the rider is known to be on Strava, without waiting for their
-// rides to load; the dialog fetches its own numbers. Hidden only once we know there are none.
-export function shouldShowStatsButton(stravaConnected: boolean, signedInWithStrava: boolean, riddenRoads: unknown[] | null): boolean {
-    return (stravaConnected || signedInWithStrava) && riddenRoads?.length !== 0;
-}
-
 export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, activityTypes, stravaCredentials, activityMode }: StatsDialogProps) {
     const { units } = useUnits();
     const dist = (miles: number) => distanceFromMiles(miles, units);

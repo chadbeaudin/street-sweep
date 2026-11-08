@@ -4,7 +4,8 @@
 
 import '@testing-library/jest-dom';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
-import { StatsDialog, shouldShowStatsButton } from './StatsDialog';
+import { StatsDialog } from './StatsDialog';
+import { shouldShowStatsButton } from '@/lib/stats';
 import { UnitsProvider } from './UnitsContext';
 
 jest.mock('recharts', () => {
