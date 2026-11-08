@@ -14,7 +14,7 @@ module.exports = {
         ],
         "^.+\\.js$": ["ts-jest", { tsconfig: { allowJs: true, esModuleInterop: true } }]
     },
-    transformIgnorePatterns: ["/node_modules/(?!@garmin/fitsdk)"],
+    transformIgnorePatterns: ["/node_modules/(?!@garmin/fitsdk|react-leaflet|@react-leaflet)"],
     testPathIgnorePatterns: ["/node_modules/", "/tests/integration/"],
     moduleNameMapper: {
         "^@/(.*)$": "<rootDir>/$1"

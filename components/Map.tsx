@@ -12,7 +12,7 @@ import { unmatchedRuns, indexRoadBounds, roadsIntersecting } from '@/lib/roadTil
 import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 import { useMapStyle } from './MapStyleContext';
 import { MapStylePicker } from './MapStylePicker';
-import { tileLayerProps } from '@/lib/mapStyles';
+import { riddenColorFor, riddenPathOptionsFor, tileLayerProps } from '@/lib/mapStyles';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -488,6 +488,8 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
     const { style: tileStyle } = useMapStyle();
+    // Via pathOptions, not a color prop: react-leaflet only reads color at creation, so switching styles wouldn't recolor.
+    const riddenPathOptions = React.useMemo(() => riddenPathOptionsFor(riddenColorFor(tileStyle)), [tileStyle]);
     const [zoom, setZoom] = React.useState(13);
     const selectionStartRef = React.useRef<L.Point | null>(null);
     const isDrawingLassoRef = React.useRef(false);
@@ -1069,10 +1071,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <Polyline
                         key={`strava-pending-${idx}`}
                         positions={road}
-                        color="#1D4ED8"
-                        weight={2}
-                        opacity={0.35}
-                        dashArray="4 6"
+                        pathOptions={riddenPathOptions.pending}
                         interactive={false}
                     />
                 ))}
@@ -1083,9 +1082,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     <Polyline
                         key={`strava-${idx}`}
                         positions={road as [number, number][]}
-                        color="#1D4ED8"
-                        weight={3}
-                        opacity={0.9}
+                        pathOptions={riddenPathOptions.matched}
                         interactive={false}
                     />
                 ))}
