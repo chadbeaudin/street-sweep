@@ -37,9 +37,9 @@ describe('getSessionStravaCredentials', () => {
 
     it('returns the decrypted refresh token for a linked account', async () => {
         mockGetServerSession.mockResolvedValue({ user: { id: 'user1' } });
-        mockFindFirst.mockResolvedValue({ refresh_token: 'encrypted-blob' });
+        mockFindFirst.mockResolvedValue({ refresh_token: 'encrypted-blob', providerAccountId: '12345' });
         mockDecryptToken.mockReturnValue('plain-refresh-token');
-        expect(await getSessionStravaCredentials()).toEqual({ refreshToken: 'plain-refresh-token' });
+        expect(await getSessionStravaCredentials()).toEqual({ refreshToken: 'plain-refresh-token', athleteId: '12345' });
         expect(mockFindFirst).toHaveBeenCalledWith({ where: { userId: 'user1', provider: 'strava' } });
     });
 });

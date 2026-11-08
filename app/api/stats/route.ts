@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { enqueueAthleteSync, hasPendingSync } from '@/lib/athleteSyncQueue';
 import { STATS_VERSION, StatsPayload, statsCacheKey, withDbRetry } from '@/lib/statsCompute';
+import { STATS_REFRESH_COOLDOWN_MS } from '@/lib/stats';
 import type { ActivityMode, Creds } from '@/lib/riddenRoadsRefresh';
 
 // Stats are recomputed by the worker whenever the athlete's activity list
@@ -22,7 +23,7 @@ interface StatsResponse extends Partial<StatsPayload> {
 // A fast read of the worker-computed row: never computes in this process.
 async function handlePOST(request: Request) {
     try {
-        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string };
+        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; refresh?: boolean };
         const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
         if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         const mode: ActivityMode = body.activityMode === 'running' ? 'running' : 'cycling';
@@ -33,6 +34,14 @@ async function handlePOST(request: Request) {
         const outdated = !!cached && ((cached.stats as unknown as StatsPayload)?.version ?? 1) < STATS_VERSION;
         const expired = !!cached && Date.now() - cached.refreshedAt.getTime() > SAFETY_TTL_MS;
         let refreshing = await hasPendingSync(athleteId);
+        const coolingDown = !!cached && Date.now() - cached.refreshedAt.getTime() < STATS_REFRESH_COOLDOWN_MS;
+        if (body.refresh && !refreshing && !coolingDown) {
+            // Clearing fullSyncedAt makes the worker's resync a full pull, which also catches edits and deletions.
+            await prisma.stravaActivityCache.updateMany({ where: { athleteId }, data: { fullSyncedAt: null } });
+            await enqueueAthleteSync(athleteId, 'resync', { creds: stravaCredentials });
+            await enqueueAthleteSync(athleteId, 'recompute', { mode, creds: stravaCredentials });
+            refreshing = true;
+        }
         if (!refreshing && (!cached || outdated || expired)) {
             await enqueueAthleteSync(athleteId, 'recompute', { mode, creds: stravaCredentials });
             refreshing = true;

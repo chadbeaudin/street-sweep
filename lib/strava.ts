@@ -135,8 +135,8 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
 
 // The same real-world set fetchCyclingRiddenRoads counts, narrowed to one year,
 // so a year's rides add up to its bar on the stats chart. Years are UTC there too.
-export async function fetchActivitiesForYear(creds: { clientId?: string; clientSecret?: string; refreshToken?: string } | undefined, mode: ActivityMode, year: number): Promise<StravaActivity[]> {
-    const all = await getCachedOrFetchActivities(creds);
+export async function fetchActivitiesForYear(creds: { clientId?: string; clientSecret?: string; refreshToken?: string; athleteId?: string } | undefined, mode: ActivityMode, year: number): Promise<StravaActivity[]> {
+    const all = await getCachedOrFetchActivities(creds, { staleOk: true });
     const candidates = all.filter(a => a.start_date?.startsWith(`${year}-`) && isModeActivity(a.sport_type || a.type, mode));
     const detailRows = await prisma.stravaActivityDetail.findMany({
         where: { activityId: { in: candidates.map(a => a.id.toString()) } },
@@ -228,7 +228,8 @@ export async function getStravaAthleteId(accessToken: string): Promise<string> {
 // instead of independently re-resolving (and re-costing rate-limit budget).
 const ATHLETE_ID_CACHE = new Map<string, string>();
 
-export async function resolveAthleteId(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<string> {
+export async function resolveAthleteId(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string; athleteId?: string }): Promise<string> {
+    if (creds?.athleteId) return creds.athleteId;
     const cacheKey = creds?.refreshToken || '';
     if (cacheKey && ATHLETE_ID_CACHE.has(cacheKey)) return ATHLETE_ID_CACHE.get(cacheKey)!;
     const accessToken = await getStravaAccessToken(creds);
@@ -296,7 +297,9 @@ async function fetchAllStravaActivitiesWithToken(accessToken: string, after?: nu
 // which is shared application-wide across every user — see issue #61.
 const ACTIVITY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
-async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<StravaActivity[]> {
+// `staleOk` serves an out-of-date cache when Strava can't be reached, for readers
+// that would rather show old data than none (#165); the worker never sets it.
+async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }, { staleOk = false } = {}): Promise<StravaActivity[]> {
     // Resolving athleteId (cached) costs no live call on a warm cache, so a
     // Postgres cache hit below needs zero Strava API calls at all.
     const athleteId = await resolveAthleteId(creds);
@@ -308,7 +311,15 @@ async function getCachedOrFetchActivities(creds?: { clientId?: string; clientSec
         return cachedActivities;
     }
 
-    const { activities, changed } = await syncActivities(athleteId, await getStravaAccessToken(creds), cached ? cachedActivities : null);
+    let synced: Awaited<ReturnType<typeof syncActivities>>;
+    try {
+        synced = await syncActivities(athleteId, await getStravaAccessToken(creds), cached ? cachedActivities : null);
+    } catch (e) {
+        if (!cached || !staleOk) throw e;
+        console.warn(`[Strava] Sync failed, serving ${cachedActivities.length} cached activities for athlete ${athleteId}: ${e instanceof Error ? e.message : e}`);
+        return cachedActivities;
+    }
+    const { activities, changed } = synced;
     if (changed) await enqueueAthleteSync(athleteId, 'recompute', { creds });
     return activities;
 }

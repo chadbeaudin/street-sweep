@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchActivitiesForYear, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes } from './strava';
+import { fetchActivitiesForYear, resolveAthleteId, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 
@@ -544,9 +544,37 @@ describe('fetchActivitiesForYear', () => {
         expect(activities.map(a => a.id)).toEqual([6]);
     });
 
+    it('serves a stale cache when Strava is rate limited (#165)', async () => {
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '999', activities: [mockActivity({ id: 9, start_date: '2025-06-01T00:00:00Z' })], syncedAt: new Date(0) });
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 429, statusText: 'Too Many Requests', text: async () => '{"message":"Rate Limit Exceeded"}' })) as any;
+        const activities = await fetchActivitiesForYear({ ...creds, athleteId: '999' }, 'cycling', 2025);
+        expect(activities.map(a => a.id)).toEqual([9]);
+    });
+
+    it('still fails when there is no cache to fall back on', async () => {
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue(null);
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 429, statusText: 'Too Many Requests', text: async () => '{"message":"Rate Limit Exceeded"}' })) as any;
+        await expect(fetchActivitiesForYear({ ...creds, athleteId: '999' }, 'cycling', 2025)).rejects.toThrow('429');
+    });
+
     it('selects by mode', async () => {
         mockCache([mockActivity({ id: 7, start_date: '2025-06-01T00:00:00Z', type: 'Run' }), mockActivity({ id: 8, start_date: '2025-06-01T00:00:00Z' })]);
         const activities = await fetchActivitiesForYear(creds, 'running', 2025);
         expect(activities.map(a => a.id)).toEqual([7]);
+    });
+});
+
+describe('resolveAthleteId (#165)', () => {
+    it('uses a known athlete id without calling Strava', async () => {
+        global.fetch = jest.fn() as any;
+        expect(await resolveAthleteId({ refreshToken: 'never-seen', athleteId: '4242' })).toBe('4242');
+        expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('looks the athlete up on Strava when the id is unknown', async () => {
+        global.fetch = jest.fn((url: string) => Promise.resolve(url.includes('oauth/token')
+            ? { ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) }
+            : { ok: true, json: async () => ({ id: 31337 }) })) as any;
+        expect(await resolveAthleteId({ clientId: 'id', clientSecret: 'secret', refreshToken: 'fresh-token-165' })).toBe('31337');
     });
 });

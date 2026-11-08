@@ -32,7 +32,8 @@ const MAX_CITIES = 5;
 // v9: rideTypeBreakdown (mountain bike vs road/gravel) added.
 // v10: ride type decided by the bike's frame type; per-year ride type split.
 // v11: totals split into IRL vs virtual; records are combined.
-export const STATS_VERSION = 11;
+// v12: virtualPerYear added for the per-year chart.
+export const STATS_VERSION = 12;
 
 interface CityStats {
     name: string;
@@ -54,6 +55,7 @@ export interface StatsPayload {
     biggestClimbFeet?: number;
     activeDays?: number;
     ridesPerYear?: RideRecords['ridesPerYear'];
+    virtualPerYear?: RideRecords['ridesPerYear'];
     rideTypeBreakdown?: RideTypeBreakdown;
     split?: { irl: ActivityTotals; virtual: ActivityTotals };
     cities: CityStats[];
@@ -127,6 +129,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     const records = computeRideRecords(activityDistances, activityElevations, activityStartDates);
     const irl = computeActivityTotals(activityDistances, activityElevations, activityStartDates);
     const virtualTotals = computeActivityTotals(virtual.distances, virtual.elevations, virtual.startDates);
+    const virtualRecords = computeRideRecords(virtual.distances, virtual.elevations, virtual.startDates);
     const combined = computeRideRecords(
         [...activityDistances, ...virtual.distances],
         [...activityElevations, ...virtual.elevations],
@@ -281,6 +284,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         biggestClimbFeet: combined.biggestClimbFeet,
         activeDays: combined.activeDays,
         ridesPerYear: records.ridesPerYear,
+        virtualPerYear: virtualRecords.ridesPerYear,
         rideTypeBreakdown: mode === 'cycling' ? computeRideTypeBreakdown(activityTypes, activityDistances, activityElevations, activityStartDates, activityGearIds, gearFrameTypes) : undefined,
         split: { irl, virtual: virtualTotals },
         cities,

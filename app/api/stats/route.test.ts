@@ -1,7 +1,7 @@
 const mockJson = jest.fn((data: any, init?: { status?: number }) => ({ status: init?.status ?? 200, _data: data }));
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
 jest.mock('@/lib/strava', () => ({ resolveAthleteId: jest.fn() }));
-jest.mock('@/lib/prisma', () => ({ prisma: { statsCache: { findUnique: jest.fn() } } }));
+jest.mock('@/lib/prisma', () => ({ prisma: { statsCache: { findUnique: jest.fn() }, stravaActivityCache: { updateMany: jest.fn() } } }));
 jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 jest.mock('@/lib/athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn(), hasPendingSync: jest.fn() }));
 jest.mock('@/lib/statsCompute', () => ({
@@ -59,6 +59,41 @@ describe('POST /api/stats (#118)', () => {
         await post({ stravaCredentials: creds });
         expect(enqueueAthleteSync).not.toHaveBeenCalled();
         expect(lastResponse()[0]).toMatchObject({ refreshing: true, computing: true });
+    });
+
+    describe('manual refresh', () => {
+        const hourAgo = () => new Date(Date.now() - 60 * 60 * 1000);
+
+        it('queues a full resync and a recompute for the current mode', async () => {
+            (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row({}, hourAgo()));
+            await post({ stravaCredentials: creds, activityMode: 'running', refresh: true });
+            expect(prisma.stravaActivityCache.updateMany).toHaveBeenCalledWith({ where: { athleteId: '42' }, data: { fullSyncedAt: null } });
+            expect(enqueueAthleteSync).toHaveBeenCalledWith('42', 'resync', { creds });
+            expect(enqueueAthleteSync).toHaveBeenCalledWith('42', 'recompute', { mode: 'running', creds });
+            expect(lastResponse()[0]).toMatchObject({ totalActivities: 3, refreshing: true });
+        });
+
+        it('is ignored within 15 minutes of the last update', async () => {
+            (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row({}, new Date(Date.now() - 5 * 60 * 1000)));
+            await post({ stravaCredentials: creds, refresh: true });
+            expect(enqueueAthleteSync).not.toHaveBeenCalled();
+            expect(prisma.stravaActivityCache.updateMany).not.toHaveBeenCalled();
+            expect(lastResponse()[0]).toMatchObject({ refreshing: false });
+        });
+
+        it('does not queue a second refresh while one is pending', async () => {
+            (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row({}, hourAgo()));
+            (hasPendingSync as jest.Mock).mockResolvedValue(true);
+            await post({ stravaCredentials: creds, refresh: true });
+            expect(enqueueAthleteSync).not.toHaveBeenCalled();
+            expect(lastResponse()[0]).toMatchObject({ refreshing: true });
+        });
+
+        it('is not triggered by an ordinary read', async () => {
+            (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row({}, hourAgo()));
+            await post({ stravaCredentials: creds });
+            expect(enqueueAthleteSync).not.toHaveBeenCalled();
+        });
     });
 
     it('gets credentials only through the shared resolver (#126)', async () => {

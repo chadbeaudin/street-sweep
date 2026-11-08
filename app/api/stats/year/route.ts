@@ -15,7 +15,13 @@ async function handlePOST(request: Request) {
         const mode: ActivityMode = body.activityMode === 'running' ? 'running' : 'cycling';
 
         const activities = await fetchActivitiesForYear(stravaCredentials, mode, year);
-        const gearFrameTypes = mode === 'cycling' ? await fetchGearFrameTypes(stravaCredentials, activities.map(a => a.gear_id ?? '')) : new Map<string, number>();
+        // Without frame types, rides fall back to their activity type rather than failing the page (#165).
+        const gearFrameTypes = mode === 'cycling'
+            ? await fetchGearFrameTypes(stravaCredentials, activities.map(a => a.gear_id ?? '')).catch(e => {
+                console.warn(`Stats year: gear lookup failed: ${e.message}`);
+                return new Map<string, number>();
+            })
+            : new Map<string, number>();
         return NextResponse.json(computeYearDetail(year, activities, gearFrameTypes));
     } catch (error: any) {
         console.error('Stats year route error:', error);

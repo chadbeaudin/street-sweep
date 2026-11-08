@@ -102,5 +102,7 @@ describe('recomputeStats IRL vs virtual split', () => {
         expect(stats.longestRideMiles).toBeCloseTo(40, 5);
         expect(stats.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
         expect(stats.activeDays).toBe(2); // the virtual ride shares a day with an IRL ride
+        expect(stats.ridesPerYear).toEqual([{ year: 2026, rides: 2, miles: expect.closeTo(50, 5) }]);
+        expect(stats.virtualPerYear).toEqual([{ year: 2026, rides: 1, miles: expect.closeTo(40, 5) }]);
     });
 });
