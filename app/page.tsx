@@ -10,6 +10,7 @@ import { StravaHeaderButton } from '@/components/StravaHeaderButton';
 import { featureFlags } from '@/lib/featureFlags';
 import { AccountButton } from '@/components/AccountButton';
 import { StatsDialog, shouldShowStatsButton } from '@/components/StatsDialog';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { RwgpsSettingsDialog } from '@/components/RwgpsSettingsDialog';
 import { RouteNameDialog } from '@/components/RouteNameDialog';
@@ -1941,6 +1942,12 @@ export default function Home() {
                                                         Metric (km, m)
                                                     </button>
                                                 </div>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Theme
+                                                </label>
+                                                <ThemeToggle />
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">

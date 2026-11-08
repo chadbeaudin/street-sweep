@@ -4,6 +4,8 @@ import "./globals.css";
 import ServiceWorkerRegister from './ServiceWorkerRegister';
 import AuthProvider from './AuthProvider';
 import { UnitsProvider } from '@/components/UnitsContext';
+import { ThemeProvider } from '@/components/ThemeContext';
+import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -39,12 +41,18 @@ export default function RootLayout({
     children: React.ReactNode;
 }>) {
     return (
-        <html lang="en">
+        // suppressHydrationWarning: the pre-paint script sets the theme class before React hydrates.
+        <html lang="en" suppressHydrationWarning>
+            <head>
+                <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+            </head>
             <body className={inter.className}>
                 <AuthProvider>
-                    <UnitsProvider>
-                        {children}
-                    </UnitsProvider>
+                    <ThemeProvider>
+                        <UnitsProvider>
+                            {children}
+                        </UnitsProvider>
+                    </ThemeProvider>
                 </AuthProvider>
                 <ServiceWorkerRegister />
                 <div className="hidden md:block fixed bottom-4 left-4 text-[11px] font-medium text-gray-500/80 bg-white/30 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/40 shadow-sm pointer-events-none z-[9999]">
