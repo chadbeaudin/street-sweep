@@ -1,4 +1,4 @@
-import { tilesForBBox, tileKey, missingTiles, bboxForTiles, expandBBox, flattenRiddenTiles, unmatchedRuns, riddenTileKey, indexRoadBounds, roadsIntersecting, ROAD_TILE } from './roadTiles';
+import { tilesForBBox, tileKey, missingTiles, bboxForTiles, expandBBox, flattenRiddenTiles, unmatchedRuns, riddenTileKey, indexRoadBounds, roadsIntersecting, isNearRoad, ROAD_TILE } from './roadTiles';
 
 describe('roadTiles', () => {
     const bbox = { south: 40.0, west: -74.0, north: 40.02, east: -73.98 };
@@ -117,5 +117,46 @@ describe('roadTiles', () => {
             expect(visible.map(r => r.idx)).toEqual([1, 2]);
             expect(visible[0].road).toBe(near);
         });
+    });
+});
+
+describe('isNearRoad (#181)', () => {
+    // Identity-ish projection: 1 degree = 100 px, y grows southward like screen space.
+    const toPixel = ([lat, lon]: [number, number]) => ({ x: lon * 100, y: -lat * 100 });
+    const box = (x: number, y: number, tol: number) => ({ south: -(y + tol) / 100, north: -(y - tol) / 100, west: (x - tol) / 100, east: (x + tol) / 100 });
+    const horizontal: [number, number][] = [[0, 0], [0, 1]]; // y = 0 from x = 0 to 100
+    const index = indexRoadBounds([horizontal]);
+    const near = (x: number, y: number, tol = 7.5) => isNearRoad(index, { x, y }, box(x, y, tol), toPixel, tol);
+
+    it('hits a cursor on or within tolerance of a road', () => {
+        expect(near(50, 0)).toBe(true);
+        expect(near(50, 7)).toBe(true);
+        expect(near(50, -7.5)).toBe(true);
+    });
+
+    it('misses a cursor just outside tolerance', () => {
+        expect(near(50, 8)).toBe(false);
+    });
+
+    it('measures past a road end to the endpoint, not the infinite line', () => {
+        expect(near(105, 0)).toBe(true);
+        expect(near(110, 0)).toBe(false);
+        expect(near(106, 6)).toBe(false); // 8.5px from the end point
+    });
+
+    it('checks every segment of a multi-point road', () => {
+        const bent = indexRoadBounds([[[0, 0], [0, 1], [-1, 1]]]); // right, then down
+        expect(isNearRoad(bent, { x: 103, y: 60 }, box(103, 60, 7.5), toPixel, 7.5)).toBe(true);
+    });
+
+    it('skips roads whose bounds are nowhere near the cursor', () => {
+        const project = jest.fn(toPixel);
+        const far = indexRoadBounds([[[10, 10], [10, 11]], horizontal]);
+        isNearRoad(far, { x: 50, y: 0 }, box(50, 0, 7.5), project, 7.5);
+        expect(project.mock.calls.every(([[lat]]) => lat === 0)).toBe(true);
+    });
+
+    it('finds nothing with no roads loaded', () => {
+        expect(isNearRoad([], { x: 0, y: 0 }, box(0, 0, 7.5), toPixel, 7.5)).toBe(false);
     });
 });
