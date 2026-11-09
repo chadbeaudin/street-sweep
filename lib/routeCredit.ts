@@ -3,6 +3,7 @@ import { prisma } from './prisma';
 import { decryptToken } from './tokenCrypto';
 import { getStravaAccessToken, type StravaActivity } from './strava';
 import { haversineM } from './geometry';
+import { stravaFetch } from './stravaApi';
 
 export const CREDIT_TEXT = 'Route created by StreetSweep';
 export const CREDIT_LINE = `🚲 ${CREDIT_TEXT}`;
@@ -81,12 +82,12 @@ async function activityTrack(activity: StravaActivity): Promise<LatLon[]> {
 async function addCreditToActivity(accessToken: string, activityId: number): Promise<boolean> {
     const url = `https://www.strava.com/api/v3/activities/${activityId}`;
     const headers = { Authorization: `Bearer ${accessToken}` };
-    const res = await fetch(url, { headers });
+    const res = await stravaFetch(url, { headers });
     if (!res.ok) return false;
     const { description } = await res.json() as { description?: string | null };
     const updated = appendCredit(description);
     if (updated === null) return true;
-    const put = await fetch(url, {
+    const put = await stravaFetch(url, {
         method: 'PUT',
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: updated }),

@@ -2,6 +2,7 @@ import { prisma } from './prisma';
 import { decryptToken } from './tokenCrypto';
 import { getStravaAccessToken, resolveAthleteId } from './strava';
 import { riddenRoadsCacheKey } from './riddenRoadsRefresh';
+import { stravaFetch } from './stravaApi';
 
 // Revokes this app's Strava access for the athlete. Must only ever run with the
 // user's own refresh token: getStravaAccessToken falls back to the server's
@@ -10,7 +11,7 @@ async function revokeStravaAccess(encryptedRefreshToken: string): Promise<void> 
     const refreshToken = decryptToken(encryptedRefreshToken);
     if (!refreshToken) return;
     const accessToken = await getStravaAccessToken({ refreshToken });
-    await fetch('https://www.strava.com/oauth/deauthorize', {
+    await stravaFetch('https://www.strava.com/oauth/deauthorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ access_token: accessToken }),

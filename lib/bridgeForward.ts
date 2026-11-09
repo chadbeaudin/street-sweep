@@ -4,6 +4,7 @@
 // throws: a bridge outage must not fail or retry the athlete's sync. The bridge
 // reconciles against MyWhoosh on its own schedule to cover anything dropped here.
 import type { StravaSyncEvent } from './generated/prisma/client';
+import { stravaFetch } from './stravaApi';
 
 const TIMEOUT_MS = 5000;
 
@@ -23,7 +24,7 @@ export async function forwardToBridge(athleteId: string, accessToken: string, ev
     if (!url || !secret || athleteId !== owner) return;
     for (const activityId of createdActivityIds(events)) {
         try {
-            const res = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
+            const res = await stravaFetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
                 headers: { Authorization: `Bearer ${accessToken}` },
                 signal: AbortSignal.timeout(TIMEOUT_MS),
             });

@@ -141,7 +141,7 @@ model StravaSyncEvent {
 model StravaActivityDetail {
   activityId String   @id
   athleteId  String
-  polyline   String
+  polyline   String   // empty when the activity has no full-resolution track (or is gone/private), so it isn't re-fetched (#148)
   fetchedAt  DateTime @default(now())
 
   @@index([athleteId])

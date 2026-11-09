@@ -6,6 +6,7 @@ import { prisma } from './prisma';
 import { encryptToken } from './tokenCrypto';
 import { touchUserLastSeen } from './metrics';
 import { alertNewUser, alertUserActive } from './userAlerts';
+import { stravaFetch } from './stravaApi';
 
 const providers: NextAuthOptions['providers'] = [];
 
@@ -34,7 +35,7 @@ if (process.env.STRAVA_CLIENT_ID && process.env.STRAVA_CLIENT_SECRET) {
         // manually and drop that field before NextAuth ever sees it.
         token: {
             async request({ params }) {
-                const res = await fetch('https://www.strava.com/oauth/token', {
+                const res = await stravaFetch('https://www.strava.com/oauth/token', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

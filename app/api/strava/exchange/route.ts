@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { featureFlags } from '@/lib/featureFlags';
+import { stravaFetch } from '@/lib/stravaApi';
 
 async function handlePOST(req: Request) {
     try {
@@ -27,7 +28,7 @@ async function handlePOST(req: Request) {
         params.append('code', code);
         params.append('grant_type', 'authorization_code');
 
-        const response = await fetch('https://www.strava.com/oauth/token', {
+        const response = await stravaFetch('https://www.strava.com/oauth/token', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded'

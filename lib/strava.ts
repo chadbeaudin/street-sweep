@@ -6,6 +6,7 @@ import { riddenTileKey } from './roadTiles';
 import { riddenRoadsCacheKey } from './riddenRoadsRefresh';
 import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
 import { enqueueAthleteSync } from './athleteSyncQueue';
+import { stravaFetch } from './stravaApi';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -167,7 +168,7 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
     params.append('refresh_token', refreshToken);
     params.append('grant_type', 'refresh_token');
 
-    const response = await fetch('https://www.strava.com/oauth/token', {
+    const response = await stravaFetch('https://www.strava.com/oauth/token', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded'
@@ -213,7 +214,7 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
 }
 
 export async function getStravaAthleteId(accessToken: string): Promise<string> {
-    const res = await fetch('https://www.strava.com/api/v3/athlete', {
+    const res = await stravaFetch('https://www.strava.com/api/v3/athlete', {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     if (!res.ok) throw new Error(`Strava /athlete failed: ${res.status}`);
@@ -227,15 +228,25 @@ export async function getStravaAthleteId(accessToken: string): Promise<string> {
 // caller keeping its own copy, so they all draw down the same in-memory cache
 // instead of independently re-resolving (and re-costing rate-limit budget).
 const ATHLETE_ID_CACHE = new Map<string, string>();
+// Concurrent callers on a cold cache share one lookup instead of each spending a token refresh and an /athlete call (#148).
+const ATHLETE_ID_LOOKUPS = new Map<string, Promise<string>>();
 
 export async function resolveAthleteId(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string; athleteId?: string }): Promise<string> {
     if (creds?.athleteId) return creds.athleteId;
     const cacheKey = creds?.refreshToken || '';
     if (cacheKey && ATHLETE_ID_CACHE.has(cacheKey)) return ATHLETE_ID_CACHE.get(cacheKey)!;
-    const accessToken = await getStravaAccessToken(creds);
-    const athleteId = await getStravaAthleteId(accessToken);
-    if (cacheKey) ATHLETE_ID_CACHE.set(cacheKey, athleteId);
-    return athleteId;
+    const inFlight = cacheKey ? ATHLETE_ID_LOOKUPS.get(cacheKey) : undefined;
+    if (inFlight) return inFlight;
+    const lookup = (async () => getStravaAthleteId(await getStravaAccessToken(creds)))();
+    if (!cacheKey) return lookup;
+    ATHLETE_ID_LOOKUPS.set(cacheKey, lookup);
+    try {
+        const athleteId = await lookup;
+        ATHLETE_ID_CACHE.set(cacheKey, athleteId);
+        return athleteId;
+    } finally {
+        ATHLETE_ID_LOOKUPS.delete(cacheKey);
+    }
 }
 
 export async function fetchAllStravaActivities(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }): Promise<StravaActivity[]> {
@@ -252,7 +263,7 @@ async function fetchAllStravaActivitiesWithToken(accessToken: string, after?: nu
 
     while (hasMore) {
         const afterParam = after !== undefined ? `&after=${after}` : '';
-        const response = await fetch(`https://www.strava.com/api/v3/athlete/activities?page=${page}&per_page=${perPage}${afterParam}`, {
+        const response = await stravaFetch(`https://www.strava.com/api/v3/athlete/activities?page=${page}&per_page=${perPage}${afterParam}`, {
             headers: {
                 'Authorization': `Bearer ${accessToken}`
             }
@@ -349,7 +360,7 @@ export async function syncActivities(athleteId: string, accessToken: string, cac
 // One activity, for a webhook event. null when it's gone or no longer visible
 // to this app (deleted, or made private without activity:read_all).
 export async function fetchStravaActivity(accessToken: string, activityId: string): Promise<{ activity: StravaActivity; fullPolyline?: string } | null> {
-    const res = await fetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
+    const res = await stravaFetch(`https://www.strava.com/api/v3/activities/${activityId}`, {
         headers: { Authorization: `Bearer ${accessToken}` }
     });
     if (res.status === 404 || res.status === 403) return null;
@@ -382,7 +393,7 @@ export async function fetchGearFrameTypes(creds: { clientId?: string; clientSecr
     if (unknown.length > 0) {
         const accessToken = await getStravaAccessToken(creds);
         for (const gearId of unknown) {
-            const res = await fetch(`https://www.strava.com/api/v3/gear/${gearId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+            const res = await stravaFetch(`https://www.strava.com/api/v3/gear/${gearId}`, { headers: { Authorization: `Bearer ${accessToken}` } });
             if (!res.ok) {
                 console.warn(`[Strava] Gear ${gearId} lookup failed: ${res.status}`);
                 continue;
@@ -417,17 +428,22 @@ async function backfillActivityDetails(
     const accessToken = await getStravaAccessToken(creds);
     for (const activity of missing) {
         try {
-            const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}`, {
+            const res = await stravaFetch(`https://www.strava.com/api/v3/activities/${activity.id}`, {
                 headers: { Authorization: `Bearer ${accessToken}` }
             });
             if (res.status === 429) break; // rate-limited -- stop, the rest pick up next sync
-            if (!res.ok) continue;
-            const detail = await res.json() as { map?: { polyline?: string } };
-            if (!detail.map?.polyline) continue; // no full-res track (e.g. manual entry) -- keep using summary
+            // Gone or private: record the miss below rather than asking again every sync (#148).
+            const permanentMiss = res.status === 404 || res.status === 403;
+            if (!res.ok && !permanentMiss) continue; // transient -- retry next sync
+            const detail = res.ok ? await res.json() as { map?: { polyline?: string } } : {};
+            // An empty polyline marks "no full-res track" (manual entry, hidden map), same as
+            // StravaActivityStream; readers fall back to the summary line. A later webhook
+            // update for the activity overwrites it if a track appears.
+            const fullPolyline = detail.map?.polyline ?? '';
             await prisma.stravaActivityDetail.upsert({
                 where: { activityId: activity.id.toString() },
-                create: { activityId: activity.id.toString(), athleteId, polyline: detail.map.polyline },
-                update: { athleteId, polyline: detail.map.polyline },
+                create: { activityId: activity.id.toString(), athleteId, polyline: fullPolyline },
+                update: { athleteId, polyline: fullPolyline },
             });
         } catch (e: any) {
             console.warn(`[Strava] Detail backfill failed for activity ${activity.id}: ${e.message}`);
@@ -458,7 +474,7 @@ async function fetchRecentActivityStreams(
 
     const accessToken = await getStravaAccessToken(creds);
     for (const activity of missing) {
-        const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}/streams?keys=latlng&key_by_type=true`, {
+        const res = await stravaFetch(`https://www.strava.com/api/v3/activities/${activity.id}/streams?keys=latlng&key_by_type=true`, {
             headers: { Authorization: `Bearer ${accessToken}` }
         });
         if (res.status === 429) break; // rate-limited -- the rest pick up next sync
@@ -537,7 +553,7 @@ export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret
         const nameSignalsFtp = /ftp/i.test(activity.name);
 
         if (nameSignalsFtp) {
-            const detailRes = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}`, { headers: await headers() });
+            const detailRes = await stravaFetch(`https://www.strava.com/api/v3/activities/${activity.id}`, { headers: await headers() });
             if (detailRes.ok) {
                 const detail = await detailRes.json() as { description?: string };
                 if (detail.description) {
@@ -548,7 +564,7 @@ export async function fetchFtpReadings(creds?: { clientId?: string; clientSecret
         }
 
         if (commentCount === 0) continue;
-        const res = await fetch(`https://www.strava.com/api/v3/activities/${activity.id}/comments`, { headers: await headers() });
+        const res = await stravaFetch(`https://www.strava.com/api/v3/activities/${activity.id}/comments`, { headers: await headers() });
         if (!res.ok) {
             delete scanned[key]; // retry on the next refresh
             continue;
