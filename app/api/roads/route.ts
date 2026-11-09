@@ -2,12 +2,14 @@ import { withApiMetrics } from '@/lib/metrics';
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { OSMWay, OSMNode } from '@/lib/types';
+import { ROAD_ENCODING, encodeRoads } from '@/lib/roadEncoding';
 
 async function handlePOST(req: NextRequest) {
     try {
         let bbox: any;
+        let encoding: unknown;
         try {
-            ({ bbox } = await req.json());
+            ({ bbox, encoding } = await req.json());
         } catch {
             return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });
         }
@@ -73,6 +75,8 @@ async function handlePOST(req: NextRequest) {
         // Deliberately-skipped oversized requests aren't a service problem —
         // just the viewport being too big — so don't flag them as degraded.
         const degraded = osmData.elements.length === 0 && !osmData.skippedTooLarge;
+        // Clients that predate encoding (an open tab during a deploy) still get plain arrays.
+        if (encoding === ROAD_ENCODING) return NextResponse.json({ roads: encodeRoads(roads), encoding: ROAD_ENCODING, degraded });
         return NextResponse.json({ roads, degraded });
 
     } catch (error: any) {
