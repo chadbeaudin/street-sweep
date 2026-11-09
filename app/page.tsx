@@ -12,6 +12,7 @@ import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
+import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { GarminSettingsDialog } from '@/components/GarminSettingsDialog';
 import { RwgpsSettingsDialog } from '@/components/RwgpsSettingsDialog';
@@ -635,19 +636,20 @@ export default function Home() {
             fetch('/api/roads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bbox: fetchBbox }),
+                body: JSON.stringify({ bbox: fetchBbox, encoding: ROAD_ENCODING }),
                 signal
             })
                 .then(res => res.json())
                 .then(data => {
                     if (data.roads) {
-                        console.log(`[StreetSweep] Received ${data.roads.length} roadmap segments for ${missing.length} new tiles.`);
+                        const roads: [number, number][][] = data.encoding === ROAD_ENCODING ? decodeRoads(data.roads) : data.roads;
+                        console.log(`[StreetSweep] Received ${roads.length} roadmap segments for ${missing.length} new tiles.`);
                         // Keep the previous road set if this fetch came back empty
                         // (transient Overpass hiccup) so ridden-road snapping doesn't
                         // fall back to raw GPS traces.
-                        if (data.roads.length > 0) {
+                        if (roads.length > 0) {
                             for (const t of missing) fetchedRoadTilesRef.current.add(roadTileKey(t));
-                            roadTileCacheRef.current = roadTileCacheRef.current.concat(data.roads);
+                            roadTileCacheRef.current = roadTileCacheRef.current.concat(roads);
                             setAllRoads(roadTileCacheRef.current);
                         }
                         setServiceWarning(!!data.degraded);

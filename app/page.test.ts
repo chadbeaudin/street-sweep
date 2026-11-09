@@ -32,3 +32,10 @@ describe('ridden-roads matching notice (#183)', () => {
         expect(page).not.toMatch(/\{isRiddenComputing && !isStravaLoading && \(/);
     });
 });
+
+describe('road payload encoding (#181)', () => {
+    it('asks /api/roads for encoded roads and decodes them', () => {
+        expect(page).toContain("body: JSON.stringify({ bbox: fetchBbox, encoding: ROAD_ENCODING })");
+        expect(page).toMatch(/data\.encoding === ROAD_ENCODING \? decodeRoads\(data\.roads\) : data\.roads/);
+    });
+});

@@ -8,6 +8,7 @@
 import { spawn, ChildProcess } from 'child_process';
 
 const PORT = 3899; // avoid conflict with dev server on 3888
+const INTEGRATION_DIST_DIR = '.next-integration';
 const BASE_URL = `http://localhost:${PORT}`;
 
 async function waitForServer(timeoutMs = 60000): Promise<void> {
@@ -50,7 +51,8 @@ describe('Integration: server logs', () => {
         server = spawn('npx', ['next', 'dev', '-p', String(PORT)], {
             cwd: process.cwd(),
             stdio: ['ignore', 'pipe', 'pipe'],
-            env: { ...process.env, NODE_ENV: 'development' },
+            // Its own build directory, so it can't break a dev server already running on 3888 (#187).
+            env: { ...process.env, NODE_ENV: 'development', NEXT_DIST_DIR: INTEGRATION_DIST_DIR },
         });
 
         const capture = (chunk: Buffer) => logs.push(chunk.toString());
@@ -81,6 +83,29 @@ describe('Integration: server logs', () => {
 
             expect(res.status).toBe(401);
             expect(await res.json()).toEqual({ error: 'Sign in to send routes to Garmin' });
+        });
+    });
+
+    describe('Roads payload encoding (#181)', () => {
+        it('serves the same roads, encoded, at a fraction of the size', async () => {
+            const bbox = { south: 47.655, west: -117.43, north: 47.662, east: -117.42 };
+            const plain = await post('/api/roads', { bbox });
+            const plainText = await plain.text();
+            const encoded = await post('/api/roads', { bbox, encoding: 'polyline5' });
+            const encodedText = await encoded.text();
+            const { roads } = JSON.parse(plainText);
+            const body = JSON.parse(encodedText);
+            if (roads.length === 0) return; // Overpass unavailable in this environment; covered by unit tests
+
+            expect(body.encoding).toBe('polyline5');
+            const { decodeRoads } = await import('@/lib/roadEncoding');
+            const decoded = decodeRoads(body.roads);
+            expect(decoded).toHaveLength(roads.length);
+            decoded.forEach((road: [number, number][], i: number) => road.forEach(([lat, lon], j) => {
+                expect(Math.abs(lat - roads[i][j][0])).toBeLessThanOrEqual(0.0000051);
+                expect(Math.abs(lon - roads[i][j][1])).toBeLessThanOrEqual(0.0000051);
+            }));
+            expect(encodedText.length * 4).toBeLessThan(plainText.length);
         });
     });
 
