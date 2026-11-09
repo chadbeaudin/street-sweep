@@ -110,3 +110,33 @@ export function bboxForTiles(tiles: TileCoord[]): BBox {
         east: Math.max(...tiles.map(t => t.tx + 1)) * ROAD_TILE,
     };
 }
+
+// Whether any road passes within `tolerancePx` of `cursor`, in screen pixels (#181).
+// `toPixel` projects [lat, lon] to the same pixel space as `cursor`; `searchBox` is the
+// tolerance expressed as a lat/lon box around the cursor, used to skip far roads cheaply.
+export function isNearRoad(
+    index: IndexedRoad[],
+    cursor: { x: number; y: number },
+    searchBox: BBox,
+    toPixel: (latLon: [number, number]) => { x: number; y: number },
+    tolerancePx: number,
+): boolean {
+    const tolSq = tolerancePx * tolerancePx;
+    for (const { road } of roadsIntersecting(index, searchBox)) {
+        let prev = toPixel(road[0]);
+        for (let i = 1; i < road.length; i++) {
+            const next = toPixel(road[i]);
+            if (distanceToSegmentSq(cursor, prev, next) <= tolSq) return true;
+            prev = next;
+        }
+    }
+    return false;
+}
+
+function distanceToSegmentSq(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): number {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+    const cx = a.x + t * dx - p.x, cy = a.y + t * dy - p.y;
+    return cx * cx + cy * cy;
+}

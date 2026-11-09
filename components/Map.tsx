@@ -8,7 +8,8 @@ import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
 import { dedupeRiddenRoads, combineRiddenOverlay, filterRiddenRoadsToBbox } from '@/lib/riddenRoads';
 import { bboxFromLatLngs } from '@/lib/selectionBox';
-import { unmatchedRuns, indexRoadBounds, roadsIntersecting } from '@/lib/roadTiles';
+import { unmatchedRuns, indexRoadBounds } from '@/lib/roadTiles';
+import { RoadHoverCursor } from './RoadHoverCursor';
 import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 import { useMapStyle } from './MapStyleContext';
 import { MapStylePicker } from './MapStylePicker';
@@ -596,30 +597,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return unmatchedRuns(filterRiddenRoadsToBbox(stravaRoads, bbox, 1000) ?? [], matchedRiddenTiles);
     }, [stravaRoads, bbox, matchedRiddenTiles]);
 
-    // allRoads accumulates every street fetched this session, so only give
-    // Leaflet hitboxes for streets near the view -- its canvas renderer
-    // hit-tests every interactive layer on each mouse move.
     const indexedAllRoads = React.useMemo(() => indexRoadBounds(allRoads ?? []), [allRoads]);
-    const visibleRoadHitboxes = React.useMemo(() => {
-        if (!bbox) return [];
-        const padLat = (bbox.north - bbox.south) * 0.1;
-        const padLon = (bbox.east - bbox.west) * 0.1;
-        return roadsIntersecting(indexedAllRoads, { south: bbox.south - padLat, north: bbox.north + padLat, west: bbox.west - padLon, east: bbox.east + padLon });
-    }, [indexedAllRoads, bbox]);
-
-    // One stable handler object for every hitbox: react-leaflet rebinds a
-    // layer's listeners whenever its eventHandlers identity changes, which on
-    // a fresh inline object meant every hitbox on every render.
-    const roadClickRef = React.useRef({ isAvoidMode, isPickingStart, onAvoidPointAdd, onStartPick, onPointAdd });
-    roadClickRef.current = { isAvoidMode, isPickingStart, onAvoidPointAdd, onStartPick, onPointAdd };
-    const roadHitboxHandlers = React.useMemo(() => ({
-        click: (e: L.LeafletMouseEvent) => {
-            const { isAvoidMode, isPickingStart, onAvoidPointAdd, onStartPick, onPointAdd } = roadClickRef.current;
-            if (isAvoidMode) { onAvoidPointAdd?.({ lat: e.latlng.lat, lon: e.latlng.lng }); return; }
-            if (isPickingStart) { onStartPick?.(e.latlng.lat, e.latlng.lng); return; }
-            onPointAdd({ lat: e.latlng.lat, lon: e.latlng.lng });
-        },
-    }), []);
 
     // Fit map whenever an imported route first appears. Only imports — the
     // user hasn't positioned the map for that route's location yet, unlike
@@ -875,6 +853,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 {/* Keyed so a style change remounts the layer: react-leaflet only updates the url in place, not zoom limits or attribution. */}
                 <TileLayer key={tileStyle.id} {...tileLayerProps(tileStyle)} />
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
+                <RoadHoverCursor index={indexedAllRoads} enabled={!isSelectionMode && !isEraserMode && !isLassoMode} />
                 {startPoint && (
                     <Marker
                         position={[startPoint.lat, startPoint.lon]}
@@ -1005,8 +984,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
                 {/* Wider invisible hitbox for removing a single avoided section — right-click
                     to delete, mirroring the "right-click to delete" pattern used for waypoints.
-                    Rendered on top so it wins over the road hitbox layer below. Left clicks must
-                    bubble through to the map/road-hitbox layer underneath -- otherwise this layer
+                    Left clicks must bubble through to the map underneath -- otherwise this layer
                     silently swallowed normal point/avoid clicks landing on an already-avoided road. */}
                 {avoidedRoads && onAvoidRoadDelete && avoidedRoads.map((road, idx) => (
                     <Polyline
@@ -1127,20 +1105,6 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             iconSize: [22, 22],
                             iconAnchor: [11, 11],
                         })}
-                    />
-                ))}
-
-                {/* Invisible interactive layer for cursor and snapping - Rendered AFTER visual lines to be on top of them */}
-                {!isSelectionMode && !isEraserMode && visibleRoadHitboxes.map(({ idx, road }) => (
-                    <Polyline
-                        key={`road-hitbox-${idx}`}
-                        positions={road}
-                        color="#3B82F6"
-                        weight={15}
-                        opacity={0} // Totally invisible, but interactive
-                        bubblingMouseEvents={true}
-                        className="road-hitbox"
-                        eventHandlers={roadHitboxHandlers}
                     />
                 ))}
 
@@ -1340,14 +1304,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     cursor: crosshair !important;
                 }
                 .leaflet-container.selection-mode,
-                .leaflet-container.selection-mode path,
-                .leaflet-container.selection-mode .road-hitbox {
+                .leaflet-container.selection-mode path {
                     cursor: crosshair !important;
                 }
-                /* Use specific class for roads to avoid overriding markers */
-                .leaflet-container .road-hitbox {
+                /* Set by RoadHoverCursor while the pointer is over a street */
+                .leaflet-container.point-mode.over-road {
                     cursor: pointer !important;
-                    pointer-events: auto !important;
                 }
                 /* Route segments: grab cursor to signal drag-to-insert */
                 .leaflet-container .route-segment-hitbox {
