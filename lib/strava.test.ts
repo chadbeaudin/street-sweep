@@ -185,6 +185,53 @@ describe('fetchCyclingRiddenRoads', () => {
         }));
     });
 
+    describe('detail backfill misses (#148)', () => {
+        const run = async (detailResponse: () => object, ids = [42]) => {
+            const activities = ids.map(id => mockActivity({ id }));
+            (global.fetch as jest.Mock).mockImplementation((url: string) => {
+                if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+                if (isDetailUrl(url)) return Promise.resolve(detailResponse());
+                if (url.includes('/athlete') && !url.includes('activities')) return Promise.resolve({ ok: true, json: async () => ({ id: 999 }) });
+                if (url.includes('/activities')) return Promise.resolve({ ok: true, json: async () => (url.includes('page=1&') ? activities : []) });
+                throw new Error('unexpected fetch: ' + url);
+            });
+            return fetchCyclingRiddenRoads(creds);
+        };
+        const detailCalls = () => (global.fetch as jest.Mock).mock.calls.filter(([url]) => isDetailUrl(url)).length;
+
+        it('records a ride with no full-res track so it is never re-fetched, and keeps its summary line', async () => {
+            const result = await run(() => ({ ok: true, status: 200, json: async () => ({ map: { summary_polyline: REAL_POLYLINE } }) }));
+            expect(prisma.stravaActivityDetail.upsert).toHaveBeenCalledWith(expect.objectContaining({
+                where: { activityId: '42' },
+                create: expect.objectContaining({ activityId: '42', polyline: '' }),
+            }));
+            expect(result.riddenRoads[0]).toEqual(require('@mapbox/polyline').decode(REAL_POLYLINE));
+        });
+
+        it.each([404, 403])('records a %d (gone or private) as a miss', async status => {
+            await run(() => ({ ok: false, status, json: async () => ({}) }));
+            expect(prisma.stravaActivityDetail.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ polyline: '' }) }));
+        });
+
+        it('leaves a transient failure to retry next sync', async () => {
+            await run(() => ({ ok: false, status: 502, json: async () => ({}) }));
+            expect(prisma.stravaActivityDetail.upsert).not.toHaveBeenCalled();
+        });
+
+        it('stops the batch on a 429 without recording anything', async () => {
+            await run(() => ({ ok: false, status: 429, json: async () => ({}) }), [42, 43, 44]);
+            expect(detailCalls()).toBe(1);
+            expect(prisma.stravaActivityDetail.upsert).not.toHaveBeenCalled();
+        });
+
+        it('does not ask again for a ride already recorded as a miss', async () => {
+            (prisma.stravaActivityDetail.findMany as jest.Mock).mockResolvedValue([{ activityId: '42', polyline: '' }]);
+            const result = await run(() => { throw new Error('should not re-fetch a recorded miss'); });
+            expect(detailCalls()).toBe(0);
+            expect(result.riddenRoads[0]).toEqual(require('@mapbox/polyline').decode(REAL_POLYLINE));
+        });
+    });
+
     it('prefers a cached detail polyline over summary_polyline for the ridden-road trace', async () => {
         const activities = [mockActivity({ id: 7 })];
         (prisma.stravaActivityDetail.findMany as jest.Mock).mockResolvedValue([
@@ -569,6 +616,27 @@ describe('resolveAthleteId (#165)', () => {
         global.fetch = jest.fn() as any;
         expect(await resolveAthleteId({ refreshToken: 'never-seen', athleteId: '4242' })).toBe('4242');
         expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('shares one lookup between concurrent callers on a cold cache', async () => {
+        global.fetch = jest.fn((url: string) => Promise.resolve(url.includes('oauth/token')
+            ? { ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) }
+            : { ok: true, json: async () => ({ id: 777 }) })) as any;
+        const cold = { clientId: 'id', clientSecret: 'secret', refreshToken: 'concurrent-148' };
+        const ids = await Promise.all([resolveAthleteId(cold), resolveAthleteId(cold), resolveAthleteId(cold)]);
+        expect(ids).toEqual(['777', '777', '777']);
+        expect((global.fetch as jest.Mock).mock.calls.filter(([url]) => /\/athlete$/.test(url))).toHaveLength(1);
+        expect((global.fetch as jest.Mock).mock.calls.filter(([url]) => url.includes('oauth/token'))).toHaveLength(1);
+    });
+
+    it('lets a failed lookup be retried', async () => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 429, statusText: 'Too Many Requests', text: async () => '{}' })) as any;
+        const cold = { clientId: 'id', clientSecret: 'secret', refreshToken: 'retry-148' };
+        await expect(resolveAthleteId(cold)).rejects.toThrow('429');
+        global.fetch = jest.fn((url: string) => Promise.resolve(url.includes('oauth/token')
+            ? { ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) }
+            : { ok: true, json: async () => ({ id: 888 }) })) as any;
+        expect(await resolveAthleteId(cold)).toBe('888');
     });
 
     it('looks the athlete up on Strava when the id is unknown', async () => {
