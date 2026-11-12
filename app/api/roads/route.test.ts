@@ -47,4 +47,12 @@ describe('POST /api/roads', () => {
         await post({ encoding: 'polyline5' });
         expect(lastResponse()[1]).toEqual({ status: 400 });
     });
+
+    it('rejects a malformed bbox without querying OSM (#193)', async () => {
+        await post({ bbox: { ...bbox, north: 'x' } });
+        expect(lastResponse()[1]).toEqual({ status: 400 });
+        await post({ bbox: { south: 47.65, west: -117.43 } });
+        expect(lastResponse()[1]).toEqual({ status: 400 });
+        expect(fetchOSMData).not.toHaveBeenCalled();
+    });
 });

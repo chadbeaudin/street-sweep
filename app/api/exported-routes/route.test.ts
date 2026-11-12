@@ -45,4 +45,19 @@ describe('POST /api/exported-routes', () => {
         expect(res.status).toBe(400);
         expect(mockedRecord).not.toHaveBeenCalled();
     });
+
+    it('accepts a generated route\'s 4-value points', async () => {
+        mockedSession.mockResolvedValue({ user: { id: 'user-1' } });
+        await POST(request({ route: [[-121.3, 44.05, 1000, 0], [-121.29, 44.06, 1010, 1]] }));
+
+        expect(mockedRecord).toHaveBeenCalledWith('user-1', [[44.05, -121.3], [44.06, -121.29]]);
+    });
+
+    it('rejects a route too large to store (#193)', async () => {
+        mockedSession.mockResolvedValue({ user: { id: 'user-1' } });
+        const res = await POST(request({ route: Array.from({ length: 20_001 }, () => [0, 0]) })) as unknown as { status: number };
+
+        expect(res.status).toBe(400);
+        expect(mockedRecord).not.toHaveBeenCalled();
+    });
 });
