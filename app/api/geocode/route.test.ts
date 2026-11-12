@@ -5,10 +5,12 @@ jest.mock('@/lib/nominatim', () => ({ reverseAddress: jest.fn(), searchAddresses
 
 import { POST } from './route';
 import { reverseAddress, searchAddresses } from '@/lib/nominatim';
+import { RATE_LIMITS, resetRateLimits } from '@/lib/rateLimit';
 
-const post = (body: unknown) => POST(new Request('http://localhost/api/geocode', { method: 'POST', body: JSON.stringify(body) })) as unknown as Promise<{ status: number; _data: unknown }>;
+const post = (body: unknown, headers: Record<string, string> = {}) => POST(new Request('http://localhost/api/geocode', { method: 'POST', headers, body: JSON.stringify(body) })) as unknown as Promise<{ status: number; _data: unknown }>;
 
 beforeEach(() => {
+    resetRateLimits();
     mockJson.mockImplementation((data: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, _data: data }));
 });
 
@@ -32,5 +34,23 @@ describe('POST /api/geocode', () => {
     it('rejects a request with neither a point nor an address', async () => {
         const res = await post({});
         expect(res.status).toBe(400);
+    });
+
+    it('rejects an oversized address or out-of-range limit and coordinates (#193)', async () => {
+        expect((await post({ address: 'x'.repeat(201) })).status).toBe(400);
+        expect((await post({ address: 'Bend', limit: 1000 })).status).toBe(400);
+        expect((await post({ lat: 200, lon: 0 })).status).toBe(400);
+        expect(searchAddresses).not.toHaveBeenCalled();
+        expect(reverseAddress).not.toHaveBeenCalled();
+    });
+
+    it('answers 429 once a client exceeds its per-minute limit, without calling Nominatim (#193)', async () => {
+        (searchAddresses as jest.Mock).mockResolvedValue([]);
+        const ip = { 'fly-client-ip': '1.2.3.4' };
+        for (let i = 0; i < RATE_LIMITS.geocode; i++) expect((await post({ address: 'Bend' }, ip)).status).toBe(200);
+
+        expect((await post({ address: 'Bend' }, ip)).status).toBe(429);
+        expect(searchAddresses).toHaveBeenCalledTimes(RATE_LIMITS.geocode);
+        expect((await post({ address: 'Bend' }, { 'fly-client-ip': '5.6.7.8' })).status).toBe(200);
     });
 });

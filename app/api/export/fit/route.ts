@@ -1,4 +1,5 @@
 import { withApiMetrics } from '@/lib/metrics';
+import { withRateLimit } from '@/lib/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { buildFitCourse } from '@/lib/fit';
@@ -30,4 +31,4 @@ async function handlePOST(req: NextRequest) {
     }
 }
 
-export const POST = withApiMetrics('POST', '/api/export/fit', handlePOST);
+export const POST = withApiMetrics('POST', '/api/export/fit', withRateLimit('exportFit', handlePOST));

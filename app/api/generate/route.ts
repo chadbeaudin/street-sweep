@@ -1,4 +1,5 @@
 import { withApiMetrics } from '@/lib/metrics';
+import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
 import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
 import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
@@ -322,4 +323,4 @@ async function handlePOST(request: Request) {
     }
 }
 
-export const POST = withApiMetrics('POST', '/api/generate', handlePOST);
+export const POST = withApiMetrics('POST', '/api/generate', withRateLimit('generate', handlePOST));
