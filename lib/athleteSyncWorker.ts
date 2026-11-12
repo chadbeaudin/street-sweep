@@ -7,7 +7,7 @@ import polyline from '@mapbox/polyline';
 import type { StravaSyncEvent } from './generated/prisma/client';
 import { prisma } from './prisma';
 import { decryptToken } from './tokenCrypto';
-import { fetchStravaActivity, getStravaAccessToken, resolveAthleteId, syncActivities, StravaActivity } from './strava';
+import { fetchStravaActivity, getStravaAccessToken, resolveAthleteId, syncActivities, StravaActivity, StravaTokenRejectedError } from './strava';
 import { isModeActivity } from './stats';
 import { recomputeStats, statsCacheKey } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
@@ -44,6 +44,20 @@ async function credsFor(athleteId: string, events: StravaSyncEvent[]): Promise<{
     return null;
 }
 
+// Strava doesn't sign webhook events, so a revocation is only believed once the
+// athlete's token has stopped working (#189). An outage throws, and the batch retries.
+async function accessRevoked(athleteId: string, events: StravaSyncEvent[]): Promise<boolean> {
+    const resolved = await credsFor(athleteId, events);
+    if (!resolved) return true;
+    try {
+        await getStravaAccessToken(resolved.creds);
+        return false;
+    } catch (e) {
+        if (e instanceof StravaTokenRejectedError) return true;
+        throw e;
+    }
+}
+
 // Strava requires dropping an athlete's data once they revoke this app's access.
 async function purgeAthlete(athleteId: string): Promise<void> {
     const keys = MODES.map(m => riddenRoadsCacheKey(athleteId, m));
@@ -75,9 +89,10 @@ function tilesOf(activity: StravaActivity): string[] {
 }
 
 // Latest event per activity wins (an update followed by a delete is a delete).
+// A delete is confirmed with Strava like any other event, since events aren't signed (#189).
 // Returns whether the cached list changed, recording the ridden-roads tiles
 // every changed ride (before and after) crosses.
-async function applyActivityEvents(athleteId: string, accessToken: string, latest: Map<string, string>, touched: Map<ActivityMode, Set<string>>): Promise<boolean> {
+async function applyActivityEvents(athleteId: string, accessToken: string, activityIds: Set<string>, touched: Map<ActivityMode, Set<string>>): Promise<boolean> {
     const row = await prisma.stravaActivityCache.findUnique({ where: { athleteId } });
     if (!row) return false; // nothing cached yet: the first full sync picks these up
     const byId = new Map((row.activities as unknown as StravaActivity[]).map(a => [String(a.id), a]));
@@ -89,9 +104,9 @@ async function applyActivityEvents(athleteId: string, accessToken: string, lates
         }
     };
 
-    for (const [activityId, aspect] of latest) {
+    for (const activityId of activityIds) {
         const before = byId.get(activityId);
-        const after = aspect === 'delete' ? null : await fetchStravaActivity(accessToken, activityId);
+        const after = await fetchStravaActivity(accessToken, activityId);
         if (before) touch(before);
         if (after) {
             touch(after.activity);
@@ -134,7 +149,10 @@ async function creditNewRides(athleteId: string): Promise<void> {
 }
 
 async function processAthlete(athleteId: string, events: StravaSyncEvent[]): Promise<void> {
-    if (events.some(e => e.aspect === 'deauthorize')) return purgeAthlete(athleteId);
+    if (events.some(e => e.aspect === 'deauthorize')) {
+        if (await accessRevoked(athleteId, events)) return purgeAthlete(athleteId);
+        console.warn(`${ts()} AthleteSync: ignoring deauthorize for athlete ${athleteId}: their token still works`);
+    }
 
     const resolved = await credsFor(athleteId, events);
     if (!resolved) {
@@ -145,10 +163,10 @@ async function processAthlete(athleteId: string, events: StravaSyncEvent[]): Pro
     const accessToken = await getStravaAccessToken(creds);
     await forwardToBridge(athleteId, accessToken, events);
 
-    const latest = new Map<string, string>();
-    for (const e of events) if (e.activityId && ['create', 'update', 'delete'].includes(e.aspect)) latest.set(e.activityId, e.aspect);
+    const activityIds = new Set<string>();
+    for (const e of events) if (e.activityId && ['create', 'update', 'delete'].includes(e.aspect)) activityIds.add(e.activityId);
     const touched = new Map<ActivityMode, Set<string>>();
-    let changed = latest.size > 0 && await applyActivityEvents(athleteId, accessToken, latest, touched);
+    let changed = activityIds.size > 0 && await applyActivityEvents(athleteId, accessToken, activityIds, touched);
     if (events.some(e => e.aspect === 'resync')) changed = (await resync(athleteId, accessToken)) || changed;
 
     // Before the stats recompute, which can take a minute or more.

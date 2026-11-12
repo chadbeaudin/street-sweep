@@ -34,9 +34,10 @@ async function handlePOST(request: Request) {
     if ('error' in parsed) return parsed.error;
     const event = parsed.data;
 
-    // Strava doesn't sign events, so at least reject ones for another subscription.
+    // Strava doesn't sign events, so at least reject ones for another subscription,
+    // and all of them when ours isn't configured (#189).
     const subscriptionId = process.env.STRAVA_WEBHOOK_SUBSCRIPTION_ID;
-    if (subscriptionId && String(event.subscription_id) !== subscriptionId) {
+    if (!subscriptionId || String(event.subscription_id) !== subscriptionId) {
         return NextResponse.json({ error: 'Unknown subscription' }, { status: 403 });
     }
 

@@ -18,6 +18,7 @@ jest.mock('./strava', () => ({
     getStravaAccessToken: jest.fn(),
     resolveAthleteId: jest.fn(),
     syncActivities: jest.fn(),
+    StravaTokenRejectedError: class extends Error {},
 }));
 jest.mock('./statsCompute', () => ({
     recomputeStats: jest.fn(),
@@ -35,7 +36,7 @@ jest.mock('./riddenRoadsRefresh', () => ({
 import polyline from '@mapbox/polyline';
 import { tickAthleteSyncWorker, enqueueDueResync, DEBOUNCE_MS } from './athleteSyncWorker';
 import { prisma } from './prisma';
-import { fetchStravaActivity, getStravaAccessToken, syncActivities } from './strava';
+import { fetchStravaActivity, getStravaAccessToken, syncActivities, StravaTokenRejectedError } from './strava';
 import { recomputeStats } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { refreshRiddenRoadsInBackground, tilesForBbox } from './riddenRoadsRefresh';
@@ -167,16 +168,28 @@ describe('tickAthleteSyncWorker (#118)', () => {
         expect(creditMatchingActivities).not.toHaveBeenCalled();
     });
 
-    it('removes a deleted ride without asking Strava, and drops its stored tracks', async () => {
+    it('removes a deleted ride once Strava confirms it is gone, and drops its stored tracks', async () => {
         queue(event({ aspect: 'create', activityId: '2' }), event({ id: 2, aspect: 'delete', activityId: '2' }));
         p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [ride(1), ride(2)] });
+        (fetchStravaActivity as jest.Mock).mockResolvedValue(null);
 
         await tick();
 
-        expect(fetchStravaActivity).not.toHaveBeenCalled();
+        expect(fetchStravaActivity).toHaveBeenCalledTimes(1);
         expect(p.stravaActivityCache.update.mock.calls[0][0].data.activities.map((a: { id: number }) => a.id)).toEqual([1]);
         expect(p.stravaActivityDetail.deleteMany).toHaveBeenCalledWith({ where: { activityId: '2' } });
         expect(p.stravaActivityStream.deleteMany).toHaveBeenCalledWith({ where: { activityId: '2' } });
+    });
+
+    it('keeps a ride a forged delete event names, since Strava still has it (#189)', async () => {
+        queue(event({ aspect: 'delete', activityId: '2' }));
+        p.stravaActivityCache.findUnique.mockResolvedValue({ athleteId: '42', activities: [ride(1), ride(2)] });
+        (fetchStravaActivity as jest.Mock).mockResolvedValue({ activity: ride(2) });
+
+        await tick();
+
+        expect(p.stravaActivityCache.update.mock.calls[0][0].data.activities.map((a: { id: number }) => a.id)).toEqual([1, 2]);
+        expect(p.stravaActivityDetail.deleteMany).not.toHaveBeenCalled();
     });
 
     it('also recomputes running stats when the athlete has them', async () => {
@@ -216,16 +229,46 @@ describe('tickAthleteSyncWorker (#118)', () => {
         expect(recomputeStats).toHaveBeenCalled();
     });
 
-    it('purges everything held for an athlete who revoked access, without calling Strava', async () => {
+    it('purges everything held for an athlete whose token Strava now rejects', async () => {
         queue(event({ aspect: 'deauthorize' }));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new StravaTokenRejectedError('revoked'));
+
+        await tick();
+
+        expect(p.stravaActivityCache.deleteMany).toHaveBeenCalledWith({ where: { athleteId: '42' } });
+        expect(p.statsCache.deleteMany).toHaveBeenCalledWith({ where: { athleteId: { in: ['42', '42__running'] } } });
+        expect(p.account.updateMany).toHaveBeenCalledWith({ where: { provider: 'strava', providerAccountId: '42' }, data: { refresh_token: null, access_token: null } });
+        expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalled();
+    });
+
+    it('ignores a forged deauthorize while the athlete\'s token still works (#189)', async () => {
+        queue(event({ aspect: 'deauthorize' }));
+
+        await tick();
+
+        expect(p.stravaActivityCache.deleteMany).not.toHaveBeenCalled();
+        expect(p.account.updateMany).not.toHaveBeenCalled();
+        expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalled();
+    });
+
+    it('retries a deauthorize rather than purging when Strava cannot confirm it (#189)', async () => {
+        queue(event({ aspect: 'deauthorize' }));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new Error('Strava is temporarily unavailable'));
+
+        await tick();
+
+        expect(p.stravaActivityCache.deleteMany).not.toHaveBeenCalled();
+        expect(p.stravaSyncEvent.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({ claimedAt: null }) }));
+    });
+
+    it('purges on a deauthorize when there is no token left to check (#189)', async () => {
+        queue(event({ aspect: 'deauthorize' }));
+        p.account.findFirst.mockResolvedValue(null);
 
         await tick();
 
         expect(getStravaAccessToken).not.toHaveBeenCalled();
         expect(p.stravaActivityCache.deleteMany).toHaveBeenCalledWith({ where: { athleteId: '42' } });
-        expect(p.statsCache.deleteMany).toHaveBeenCalledWith({ where: { athleteId: { in: ['42', '42__running'] } } });
-        expect(p.account.updateMany).toHaveBeenCalledWith({ where: { provider: 'strava', providerAccountId: '42' }, data: { refresh_token: null, access_token: null } });
-        expect(p.stravaSyncEvent.deleteMany).toHaveBeenCalled();
     });
 
     it('drops events for an athlete it has no credentials for', async () => {
