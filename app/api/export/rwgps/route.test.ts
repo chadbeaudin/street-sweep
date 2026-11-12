@@ -12,7 +12,8 @@ import { getServerSession } from 'next-auth';
 import { uploadRouteToRwgps } from '@/lib/rwgps';
 
 const mockedSession = getServerSession as jest.Mock;
-const ROUTE = [[-117.42, 47.65, 600], [-117.43, 47.66, 610]];
+// Shaped like a generated route: [lon, lat, elevation, construction] (#201).
+const ROUTE = [[-117.42, 47.65, 600, 0], [-117.43, 47.66, 610, 1]];
 const post = (body: unknown) => POST(new Request('http://localhost/api/test', { method: 'POST', body: JSON.stringify(body) }));
 
 beforeEach(() => {

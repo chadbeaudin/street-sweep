@@ -140,6 +140,12 @@ describe('POST /api/export/garmin — elevation payload', () => {
         expect(payload.totalDescent).toBe(0);
     });
 
+    it('accepts a generated route, whose points carry a construction flag (#201)', async () => {
+        const route = [[-104.70, 39.02, 280, 0], [-104.71, 39.03, 285, 1]];
+        const { payload } = await callAndCapture(route);
+        expect(payload.geoPoints.map((p: { elevation: number }) => p.elevation)).toEqual([280, 285]);
+    });
+
     it('elevation values in geoPoints match route coordinate elevation', async () => {
         const route = [[-104.70, 39.02, 280], [-104.71, 39.03, 285], [-104.72, 39.04, 290]];
         const { payload } = await callAndCapture(route);

@@ -33,6 +33,10 @@ export const Polyline = z.array(CoordTuple).max(20_000);
 // segments within a single request's bbox. 2,000 was tuned for resource
 // exhaustion, not real usage, and rejected legitimate requests.
 export const PolylineList = z.array(Polyline).max(50_000);
+// A generated route's points carry a fourth value, the construction flag
+// (app/api/generate/route.ts), so routes sent back for export allow it (#201).
+export const RoutePoint = z.array(z.number().finite()).min(2).max(4);
+export const Route = z.array(RoutePoint).max(20_000);
 
 // routingOptions is an evolving, loosely-typed options bag (avoid toggles,
 // penalties, user-marked avoided roads, etc.) -- deliberately kept
