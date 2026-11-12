@@ -83,4 +83,11 @@ describe('POST /api/strava/webhook', () => {
         expect(lastResponse()[1]?.status).toBe(400);
         expect(enqueueAthleteSync).not.toHaveBeenCalled();
     });
+
+    it('rejects every event when no subscription id is configured (#189)', async () => {
+        delete process.env.STRAVA_WEBHOOK_SUBSCRIPTION_ID;
+        await post(event());
+        expect(lastResponse()[1]?.status).toBe(403);
+        expect(enqueueAthleteSync).not.toHaveBeenCalled();
+    });
 });

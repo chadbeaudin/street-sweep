@@ -146,6 +146,9 @@ export async function fetchActivitiesForYear(creds: { clientId?: string; clientS
     return candidates.filter(a => isRealTrack(polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][]));
 }
 
+// Strava refused the refresh token itself (revoked or invalid), as opposed to an outage.
+export class StravaTokenRejectedError extends Error {}
+
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {
     // Check if we received any non-empty credentials in the UI object
     const hasUICreds = !!(creds && (creds.clientId || creds.clientSecret || creds.refreshToken));
@@ -189,6 +192,7 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
         } catch {
             errorMessage += ` - ${errorText.substring(0, 200)}`;
         }
+        if (response.status === 400 || response.status === 401) throw new StravaTokenRejectedError(errorMessage);
         throw new Error(errorMessage);
     }
 

@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchActivitiesForYear, resolveAthleteId, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes } from './strava';
+import { fetchActivitiesForYear, resolveAthleteId, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes, getStravaAccessToken, StravaTokenRejectedError } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 
@@ -644,5 +644,27 @@ describe('resolveAthleteId (#165)', () => {
             ? { ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) }
             : { ok: true, json: async () => ({ id: 31337 }) })) as any;
         expect(await resolveAthleteId({ clientId: 'id', clientSecret: 'secret', refreshToken: 'fresh-token-165' })).toBe('31337');
+    });
+});
+
+describe('getStravaAccessToken (#189)', () => {
+    const refuse = (status: number, body: string) => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status, statusText: 'x', text: async () => body })) as any;
+    };
+
+    it('reports a refresh token Strava refuses as rejected', async () => {
+        for (const status of [400, 401]) {
+            refuse(status, '{"message":"Bad Request"}');
+            await expect(getStravaAccessToken(creds)).rejects.toBeInstanceOf(StravaTokenRejectedError);
+        }
+    });
+
+    it('does not report an outage or rate limit as a rejected token', async () => {
+        for (const [status, body] of [[429, '{}'], [500, '{}'], [400, '<html>down</html>']] as const) {
+            refuse(status, body);
+            const error = await getStravaAccessToken(creds).catch(e => e);
+            expect(error).toBeInstanceOf(Error);
+            expect(error).not.toBeInstanceOf(StravaTokenRejectedError);
+        }
     });
 });
