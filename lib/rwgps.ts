@@ -1,4 +1,11 @@
+import { z } from 'zod';
+
 const RWGPS_BASE = 'https://ridewithgps.com';
+
+// Request-body shapes shared by the proxy routes (#190). Route ids end up in a URL path.
+export const RwgpsAccessToken = z.string().min(1).max(500);
+export const RwgpsRouteId = z.number().int().positive();
+export const RwgpsRouteName = z.string().max(200).optional().nullable();
 
 export interface RwgpsUploadResult {
     routeId: number;
