@@ -4,9 +4,6 @@ const nextConfig = {
     // keeps it from overwriting the one a developer's server is using (#187).
     distDir: process.env.NEXT_DIST_DIR || '.next',
     output: 'standalone',
-    experimental: {
-        instrumentationHook: true,
-    },
 };
 
 export default nextConfig;

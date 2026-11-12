@@ -182,7 +182,7 @@ describe('Integration: server logs', () => {
                 point: snappedB,
                 lastPoint: snappedMid,
                 bbox: viewport,
-                manualRoute: dataAMid.path ?? [],
+                manualRoute: dataAMid.path ? [dataAMid.path] : [],
                 riddenRoads: null,
                 routingOptions,
             });
