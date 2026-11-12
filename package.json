@@ -1,6 +1,6 @@
 {
   "name": "street-sweep",
-  "version": "0.7.109",
+  "version": "0.7.110",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3888",
@@ -25,16 +25,16 @@
     "clsx": "^2.1.0",
     "garmin-connect": "^1.6.2",
     "leaflet": "^1.9.4",
-    "lucide-react": "^0.300.0",
-    "next": "^14.2.3",
+    "lucide-react": "^0.577.0",
+    "next": "^15.5.29",
     "next-auth": "^4.24.15",
     "ngraph.graph": "^20.0.1",
     "ngraph.path": "^1.4.0",
     "pg": "^8.22.0",
     "polyline": "^0.2.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-leaflet": "^4.2.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-leaflet": "^5.0.0",
     "recharts": "^3.6.0",
     "tailwind-merge": "^2.2.0",
     "zod": "^4.6.5"
@@ -46,12 +46,12 @@
     "@types/leaflet": "^1.9.8",
     "@types/node": "^20.12.7",
     "@types/pg": "^8.20.4",
-    "@types/react": "^18.3.1",
-    "@types/react-dom": "^18.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.23",
     "dotenv": "^17.4.2",
     "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.3",
+    "eslint-config-next": "^15.5.29",
     "jest": "^30.2.0",
     "jest-environment-jsdom": "^30.3.0",
     "postcss": "^8.4.38",
@@ -60,5 +60,10 @@
     "ts-jest": "^29.4.6",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "^8.5.32"
+    }
   }
 }

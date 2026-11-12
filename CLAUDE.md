@@ -56,4 +56,4 @@ Next.js 14 App Router, TypeScript, TailwindCSS. Path alias `@/` maps to repo roo
 
 - Env vars: `DATABASE_URL`, `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`, `STRAVA_REFRESH_TOKEN` (in `.env` / `.env.local`).
 - `scripts/` holds ad-hoc analysis/verification scripts (e.g. `analyze-cpp-optimality.ts`, euler/RPP checks), not part of the app build.
-- `instrumentation.ts` logs the app version on nodejs runtime startup (`instrumentationHook` experimental flag).
+- `instrumentation.ts` logs the app version on nodejs runtime startup.

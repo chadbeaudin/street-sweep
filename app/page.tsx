@@ -1684,6 +1684,8 @@ export default function Home() {
     return (
         <main className="flex flex-col h-app bg-gray-50 overflow-hidden">
             <header className="relative bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm shrink-0 z-[1050]">
+                {/* A full reload is intended: it resets the map. <Link> to the current page would do nothing. */}
+                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
                 <a href="/" title={`v${pkg.version}`} className="flex items-center gap-2 hover:opacity-80 transition-opacity cursor-pointer group">
                     <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center group-hover:bg-indigo-700 transition-colors">
                         <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">

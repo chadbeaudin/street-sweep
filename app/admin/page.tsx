@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
@@ -67,9 +68,9 @@ export default async function AdminPage() {
             <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
                 <div className="space-y-2">
                     <div className="flex items-baseline justify-between gap-4 flex-wrap">
-                        <a href="/" className="text-sm text-indigo-600 hover:underline">
+                        <Link href="/" className="text-sm text-indigo-600 hover:underline">
                             ← Back to StreetSweep
-                        </a>
+                        </Link>
                         <a href={FLY_MONITORING_URL} target="_blank" rel="noreferrer" className="text-sm text-indigo-600 hover:underline">
                             Fly machine metrics →
                         </a>
