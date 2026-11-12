@@ -1,4 +1,5 @@
 import { withApiMetrics } from '@/lib/metrics';
+import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
 import { calculateElevationProfile } from '@/lib/elevation';
 import { parseGpxTrack, GpxCoord as Coord } from '@/lib/gpx';
@@ -94,4 +95,4 @@ async function handlePOST(request: Request) {
     }
 }
 
-export const POST = withApiMetrics('POST', '/api/import', handlePOST);
+export const POST = withApiMetrics('POST', '/api/import', withRateLimit('import', handlePOST));

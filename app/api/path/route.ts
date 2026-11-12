@@ -1,4 +1,5 @@
 import { withApiMetrics } from '@/lib/metrics';
+import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
@@ -44,4 +45,4 @@ async function handlePOST(request: Request) {
     }
 }
 
-export const POST = withApiMetrics('POST', '/api/path', handlePOST);
+export const POST = withApiMetrics('POST', '/api/path', withRateLimit('path', handlePOST));
