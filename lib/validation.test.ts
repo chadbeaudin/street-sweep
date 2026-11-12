@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { LatLon, BBox, CoordTuple, Polyline, PolylineList, parseBody } from './validation';
+import { LatLon, BBox, CoordTuple, Polyline, PolylineList, Route, parseBody } from './validation';
 
 describe('validation primitives', () => {
     it('LatLon accepts finite lat/lon and rejects NaN/Infinity/missing fields', () => {
@@ -26,6 +26,13 @@ describe('validation primitives', () => {
         const tooMany = Array.from({ length: 20_001 }, () => [0, 0]);
         expect(Polyline.safeParse(ok).success).toBe(true);
         expect(Polyline.safeParse(tooMany).success).toBe(false);
+    });
+
+    it('Route accepts a generated route\'s [lon, lat, elevation, construction] points (#201)', () => {
+        expect(Route.safeParse([[-117.42, 47.65, 600, 0], [-117.43, 47.66, 610, 1]]).success).toBe(true);
+        expect(Route.safeParse([[-117.42, 47.65]]).success).toBe(true);
+        expect(Route.safeParse([[1, 2, 3, 4, 5]]).success).toBe(false);
+        expect(Route.safeParse(Array.from({ length: 20_001 }, () => [0, 0])).success).toBe(false);
     });
 
     it('PolylineList caps at 50,000 polylines', () => {

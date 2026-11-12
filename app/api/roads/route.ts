@@ -3,20 +3,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fetchOSMData } from '@/lib/overpass';
 import { OSMWay, OSMNode } from '@/lib/types';
 import { ROAD_ENCODING, encodeRoads } from '@/lib/roadEncoding';
+import { z } from 'zod';
+import { BBox, parseBody } from '@/lib/validation';
+
+const Body = z.object({ bbox: BBox, encoding: z.string().max(32).optional() });
 
 async function handlePOST(req: NextRequest) {
     try {
-        let bbox: any;
-        let encoding: unknown;
-        try {
-            ({ bbox, encoding } = await req.json());
-        } catch {
-            return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });
-        }
-
-        if (!bbox) {
-            return NextResponse.json({ error: 'Missing bbox' }, { status: 400 });
-        }
+        const parsed = await parseBody(req, Body);
+        if ('error' in parsed) return parsed.error;
+        const { bbox, encoding } = parsed.data;
 
         const BUFFER = 0.001; // reduced from 0.005 to mitigate 504 errors
         const bufferedBbox = {

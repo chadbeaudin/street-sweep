@@ -1,16 +1,18 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { buildFitCourse } from '@/lib/fit';
+import { Route, parseBody } from '@/lib/validation';
+
+const Body = z.object({ route: Route.min(2), name: z.string().max(200).optional().nullable() });
 
 async function handlePOST(req: NextRequest) {
     try {
-        const { route, name } = await req.json();
+        const parsed = await parseBody(req, Body);
+        if ('error' in parsed) return parsed.error;
+        const { route, name } = parsed.data;
 
-        if (!route || !Array.isArray(route) || route.length < 2) {
-            return NextResponse.json({ error: 'Missing or invalid route data' }, { status: 400 });
-        }
-
-        const fitBytes = buildFitCourse(route, name ?? 'StreetSweep Course');
+        const fitBytes = buildFitCourse(route as [number, number, number?, number?][], name ?? 'StreetSweep Course');
 
         const fitBuffer = Buffer.from(fitBytes);
 

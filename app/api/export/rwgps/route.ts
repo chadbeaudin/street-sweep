@@ -5,9 +5,9 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { buildGpxCourse } from '@/lib/gpx';
 import { uploadRouteToRwgps, RwgpsAccessToken, RwgpsRouteName } from '@/lib/rwgps';
-import { Polyline, parseBody } from '@/lib/validation';
+import { Route, parseBody } from '@/lib/validation';
 
-const Body = z.object({ route: Polyline.min(2), name: RwgpsRouteName, accessToken: RwgpsAccessToken });
+const Body = z.object({ route: Route.min(2), name: RwgpsRouteName, accessToken: RwgpsAccessToken });
 
 async function handlePOST(req: Request) {
     try {
@@ -21,7 +21,7 @@ async function handlePOST(req: Request) {
         if ('error' in parsed) return parsed.error;
         const { route, name, accessToken } = parsed.data;
 
-        const gpx = buildGpxCourse(route as [number, number, number?][], name || 'StreetSweep Route');
+        const gpx = buildGpxCourse(route as [number, number, number?, number?][], name || 'StreetSweep Route');
         const result = await uploadRouteToRwgps(accessToken, gpx, name || 'StreetSweep Route');
 
         return NextResponse.json(result);

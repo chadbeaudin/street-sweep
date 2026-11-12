@@ -5,10 +5,10 @@ import { GarminConnect } from 'garmin-connect';
 import { authOptions } from '@/lib/auth';
 import { haversineM } from '@/lib/geometry';
 import { z } from 'zod';
-import { Polyline, parseBody } from '@/lib/validation';
+import { Route, parseBody } from '@/lib/validation';
 
 const Body = z.object({
-    route: Polyline.min(1),
+    route: Route.min(1),
     name: z.string().max(200).optional().nullable(),
     email: z.string().min(1).max(320),
     password: z.string().min(1).max(500),

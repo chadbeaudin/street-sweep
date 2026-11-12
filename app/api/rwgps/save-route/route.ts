@@ -5,9 +5,9 @@ import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
 import { buildGpxCourse } from '@/lib/gpx';
 import { uploadRouteToRwgps, deleteRwgpsRoute, RwgpsAccessToken, RwgpsRouteId, RwgpsRouteName } from '@/lib/rwgps';
-import { Polyline, parseBody } from '@/lib/validation';
+import { Route, parseBody } from '@/lib/validation';
 
-const Body = z.object({ route: Polyline.min(2), name: RwgpsRouteName, accessToken: RwgpsAccessToken, oldRouteId: RwgpsRouteId });
+const Body = z.object({ route: Route.min(2), name: RwgpsRouteName, accessToken: RwgpsAccessToken, oldRouteId: RwgpsRouteId });
 
 async function handlePOST(req: Request) {
     try {
@@ -21,7 +21,7 @@ async function handlePOST(req: Request) {
         if ('error' in parsed) return parsed.error;
         const { route, name, accessToken, oldRouteId } = parsed.data;
 
-        const gpx = buildGpxCourse(route as [number, number, number?][], name || 'StreetSweep Route');
+        const gpx = buildGpxCourse(route as [number, number, number?, number?][], name || 'StreetSweep Route');
         // Upload the replacement first — only delete the original once the new
         // one exists, so a failed upload never loses the route.
         const result = await uploadRouteToRwgps(accessToken, gpx, name || 'StreetSweep Route');
