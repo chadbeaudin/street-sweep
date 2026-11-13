@@ -69,7 +69,7 @@ describe('POST /api/internal/ridden-roads-tick', () => {
         await POST(makeRequest({ 'x-internal-secret': 'test-secret' }));
         const [data, init] = mockJson.mock.calls[0];
         expect(init?.status).toBe(500);
-        expect(data.error).toBe('db exploded');
+        expect(data.error).toBe('Worker tick failed.');
         expect(data).not.toHaveProperty('stack');
     });
 });

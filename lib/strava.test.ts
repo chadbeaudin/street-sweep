@@ -166,7 +166,7 @@ describe('fetchCyclingRiddenRoads', () => {
         expect(activitiesCalls).toBe(2); // one full pagination sweep (page 1 + empty page 2), not two
     });
 
-    it('backfills a not-yet-cached real ride\'s detail polyline into StravaActivityDetail', async () => {
+    it("backfills a not-yet-cached real ride\'s detail polyline into StravaActivityDetail", async () => {
         const activities = [mockActivity({ id: 42 })];
         (global.fetch as jest.Mock).mockImplementation((url: string) => {
             if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
@@ -574,7 +574,7 @@ describe('fetchActivitiesForYear', () => {
         }) as any;
     });
 
-    it('keeps only that year\'s real-world rides', async () => {
+    it("keeps only that year\'s real-world rides", async () => {
         mockCache([
             mockActivity({ id: 1, start_date: '2025-06-01T00:00:00Z' }),
             mockActivity({ id: 2, start_date: '2024-12-31T23:00:00Z' }),
@@ -684,5 +684,16 @@ describe('syncActivities metrics (#117)', () => {
 
         expect(counted.mock.calls.filter(([name]) => String(name).startsWith('usage.strava_sync')).map(([name]) => name))
             .toEqual(['usage.strava_sync.full', 'usage.strava_sync.incremental']);
+    });
+});
+
+describe('rejected Strava tokens (#196)', () => {
+    it("tells the user to sign in again instead of showing Strava's response", async () => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 400, statusText: 'x', text: async () => '{"message":"Bad Request","errors":[{"field":"refresh_token","code":"invalid"}]}' })) as any;
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const error = await getStravaAccessToken(creds).catch(e => e);
+        expect(error.message).toBe('Strava no longer accepts this sign-in. Sign in with Strava again.');
+        expect(warn.mock.calls.flat().join(' ')).toContain('refresh_token');
+        warn.mockRestore();
     });
 });

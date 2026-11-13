@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { z } from 'zod';
 import { buildFitCourse } from '@/lib/fit';
 import { Route, parseBody } from '@/lib/validation';
@@ -26,8 +27,7 @@ async function handlePOST(req: NextRequest) {
             },
         });
     } catch (error: any) {
-        console.error('FIT export error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'FIT export error:', "Couldn't build the FIT file. Try again.");
     }
 }
 

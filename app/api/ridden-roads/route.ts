@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { resolveAthleteId } from '@/lib/strava';
 import {
     riddenRoadsCacheKey,
@@ -47,8 +48,7 @@ async function handlePOST(request: Request) {
             computing: Object.keys(tileRoads).length === 0 && missing.length > 0,
         });
     } catch (e: any) {
-        console.error('RiddenRoads route error:', e);
-        return NextResponse.json({ error: e.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(e, 'RiddenRoads route error:', "Couldn't load the roads you've ridden. Try again in a moment.");
     }
 }
 

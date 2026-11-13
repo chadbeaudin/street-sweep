@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { featureFlags } from '@/lib/featureFlags';
 import { stravaFetch } from '@/lib/stravaApi';
 
@@ -40,16 +41,12 @@ async function handlePOST(req: Request) {
 
         if (!response.ok) {
             console.error('Strava OAuth exchange failed:', JSON.stringify(data, null, 2));
-            return NextResponse.json(
-                { error: 'Strava OAuth failed', details: data },
-                { status: response.status }
-            );
+            return NextResponse.json({ error: 'Connecting to Strava failed. Try again.' }, { status: response.status });
         }
 
         return NextResponse.json({ refresh_token: data.refresh_token });
     } catch (error: any) {
-        console.error('Strava OAuth Exchange Error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'Strava OAuth Exchange Error:', 'Connecting to Strava failed. Try again.');
     }
 }
 

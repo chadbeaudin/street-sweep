@@ -1,6 +1,7 @@
 import { withApiMetrics, incrementMetric, recordGeneratedRoute, routeKind } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
 import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
 import type { BoundingBox } from '@/lib/types';
@@ -203,8 +204,7 @@ async function handlePOST(request: Request) {
                 osmData = await fetchOSMData(bufferedBbox);
             }
         } catch (osmError: any) {
-            console.error(`${ts()} OSM fetch failed:`, osmError);
-            return NextResponse.json({ error: osmError.message || 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 500 });
+            return errorResponse(osmError, `${ts()} OSM fetch failed:`, 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', 500, { degraded: true });
         }
         console.log(`${ts()} Fetched ${osmData.elements.length} elements.`);
 
@@ -350,7 +350,7 @@ async function handlePOST(request: Request) {
         // Not flagged degraded — this catches routing/elevation/graph failures
         // downstream of the OSM fetch, which already handles its own errors above.
         // A generic crash here isn't an OSM outage and shouldn't be reported as one.
-        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(error, `${ts()} Generate failed:`, "Couldn't build a route here. Try again in a moment.");
     }
 }
 

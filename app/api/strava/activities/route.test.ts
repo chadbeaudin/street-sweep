@@ -20,6 +20,7 @@ import { getServerSession } from 'next-auth';
 import { creditMatchingActivities } from '@/lib/routeCredit';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
+import { UserFacingError } from '@/lib/apiErrors';
 
 const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchCyclingRiddenRoads>;
 const mockedForceSync = forceSyncStravaActivities as jest.MockedFunction<typeof forceSyncStravaActivities>;
@@ -79,12 +80,18 @@ describe('POST /api/strava/activities', () => {
         expect(data).not.toHaveProperty('stack');
     });
 
-    it('does not expose internal error details beyond message', async () => {
+    it('does not expose the internal error message (#196)', async () => {
         mockedFetch.mockRejectedValueOnce(new Error('Token expired'));
         await POST(makeRequest({}));
         const [data] = mockJson.mock.calls[0];
-        expect(data.error).toBe('Token expired');
+        expect(data.error).toBe("Couldn't load your Strava rides. Try again in a moment.");
         expect(Object.keys(data)).toEqual(['error']);
+    });
+
+    it('passes through a message written for the user, such as missing credentials the page hides (#196)', async () => {
+        mockedFetch.mockRejectedValueOnce(new UserFacingError('Missing Strava credentials (ENV). Please configure them.'));
+        await POST(makeRequest({}));
+        expect(mockJson.mock.calls[0][0].error).toContain('Missing Strava credentials');
     });
 
     it('defaults to cycling mode when activityMode is omitted', async () => {

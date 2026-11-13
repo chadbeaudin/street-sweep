@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
 import { z } from 'zod';
@@ -40,8 +41,7 @@ async function handlePOST(request: Request) {
 
         return NextResponse.json({ coordinates: coords });
     } catch (error: any) {
-        console.error('Error in path API:', error);
-        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(error, 'Error in path API:', "Couldn't find a route between those points. Try again in a moment.");
     }
 }
 

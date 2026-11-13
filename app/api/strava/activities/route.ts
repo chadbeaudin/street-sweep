@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchCyclingRiddenRoads, forceSyncStravaActivities } from '@/lib/strava';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { getServerSession } from 'next-auth';
@@ -33,8 +34,7 @@ async function handlePOST(req: Request) {
 
         return NextResponse.json({ riddenRoads, activityElevations, activityTypes });
     } catch (error: any) {
-        console.error('Strava Fetch Error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'Strava Fetch Error:', "Couldn't load your Strava rides. Try again in a moment.");
     }
 }
 

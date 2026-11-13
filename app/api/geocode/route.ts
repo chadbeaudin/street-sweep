@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { reverseAddress, searchAddresses } from '@/lib/nominatim';
 import { z } from 'zod';
 import { parseBody } from '@/lib/validation';
@@ -26,7 +27,7 @@ async function handlePOST(req: Request) {
         const results = await searchAddresses(address, limit ?? 5);
         return NextResponse.json({ results });
     } catch (e: any) {
-        return NextResponse.json({ error: e.message || 'Geocoding failed' }, { status: 500 });
+        return errorResponse(e, 'Geocode error:', "Address search isn't available right now. Try again in a moment.");
     }
 }
 

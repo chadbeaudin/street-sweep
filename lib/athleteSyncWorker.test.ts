@@ -232,7 +232,7 @@ describe('tickAthleteSyncWorker (#118)', () => {
 
     it('purges everything held for an athlete whose token Strava now rejects', async () => {
         queue(event({ aspect: 'deauthorize' }));
-        (getStravaAccessToken as jest.Mock).mockRejectedValue(new StravaTokenRejectedError('revoked'));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new StravaTokenRejectedError());
 
         await tick();
 
@@ -367,7 +367,7 @@ describe('lost and unconfirmed sync work (#117)', () => {
     it('counts a confirmed revocation as a deauthorized account', async () => {
         const spy = counted();
         queue(event({ aspect: 'deauthorize' }));
-        (getStravaAccessToken as jest.Mock).mockRejectedValue(new StravaTokenRejectedError('revoked'));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new StravaTokenRejectedError());
         await tick();
         expect(spy).toHaveBeenCalledWith('account.strava_deauthorized');
     });

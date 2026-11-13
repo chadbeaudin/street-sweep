@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchActivitiesForYear, fetchGearFrameTypes } from '@/lib/strava';
 import { computeYearDetail } from '@/lib/stats';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
@@ -24,8 +25,7 @@ async function handlePOST(request: Request) {
             : new Map<string, number>();
         return NextResponse.json(computeYearDetail(year, activities, gearFrameTypes));
     } catch (error: any) {
-        console.error('Stats year route error:', error);
-        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(error, 'Stats year route error:', "Couldn't load that year. Try again in a moment.");
     }
 }
 
