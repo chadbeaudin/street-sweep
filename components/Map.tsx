@@ -14,6 +14,7 @@ import { buildChevronMarkers as buildChevronMarkersImpl } from '@/lib/chevrons';
 import { useMapStyle } from './MapStyleContext';
 import { MapStylePicker } from './MapStylePicker';
 import { riddenColorFor, riddenPathOptionsFor, tileLayerProps } from '@/lib/mapStyles';
+import { AvoidEraserOverlay } from './AvoidEraserOverlay';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -95,6 +96,8 @@ interface MapProps {
     avoidDraftPath?: [number, number][][];
     avoidDraftPoints?: { lat: number; lon: number }[];
     onAvoidRoadDelete?: (index: number) => void;
+    isAvoidEraserMode?: boolean;
+    onAvoidedRoadsChange?: (roads: [number, number][][]) => void;
 }
 
 function MapEvents({ onBBoxChange, onMapClick }: { onBBoxChange: (bbox: any) => void, onMapClick: (latlng: L.LatLng) => void }) {
@@ -484,7 +487,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -756,6 +759,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
     }, [isLassoMode]);
 
+    // Avoid-road eraser (#204): strokes show here as a preview until committed on pointer-up.
+    const [eraserPreview, setEraserPreview] = React.useState<[number, number][][] | null>(null);
+    const displayedAvoidedRoads = eraserPreview ?? avoidedRoads;
+
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isPickingStart) { onStartPick?.(latlng.lat, latlng.lng); return; }
         if (isAvoidMode) { onAvoidPointAdd?.({ lat: latlng.lat, lon: latlng.lng }); return; }
@@ -955,28 +962,26 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     />
                 ))}
 
-                {/* User-marked "avoid" roads (#45). Red/orange candy-cane hash (two
-                    offset-dashed lines on the same coordinates) instead of a solid
-                    color -- solid red is already the generated route, and several
-                    base-map road classes render yellow, so a solid line in either
-                    color was easy to mistake for something else at a glance. */}
-                {avoidedRoads && avoidedRoads.map((road, idx) => (
+                {/* User-marked "avoid" roads (#45). Black/white hazard hash (solid
+                    black with white dashes on top) so it can't be mistaken for the
+                    red route or the yellow base-map roads. The canvas renderer
+                    ignores dashOffset, so two offset-dashed lines would just overlap. */}
+                {displayedAvoidedRoads && displayedAvoidedRoads.map((road, idx) => (
                     <React.Fragment key={`avoided-${idx}`}>
                         <Polyline
                             positions={road as [number, number][]}
-                            color="#DC2626"
-                            weight={4}
-                            opacity={0.9}
-                            dashArray="8, 8"
+                            color="#000000"
+                            weight={5}
+                            opacity={0.45}
                             interactive={false}
                         />
                         <Polyline
                             positions={road as [number, number][]}
-                            color="#F97316"
-                            weight={4}
-                            opacity={0.9}
-                            dashArray="8, 8"
-                            dashOffset="8"
+                            color="#FFFFFF"
+                            weight={5}
+                            opacity={0.75}
+                            dashArray="8, 24"
+                            lineCap="butt"
                             interactive={false}
                         />
                     </React.Fragment>
@@ -1006,25 +1011,24 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     </Polyline>
                 ))}
 
-                {/* In-progress avoid-segment draft (#45) — same red/orange hash as the
+                {/* In-progress avoid-segment draft (#45) — same black/white hash as the
                     committed lines above, just lighter/thinner until finalized */}
                 {avoidDraftPath && avoidDraftPath.map((segment, idx) => (
                     <React.Fragment key={`avoided-draft-${idx}`}>
                         <Polyline
                             positions={segment as [number, number][]}
-                            color="#DC2626"
+                            color="#000000"
                             weight={4}
-                            opacity={0.6}
-                            dashArray="6, 6"
+                            opacity={0.35}
                             interactive={false}
                         />
                         <Polyline
                             positions={segment as [number, number][]}
-                            color="#F97316"
+                            color="#FFFFFF"
                             weight={4}
                             opacity={0.6}
-                            dashArray="6, 6"
-                            dashOffset="6"
+                            dashArray="6, 18"
+                            lineCap="butt"
                             interactive={false}
                         />
                     </React.Fragment>
@@ -1245,6 +1249,16 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     onPointerMove={handleLassoPointerMove}
                     onPointerUp={handleLassoPointerUp}
                     onPointerCancel={handleLassoPointerCancel}
+                    onWheel={handleOverlayWheel}
+                />
+            )}
+
+            {isAvoidEraserMode && (
+                <AvoidEraserOverlay
+                    mapRef={mapRef}
+                    roads={avoidedRoads ?? []}
+                    onPreview={setEraserPreview}
+                    onCommit={roads => onAvoidedRoadsChange?.(roads)}
                     onWheel={handleOverlayWheel}
                 />
             )}
