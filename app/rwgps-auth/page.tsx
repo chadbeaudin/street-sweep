@@ -22,24 +22,17 @@ function RwgpsAuthCallback() {
             return;
         }
 
-        const stateCookie = document.cookie
-            .split(';')
-            .find(c => c.trim().startsWith('rwgps_oauth_state='))
-            ?.split('=')[1];
-
-        if (!stateParam || !stateCookie || stateParam !== stateCookie) {
+        if (!stateParam) {
             setStatus('Authorization failed: invalid state parameter. Please try connecting again.');
             return;
         }
-
-        document.cookie = 'rwgps_oauth_state=; Max-Age=0; path=/';
 
         setStatus('Exchanging authorization code securely...');
 
         fetch('/api/rwgps/exchange', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code }),
+            body: JSON.stringify({ code, state: stateParam }),
         })
             .then(res => res.json())
             .then(data => {
