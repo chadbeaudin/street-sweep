@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
@@ -27,8 +28,7 @@ async function handlePOST(req: Request) {
 
         return NextResponse.json(buildLibraryTree(routes, collections));
     } catch (error: any) {
-        console.error('RideWithGPS library fetch error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'RideWithGPS library fetch error:', "Couldn't load your RideWithGPS library. Try again in a moment.");
     }
 }
 

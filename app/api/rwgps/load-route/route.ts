@@ -1,5 +1,6 @@
 import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
 import { authOptions } from '@/lib/auth';
@@ -41,8 +42,7 @@ async function handlePOST(req: Request) {
             routeName: name,
         });
     } catch (error: any) {
-        console.error('RideWithGPS route load error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'RideWithGPS route load error:', "Couldn't load that RideWithGPS route. Try again in a moment.");
     }
 }
 

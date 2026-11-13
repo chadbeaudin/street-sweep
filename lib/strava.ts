@@ -8,6 +8,7 @@ import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } fro
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { stravaFetch } from './stravaApi';
 import { incrementMetric } from './metrics';
+import { UserFacingError } from './apiErrors';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -148,7 +149,12 @@ export async function fetchActivitiesForYear(creds: { clientId?: string; clientS
 }
 
 // Strava refused the refresh token itself (revoked or invalid), as opposed to an outage.
-export class StravaTokenRejectedError extends Error {}
+// Strava's own response is logged where it's thrown, not shown (#196).
+export class StravaTokenRejectedError extends UserFacingError {
+    constructor() {
+        super('Strava no longer accepts this sign-in. Sign in with Strava again.');
+    }
+}
 
 export async function getStravaAccessToken(creds?: { clientId?: string; clientSecret?: string; refreshToken?: string }) {
     // Check if we received any non-empty credentials in the UI object
@@ -163,7 +169,7 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
     console.log(`[Strava] Attempting token refresh. Source: ${source}, ClientID: ${clientId?.substring(0, 5)}..., Token: ${refreshToken?.substring(0, 8)}...`);
 
     if (!clientId || !clientSecret || !refreshToken) {
-        throw new Error(`Missing Strava credentials (${source}). Please configure them in Settings or your environment variables.`);
+        throw new UserFacingError(`Missing Strava credentials (${source}). Please configure them in Settings or your environment variables.`);
     }
 
     const params = new URLSearchParams();
@@ -183,7 +189,7 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
     if (!response.ok) {
         const errorText = await response.text();
         if (errorText.trimStart().startsWith('<')) {
-            throw new Error('Strava is temporarily unavailable. Please try again in a few minutes.');
+            throw new UserFacingError('Strava is temporarily unavailable. Please try again in a few minutes.');
         }
         let errorMessage = `Failed to refresh Strava token: ${response.status} ${response.statusText}`;
         try {
@@ -195,7 +201,8 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
         }
         if (response.status === 400 || response.status === 401) {
             incrementMetric('account.strava_token_rejected');
-            throw new StravaTokenRejectedError(errorMessage);
+            console.warn(`[Strava] Refresh token rejected: ${errorMessage}`);
+            throw new StravaTokenRejectedError();
         }
         throw new Error(errorMessage);
     }
@@ -281,7 +288,7 @@ async function fetchAllStravaActivitiesWithToken(accessToken: string, after?: nu
             const errorText = await response.text();
             console.error(`[Strava] Activities fetch failed. Status: ${response.status}, Body: ${errorText.substring(0, 500)}`);
             if (errorText.trimStart().startsWith('<')) {
-                throw new Error('Strava is temporarily unavailable. Please try again in a few minutes.');
+                throw new UserFacingError('Strava is temporarily unavailable. Please try again in a few minutes.');
             }
             let errorMessage = `Strava API error: ${response.status} ${response.statusText}`;
             try {

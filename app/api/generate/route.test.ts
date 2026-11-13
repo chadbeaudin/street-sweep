@@ -54,11 +54,12 @@ describe('POST /api/generate', () => {
         expect(data).not.toHaveProperty('stack');
     });
 
-    it('does not expose internal error details beyond message', async () => {
+    it('does not expose the internal error message (#196)', async () => {
         mockedFetchOSM.mockRejectedValueOnce(new Error('Connection refused'));
         await POST(makeRequest({ bbox: validBbox }));
         const [data] = mockJson.mock.calls[0];
-        expect(data.error).toBe('Connection refused');
+        expect(data.error).toMatch(/Map data unavailable/);
+        expect(JSON.stringify(data)).not.toContain('Connection refused');
         expect(data.degraded).toBe(true);
         expect(Object.keys(data)).toEqual(expect.arrayContaining(['error', 'degraded']));
     });

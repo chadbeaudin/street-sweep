@@ -27,7 +27,12 @@ async function handlePOST(req: Request) {
         const { route, name, email, password } = parsed.data;
 
         const GCClient = new GarminConnect({ username: email, password });
-        await GCClient.login();
+        try {
+            await GCClient.login();
+        } catch (err: any) {
+            console.error('Garmin login failed:', err.message, err.response?.status ?? '');
+            return NextResponse.json({ error: "Couldn't sign in to Garmin. Check your email and password, then try again." }, { status: 502 });
+        }
 
         let totalDist = 0;
         let totalTime = 0;
@@ -76,21 +81,18 @@ async function handlePOST(req: Request) {
             headers: { 'Content-Type': 'application/json', 'NK': 'NT' }
         });
 
-        console.log('[Garmin] Course creation response:', JSON.stringify(createRes));
+        console.log(`[Garmin] Course created (id ${(createRes as { courseId?: number } | undefined)?.courseId ?? 'unknown'})`);
 
         return NextResponse.json({
             success: true,
             message: 'Course created successfully in your Garmin account!',
-            details: createRes
         });
 
     } catch (err: any) {
-        console.error('Garmin export error:', err.message);
-        let errorMessage = err.message || 'Failed to create course in Garmin.';
-        if (err.response?.data) {
-            errorMessage = `Garmin API Error: ${JSON.stringify(err.response.data)}`;
-        }
-        return NextResponse.json({ error: errorMessage }, { status: 500 });
+        // Only the message and status: the client library's error can carry the
+        // request, including the login (#196, #16).
+        console.error('Garmin export error:', err.message, err.response?.status ?? '', err.response?.data ?? '');
+        return NextResponse.json({ error: "Couldn't create the course in Garmin. Try again in a moment." }, { status: 500 });
     }
 }
 

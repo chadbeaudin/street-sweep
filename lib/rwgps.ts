@@ -1,6 +1,17 @@
 import { z } from 'zod';
 
+import { UserFacingError } from './apiErrors';
+
 const RWGPS_BASE = 'https://ridewithgps.com';
+
+// An expired or revoked connection is something the user can fix, so it's shown;
+// anything else is logged by the route and replaced with a generic message (#196).
+function failure(action: string, res: Response, detail = ''): Error {
+    if (res.status === 401 || res.status === 403) {
+        return new UserFacingError('Your RideWithGPS connection has expired. Reconnect RideWithGPS and try again.');
+    }
+    return new Error(`RideWithGPS ${action} failed: ${res.status} ${res.statusText}${detail ? ` - ${detail}` : ''}`);
+}
 
 // Request-body shapes shared by the proxy routes (#190). Route ids end up in a URL path.
 export const RwgpsAccessToken = z.string().min(1).max(500);
@@ -54,7 +65,7 @@ export async function listRoutes(accessToken: string): Promise<RwgpsRouteSummary
     let url: string | null = `${RWGPS_BASE}/api/v1/routes.json?page=1&page_size=200`;
     while (url) {
         const res: Response = await fetch(url, { headers: authHeaders(apiKey, accessToken) });
-        if (!res.ok) throw new Error(`RideWithGPS routes list failed: ${res.status} ${res.statusText}`);
+        if (!res.ok) throw failure('routes list', res);
         const data = await res.json();
         routes.push(...(data.routes ?? []).map(toRouteSummary));
         url = data.meta?.pagination?.next_page_url ?? null;
@@ -67,7 +78,7 @@ export async function listCollections(accessToken: string): Promise<{ collection
     const res = await fetch(`${RWGPS_BASE}/api/v1/collections.json?page=1&page_size=200`, {
         headers: authHeaders(apiKey, accessToken),
     });
-    if (!res.ok) throw new Error(`RideWithGPS collections list failed: ${res.status} ${res.statusText}`);
+    if (!res.ok) throw failure('collections list', res);
     const data = await res.json();
     const summaries: any[] = data.collections ?? [];
 
@@ -92,8 +103,8 @@ export async function fetchRouteGpx(accessToken: string, routeId: number): Promi
         fetch(`${RWGPS_BASE}/api/v1/routes/${routeId}.gpx`, { headers: authHeaders(apiKey, accessToken) }),
         fetch(`${RWGPS_BASE}/api/v1/routes/${routeId}.json`, { headers: authHeaders(apiKey, accessToken) }),
     ]);
-    if (!gpxRes.ok) throw new Error(`RideWithGPS route download failed: ${gpxRes.status} ${gpxRes.statusText}`);
-    if (!detailRes.ok) throw new Error(`RideWithGPS route lookup failed: ${detailRes.status} ${detailRes.statusText}`);
+    if (!gpxRes.ok) throw failure('route download', gpxRes);
+    if (!detailRes.ok) throw failure('route lookup', detailRes);
     const gpx = await gpxRes.text();
     const detail = await detailRes.json();
     return { gpx, name: detail.route?.name ?? 'RideWithGPS Route' };
@@ -129,7 +140,7 @@ export async function deleteRwgpsRoute(accessToken: string, routeId: number): Pr
         headers: authHeaders(apiKey, accessToken),
     });
     if (!res.ok && res.status !== 404) {
-        throw new Error(`RideWithGPS route delete failed: ${res.status} ${res.statusText}`);
+        throw failure('route delete', res);
     }
 }
 
@@ -142,7 +153,7 @@ async function pollTask(taskUrl: string, apiKey: string, accessToken: string): P
                 'Authorization': `Bearer ${accessToken}`,
             },
         });
-        if (!res.ok) throw new Error(`RideWithGPS task poll failed: ${res.status} ${res.statusText}`);
+        if (!res.ok) throw failure('task poll', res);
         const data = await res.json();
         const task = data.task ?? data;
         if (task.status === 'completed') return task;
@@ -170,7 +181,7 @@ export async function uploadRouteToRwgps(accessToken: string, gpxContent: string
 
     if (!uploadRes.ok) {
         const errorText = await uploadRes.text();
-        throw new Error(`RideWithGPS upload failed: ${uploadRes.status} ${uploadRes.statusText} - ${errorText.substring(0, 300)}`);
+        throw failure('upload', uploadRes, errorText.substring(0, 300));
     }
 
     const locationHeader = uploadRes.headers.get('Location');
@@ -180,7 +191,8 @@ export async function uploadRouteToRwgps(accessToken: string, gpxContent: string
     const task = await pollTask(taskUrl, apiKey, accessToken);
 
     if (task.errors?.length) {
-        throw new Error(`RideWithGPS could not import the route: ${task.errors[0]?.code || 'unknown error'}`);
+        console.warn(`RideWithGPS could not import the route: ${task.errors[0]?.code || 'unknown error'}`);
+        throw new UserFacingError("RideWithGPS couldn't import this route. Try again, or export it as GPX and upload it there.");
     }
     const item = task.items?.[0];
     if (!item?.item_id) throw new Error('RideWithGPS finished processing but returned no route.');

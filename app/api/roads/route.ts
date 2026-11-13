@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchOSMData } from '@/lib/overpass';
 import { OSMWay, OSMNode } from '@/lib/types';
 import { ROAD_ENCODING, encodeRoads } from '@/lib/roadEncoding';
@@ -27,8 +28,7 @@ async function handlePOST(req: NextRequest) {
         try {
             osmData = await fetchOSMData(bufferedBbox);
         } catch (osmError: any) {
-            console.error('Roads API OSM fetch error:', osmError);
-            return NextResponse.json({ error: osmError.message || 'OSM data fetch failed', degraded: true }, { status: 500 });
+            return errorResponse(osmError, 'Roads API OSM fetch error:', "Couldn't load map roads. Try again in a moment.", 500, { degraded: true });
         }
 
         // The OSM API fallback returns ways as node-id references without inline
@@ -77,8 +77,7 @@ async function handlePOST(req: NextRequest) {
         return NextResponse.json({ roads, degraded });
 
     } catch (error: any) {
-        console.error('Roads API error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'Roads API error:', "Couldn't load map roads. Try again in a moment.");
     }
 }
 

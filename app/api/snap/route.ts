@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
 import { z } from 'zod';
@@ -34,8 +35,7 @@ async function handlePOST(req: NextRequest) {
         });
 
     } catch (error: any) {
-        console.error('Snap error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'Snap error:', "Couldn't find a road near that point. Try again in a moment.");
     }
 }
 

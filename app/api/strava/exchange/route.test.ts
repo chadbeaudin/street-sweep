@@ -111,3 +111,12 @@ describe('POST /api/strava/exchange', () => {
         expect(data).not.toHaveProperty('refresh_token');
     });
 });
+
+describe('POST /api/strava/exchange error detail (#196)', () => {
+    it("does not echo Strava's error body", async () => {
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 400, json: async () => ({ message: 'Bad Request', errors: [{ resource: 'Application', field: 'client_secret', code: 'invalid' }] }) });
+        await POST(makeRequest({ code: 'bad_code', ...APP }));
+        const [data] = mockJson.mock.calls[0];
+        expect(data).toEqual({ error: 'Connecting to Strava failed. Try again.' });
+    });
+});

@@ -1,5 +1,6 @@
 import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
@@ -53,8 +54,7 @@ async function handlePOST(request: Request) {
             : { refreshedAt: null, stale: false, refreshing, computing: true };
         return NextResponse.json(response);
     } catch (error: any) {
-        console.error('Stats route error:', error);
-        return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(error, 'Stats route error:', "Couldn't load your stats. Try again in a moment.");
     }
 }
 

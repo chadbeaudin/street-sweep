@@ -6,6 +6,7 @@ jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredenti
 import { POST } from './route';
 import { fetchActivitiesForYear, fetchGearFrameTypes } from '@/lib/strava';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
+import { UserFacingError } from '@/lib/apiErrors';
 
 const creds = { refreshToken: 'r' };
 const post = (body: unknown) => POST(new Request('http://localhost/api/stats/year', { method: 'POST', body: JSON.stringify(body) }));
@@ -52,9 +53,15 @@ describe('POST /api/stats/year', () => {
         expect(fetchGearFrameTypes).not.toHaveBeenCalled();
     });
 
-    it('reports a failure as a 500', async () => {
-        (fetchActivitiesForYear as jest.Mock).mockRejectedValue(new Error('Strava is temporarily unavailable'));
+    it('reports a failure as a 500 without its internal message (#196)', async () => {
+        (fetchActivitiesForYear as jest.Mock).mockRejectedValue(new Error('Strava /athlete failed: 503'));
         await post({ year: 2025 });
-        expect(lastResponse()).toEqual([{ error: 'Strava is temporarily unavailable' }, { status: 500 }]);
+        expect(lastResponse()).toEqual([{ error: "Couldn't load that year. Try again in a moment." }, { status: 500 }]);
+    });
+
+    it('passes through a message written for the user (#196)', async () => {
+        (fetchActivitiesForYear as jest.Mock).mockRejectedValue(new UserFacingError('Strava is temporarily unavailable. Please try again in a few minutes.'));
+        await post({ year: 2025 });
+        expect(lastResponse()).toEqual([{ error: 'Strava is temporarily unavailable. Please try again in a few minutes.' }, { status: 500 }]);
     });
 });

@@ -1,6 +1,7 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextRequest, NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { z } from 'zod';
@@ -160,8 +161,7 @@ async function handlePOST(req: NextRequest) {
         });
 
     } catch (error: any) {
-        console.error('Step API error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'Step API error:', "Couldn't route to that point. Try again in a moment.");
     }
 }
 

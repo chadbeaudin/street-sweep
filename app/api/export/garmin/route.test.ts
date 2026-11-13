@@ -231,3 +231,35 @@ describe('POST /api/export/garmin — course payload structure', () => {
         expect(payload.activityTypePk).toBe(2);
     });
 });
+
+describe('POST /api/export/garmin error detail (#196)', () => {
+    const body = { route: [[-104.7, 39.02, 100], [-104.71, 39.03, 110]], email: 'a@b.com', password: 'pw' };
+
+    beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}));
+    afterEach(() => jest.restoreAllMocks());
+
+    it("does not send Garmin's response back on success", async () => {
+        (GarminConnect as jest.Mock).mockImplementationOnce(() => ({
+            login: jest.fn(),
+            client: { post: jest.fn().mockResolvedValue({ courseId: 7, ownerId: 99, internalStuff: 'x' }) },
+        }));
+        await POST(makeRequest(body));
+        expect(mockJson.mock.lastCall?.[0]).toEqual({ success: true, message: 'Course created successfully in your Garmin account!' });
+    });
+
+    it("does not echo Garmin's error body", async () => {
+        const failure = Object.assign(new Error('Request failed with status code 400'), { response: { status: 400, data: { message: 'internal course validator v2 rejected field geoPoints[3]' } } });
+        (GarminConnect as jest.Mock).mockImplementationOnce(() => ({ login: jest.fn(), client: { post: jest.fn().mockRejectedValue(failure) } }));
+        await POST(makeRequest(body));
+        const [data, init] = mockJson.mock.lastCall!;
+        expect(init).toEqual({ status: 500 });
+        expect(JSON.stringify(data)).not.toContain('validator');
+        expect(data.error).toMatch(/Couldn't create the course in Garmin/);
+    });
+
+    it('tells the user when Garmin rejects their sign-in', async () => {
+        (GarminConnect as jest.Mock).mockImplementationOnce(() => ({ login: jest.fn().mockRejectedValue(new Error('Invalid credentials: 401')), client: { post: jest.fn() } }));
+        await POST(makeRequest(body));
+        expect(mockJson.mock.lastCall?.[0].error).toMatch(/Check your email and password/);
+    });
+});

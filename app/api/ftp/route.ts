@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { fetchFtpReadings, resolveAthleteId, FtpScanResult, FtpScanState } from '@/lib/strava';
 import type { FtpReading } from '@/lib/ftp';
 import { prisma } from '@/lib/prisma';
@@ -54,8 +55,7 @@ async function handlePOST(request: Request) {
         refreshInBackground(athleteId, stravaCredentials);
         return NextResponse.json({ readings: [], refreshedAt: null, refreshing: true, computing: true });
     } catch (e: any) {
-        console.error('Ftp route error:', e);
-        return NextResponse.json({ error: e.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(e, 'Ftp route error:', "Couldn't load your FTP history. Try again in a moment.");
     }
 }
 

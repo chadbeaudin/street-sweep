@@ -1,4 +1,5 @@
 import { listRoutes, listCollections, fetchRouteGpx, deleteRwgpsRoute, buildLibraryTree, RwgpsRouteSummary } from './rwgps';
+import { UserFacingError } from './apiErrors';
 
 const OLD_ENV = process.env;
 
@@ -39,8 +40,17 @@ describe('listRoutes', () => {
     });
 
     it('throws with status on a failed request', async () => {
-        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 401, statusText: 'Unauthorized' });
-        await expect(listRoutes('token')).rejects.toThrow('401');
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Server Error' });
+        await expect(listRoutes('token')).rejects.toThrow('500');
+    });
+
+    it('tells the user to reconnect when the connection has expired (#196)', async () => {
+        for (const status of [401, 403]) {
+            (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: false, status, statusText: 'Unauthorized' });
+            const error = await listRoutes('token').catch(e => e);
+            expect(error).toBeInstanceOf(UserFacingError);
+            expect(error.message).toMatch(/Reconnect RideWithGPS/);
+        }
     });
 });
 

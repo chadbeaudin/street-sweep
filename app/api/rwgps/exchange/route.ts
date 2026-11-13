@@ -1,5 +1,6 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 
 async function handlePOST(req: Request) {
     try {
@@ -40,16 +41,12 @@ async function handlePOST(req: Request) {
 
         if (!response.ok) {
             console.error('RideWithGPS OAuth exchange failed:', JSON.stringify(data, null, 2));
-            return NextResponse.json(
-                { error: 'RideWithGPS OAuth failed', details: data },
-                { status: response.status }
-            );
+            return NextResponse.json({ error: 'Connecting to RideWithGPS failed. Try again.' }, { status: response.status });
         }
 
         return NextResponse.json({ access_token: data.access_token });
     } catch (error: any) {
-        console.error('RideWithGPS OAuth Exchange Error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return errorResponse(error, 'RideWithGPS OAuth Exchange Error:', 'Connecting to RideWithGPS failed. Try again.');
     }
 }
 

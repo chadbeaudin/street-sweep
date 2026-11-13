@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { tickRiddenRoadsWorker } from '@/lib/riddenRoadsWorkerJob';
 import { tickAthleteSyncWorker } from '@/lib/athleteSyncWorker';
 
@@ -20,7 +21,6 @@ export async function POST(request: Request) {
         const athleteSync = await tickAthleteSyncWorker();
         return NextResponse.json({ ...riddenRoads, athleteSync });
     } catch (e: any) {
-        console.error('ridden-roads-tick error:', e);
-        return NextResponse.json({ error: e.message || 'Internal Server Error' }, { status: 500 });
+        return errorResponse(e, 'ridden-roads-tick error:', 'Worker tick failed.');
     }
 }

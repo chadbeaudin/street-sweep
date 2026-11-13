@@ -1,6 +1,7 @@
 import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
+import { errorResponse } from '@/lib/apiErrors';
 import { calculateElevationProfile } from '@/lib/elevation';
 import { parseGpxTrack, GpxCoord as Coord } from '@/lib/gpx';
 
@@ -91,8 +92,7 @@ async function handlePOST(request: Request) {
 
         return NextResponse.json({ coordinates: coords, elevationProfile, totalDistance: totalDistance.toFixed(2) });
     } catch (err: any) {
-        console.error('Route import error:', err);
-        return NextResponse.json({ error: err.message || 'Failed to parse route file' }, { status: 500 });
+        return errorResponse(err, 'Route import error:', "Couldn't read that route file. Check that it's a valid GPX, TCX or FIT file.");
     }
 }
 
