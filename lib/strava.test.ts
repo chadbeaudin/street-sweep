@@ -23,6 +23,8 @@ jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 import { fetchActivitiesForYear, resolveAthleteId, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes, getStravaAccessToken, StravaTokenRejectedError } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
+import * as metrics from './metrics';
+import { syncActivities } from './strava';
 
 const creds = { clientId: 'id', clientSecret: 'secret', refreshToken: 'refresh' };
 
@@ -666,5 +668,19 @@ describe('getStravaAccessToken (#189)', () => {
             expect(error).toBeInstanceOf(Error);
             expect(error).not.toBeInstanceOf(StravaTokenRejectedError);
         }
+    });
+});
+
+describe('syncActivities metrics (#117)', () => {
+    it('counts a first pull as a full sync and later pulls as incremental', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        (prisma.stravaActivityCache.upsert as jest.Mock).mockResolvedValue({});
+        global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200, headers: new Headers(), json: async () => [] })) as any;
+
+        await syncActivities('42', 'token', null);
+        await syncActivities('42', 'token', [mockActivity({ id: 1 })]);
+
+        expect(counted.mock.calls.filter(([name]) => String(name).startsWith('usage.strava_sync')).map(([name]) => name))
+            .toEqual(['usage.strava_sync.full', 'usage.strava_sync.incremental']);
     });
 });

@@ -7,6 +7,7 @@ import { riddenRoadsCacheKey } from './riddenRoadsRefresh';
 import { parseFtpFromComment, parseFtpFromNamedActivityComment, FtpReading } from './ftp';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { stravaFetch } from './stravaApi';
+import { incrementMetric } from './metrics';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -351,6 +352,7 @@ export async function syncActivities(athleteId: string, accessToken: string, cac
     const activities = after === undefined ? fetched : [...fetched, ...(cachedActivities ?? []).filter(a => !fetchedIds.has(a.id))];
     const changed = after === undefined ? JSON.stringify(activities) !== JSON.stringify(cachedActivities) : fetched.length > 0;
     console.log(`[Strava] ${after === undefined ? 'Full' : 'Incremental'} activity sync for athlete ${athleteId}: ${fetched.length} fetched, ${activities.length} total`);
+    incrementMetric(`usage.strava_sync.${after === undefined ? 'full' : 'incremental'}`);
     const now = new Date();
     const fullSynced = after === undefined ? { fullSyncedAt: now } : {};
     await prisma.stravaActivityCache.upsert({

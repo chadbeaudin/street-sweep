@@ -1,5 +1,5 @@
 import { prisma } from './prisma';
-import { LATENCY_BUCKETS_MS } from './metrics';
+import { LATENCY_BUCKETS_MS, ROUTE_MILES_BUCKETS } from './metrics';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -57,6 +57,97 @@ export function summarizeApiMetrics(rows: { name: string; count: number; sum: nu
         .sort((a, b) => b.requests - a.requests);
 }
 
+type CounterRow = { name: string; count: number; sum: number };
+type Counters = Map<string, { count: number; sum: number }>;
+
+function toCounters(rows: CounterRow[]): Counters {
+    const c: Counters = new Map();
+    for (const { name, count, sum } of rows) {
+        const e = c.get(name) ?? { count: 0, sum: 0 };
+        c.set(name, { count: e.count + count, sum: e.sum + sum });
+    }
+    return c;
+}
+
+const countOf = (c: Counters, name: string) => c.get(name)?.count ?? 0;
+
+// Counts of `prefix.<key>` names, by key (one level only).
+function byKey(c: Counters, prefix: string): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const [name, { count }] of c) {
+        if (!name.startsWith(`${prefix}.`)) continue;
+        const key = name.slice(prefix.length + 1);
+        if (!key.includes('.')) out[key] = (out[key] ?? 0) + count;
+    }
+    return out;
+}
+
+const total = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0);
+
+export interface Timing { runs: number; avgMs: number; p50Ms: number | null; p95Ms: number | null }
+
+// Reads what recordLatency(name, ...) wrote.
+function timing(c: Counters, name: string): Timing {
+    const ms = c.get(`${name}.ms`) ?? { count: 0, sum: 0 };
+    const histogram = new Map(Object.entries(byKey(c, name)).filter(([k]) => k.startsWith('lat_')).map(([k, v]) => [k.slice(4), v]));
+    return {
+        runs: ms.count,
+        avgMs: ms.count > 0 ? ms.sum / ms.count : 0,
+        p50Ms: percentile(histogram, ms.count, 0.5),
+        p95Ms: percentile(histogram, ms.count, 0.95),
+    };
+}
+
+export function summarizeUsage(rows: CounterRow[]) {
+    const c = toCounters(rows);
+    const regions = Object.entries(byKey(c, 'region'))
+        .map(([cell, count]) => {
+            const [lat, lon] = cell.split(',').map(Number);
+            return { lat, lon, count };
+        })
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+    return {
+        routes: byKey(c, 'usage.route'),
+        exports: byKey(c, 'usage.export'),
+        imports: byKey(c, 'usage.import'),
+        stravaSyncs: byKey(c, 'usage.strava_sync'),
+        statsOpens: countOf(c, 'usage.stats_open'),
+        regions,
+    };
+}
+
+export function summarizeObservability(rows: CounterRow[]) {
+    const c = toCounters(rows);
+    const services = [...new Set([...c.keys()].filter(n => n.startsWith('ext.')).map(n => n.split('.')[1]))]
+        .map(service => ({
+            service,
+            requests: countOf(c, `ext.${service}.requests`),
+            errors: countOf(c, `ext.${service}.error`),
+            rateLimited: countOf(c, `ext.${service}.rate_limited`),
+            breaker: countOf(c, `ext.${service}.breaker`),
+        }))
+        .sort((a, b) => b.requests - a.requests);
+    const caches = ['osm', 'graph', 'geocode'].map(cache => {
+        const tiers = byKey(c, `cache.${cache}`);
+        const { miss = 0, ...hits } = tiers;
+        const lookups = total(tiers);
+        return { cache, hits, misses: miss, hitRate: lookups > 0 ? (lookups - miss) / lookups : null };
+    });
+    const sizes = byKey(c, 'cpp.route_mi');
+    return {
+        routing: {
+            solve: timing(c, 'cpp.solve'),
+            sizes: [...ROUTE_MILES_BUCKETS.map(String), 'inf'].map(bound => ({ bound, count: sizes[bound] ?? 0 })),
+            tooLarge: byKey(c, 'cpp.too_large'),
+        },
+        services,
+        caches,
+        workers: ['ridden_roads', 'athlete_sync'].map(job => ({ job, ...timing(c, `worker.${job}`), failed: countOf(c, `worker.${job}.failed`) })),
+        rateLimited: byKey(c, 'ratelimit'),
+    };
+}
+
 export async function getAdminStats(now = Date.now()) {
     const since = (ms: number) => new Date(now - ms);
     const [
@@ -64,7 +155,7 @@ export async function getAdminStats(now = Date.now()) {
         newDay, newWeek, newMonth, activeDay, activeWeek, activeMonth,
         exportedTotal, exportedMonth,
         riddenJobs, syncPending, syncRetrying, oldestSync,
-        apiRows,
+        dayRows, monthRows,
     ] = await Promise.all([
         prisma.user.count(),
         prisma.account.count({ where: { provider: 'strava', refresh_token: { not: null } } }),
@@ -82,8 +173,11 @@ export async function getAdminStats(now = Date.now()) {
         prisma.stravaSyncEvent.count(),
         prisma.stravaSyncEvent.count({ where: { attempts: { gt: 0 } } }),
         prisma.stravaSyncEvent.findFirst({ orderBy: { createdAt: 'asc' }, select: { createdAt: true } }),
-        prisma.metricCounter.groupBy({ by: ['name'], where: { bucket: { gte: since(DAY_MS) }, name: { startsWith: 'api.' } }, _sum: { count: true, sum: true } }),
+        prisma.metricCounter.groupBy({ by: ['name'], where: { bucket: { gte: since(DAY_MS) } }, _sum: { count: true, sum: true } }),
+        prisma.metricCounter.groupBy({ by: ['name'], where: { bucket: { gte: since(30 * DAY_MS) }, OR: [{ name: { startsWith: 'usage.' } }, { name: { startsWith: 'region.' } }] }, _sum: { count: true, sum: true } }),
     ]);
+    const counterRows = (rows: typeof dayRows) => rows.map(r => ({ name: r.name, count: r._sum.count ?? 0, sum: r._sum.sum ?? 0 }));
+    const day = counterRows(dayRows);
 
     return {
         users: {
@@ -96,7 +190,9 @@ export async function getAdminStats(now = Date.now()) {
             riddenRoads: Object.fromEntries(riddenJobs.map(j => [j.status, j._count._all])) as Record<string, number>,
             stravaSync: { pending: syncPending, retrying: syncRetrying, oldestAgeMs: oldestSync ? now - oldestSync.createdAt.getTime() : null },
         },
-        api: summarizeApiMetrics(apiRows.map(r => ({ name: r.name, count: r._sum.count ?? 0, sum: r._sum.sum ?? 0 }))),
+        api: summarizeApiMetrics(day),
+        usage: summarizeUsage(counterRows(monthRows)),
+        observability: summarizeObservability(day),
     };
 }
 

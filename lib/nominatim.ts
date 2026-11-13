@@ -1,4 +1,5 @@
 import { prisma } from './prisma';
+import { outcomeForResponse, recordCacheLookup, recordExternalCall } from './metrics';
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
 const USER_AGENT = 'StreetSweep/1.0 (https://github.com/chadbeaudin/street-sweep)';
@@ -24,7 +25,12 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-        return await fetch(url, { ...init, signal: controller.signal });
+        const res = await fetch(url, { ...init, signal: controller.signal });
+        recordExternalCall('nominatim', outcomeForResponse(res));
+        return res;
+    } catch (e) {
+        recordExternalCall('nominatim', 'error');
+        throw e;
     } finally {
         clearTimeout(timer);
     }
@@ -85,13 +91,18 @@ async function writeGeocodeCache(key: string, result: ReverseResult): Promise<vo
 export async function reverseGeocode(lat: number, lon: number): Promise<ReverseResult> {
     const key = reverseKey(lat, lon);
     const cached = REVERSE_CACHE.get(key);
-    if (cached) return cached;
+    if (cached) {
+        recordCacheLookup('geocode', 'memory');
+        return cached;
+    }
 
     const dbHit = await readGeocodeCache(key);
     if (dbHit) {
+        recordCacheLookup('geocode', 'db');
         REVERSE_CACHE.set(key, dbHit);
         return dbHit;
     }
+    recordCacheLookup('geocode', 'miss');
 
     await rateLimit();
     // accept-language=en so place names come back in English (e.g. "Germany",

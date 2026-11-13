@@ -8,6 +8,7 @@ jest.mock('@/lib/routeCredit', () => ({ recordExportedRoute: jest.fn() }));
 import { POST } from './route';
 import { getServerSession } from 'next-auth';
 import { recordExportedRoute } from '@/lib/routeCredit';
+import * as metrics from '@/lib/metrics';
 
 const mockedSession = getServerSession as jest.Mock;
 const mockedRecord = recordExportedRoute as jest.Mock;
@@ -59,5 +60,21 @@ describe('POST /api/exported-routes', () => {
 
         expect(res.status).toBe(400);
         expect(mockedRecord).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/exported-routes metrics (#117)', () => {
+    it('counts the export format for signed-out users too, but stores nothing for them', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        mockedSession.mockResolvedValue(null);
+        await POST(request({ route: [[-121.3, 44.05], [-121.29, 44.06]], format: 'garmin' }));
+        expect(counted).toHaveBeenCalledWith('usage.export.garmin');
+        expect(mockedRecord).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown format', async () => {
+        mockedSession.mockResolvedValue({ user: { id: 'user-1' } });
+        const res = await POST(request({ route: [[-121.3, 44.05], [-121.29, 44.06]], format: 'kml' })) as unknown as { status: number };
+        expect(res.status).toBe(400);
     });
 });

@@ -1,7 +1,7 @@
-jest.mock('./metrics', () => ({ incrementMetric: jest.fn() }));
+jest.mock('./metrics', () => ({ ...jest.requireActual('./metrics'), recordExternalCall: jest.fn() }));
 
 import { describeRateLimit, stravaFetch } from './stravaApi';
-import { incrementMetric } from './metrics';
+import { recordExternalCall } from './metrics';
 
 const headers = (h: Record<string, string>) => new Headers(h);
 const respond = (status: number, h: Record<string, string> = {}) => { global.fetch = jest.fn().mockResolvedValue({ status, ok: status < 400, headers: headers(h) }) as any; };
@@ -38,7 +38,7 @@ describe('stravaFetch', () => {
         const res = await stravaFetch('https://www.strava.com/api/v3/activities/16586613049/streams?keys=latlng', { headers: { Authorization: 'Bearer secret-token' } });
         expect(res.status).toBe(200);
         expect(log).toHaveBeenCalledWith('[Strava] GET /api/v3/activities/:id/streams 200 · rate 50/200 15m, 900/2000 day');
-        expect(incrementMetric).toHaveBeenCalledWith('strava.requests');
+        expect(recordExternalCall).toHaveBeenCalledWith('strava', 'ok');
         expect(JSON.stringify(log.mock.calls)).not.toContain('secret-token');
     });
 
@@ -46,7 +46,23 @@ describe('stravaFetch', () => {
         respond(429, { 'X-RateLimit-Limit': '200,2000', 'X-RateLimit-Usage': '201,1500' });
         await stravaFetch('https://www.strava.com/api/v3/athlete');
         expect(warn).toHaveBeenCalledWith('[Strava] GET /api/v3/athlete 429 RATE LIMITED · rate 201/200 15m, 1500/2000 day');
-        expect(incrementMetric).toHaveBeenCalledWith('strava.429');
+        expect(recordExternalCall).toHaveBeenCalledWith('strava', 'rate_limited');
+    });
+
+    it('counts a Strava outage and a network failure as errors (#117)', async () => {
+        respond(503);
+        await stravaFetch('https://www.strava.com/api/v3/athlete');
+        expect(recordExternalCall).toHaveBeenLastCalledWith('strava', 'error');
+
+        global.fetch = jest.fn().mockRejectedValue(new TypeError('fetch failed')) as any;
+        await expect(stravaFetch('https://www.strava.com/api/v3/athlete')).rejects.toThrow('fetch failed');
+        expect(recordExternalCall).toHaveBeenLastCalledWith('strava', 'error');
+    });
+
+    it('does not count a routine 404 (a deleted activity) as an error (#117)', async () => {
+        respond(404);
+        await stravaFetch('https://www.strava.com/api/v3/activities/1');
+        expect(recordExternalCall).toHaveBeenLastCalledWith('strava', 'ok');
     });
 
     it('passes the method and request through untouched', async () => {

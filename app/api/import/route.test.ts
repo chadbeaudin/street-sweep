@@ -2,6 +2,7 @@
 // endpoint before this test's subject change (app/api/import/route.ts).
 
 import { POST } from './route';
+import * as metrics from '@/lib/metrics';
 
 function makeFileRequest(file: File): Request {
     const formData = new FormData();
@@ -37,5 +38,21 @@ describe('POST /api/import', () => {
         const file = new File(['not a route'], 'notes.txt', { type: 'text/plain' });
         const res = await POST(makeFileRequest(file));
         expect(res.status).toBe(400);
+    });
+});
+
+describe('POST /api/import metrics (#117)', () => {
+    it('counts a successful import by file type', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        const gpx = '<gpx><trk><trkseg><trkpt lat="47.65" lon="-117.42"></trkpt><trkpt lat="47.66" lon="-117.43"></trkpt></trkseg></trk></gpx>';
+        const res = await POST(makeFileRequest(new File([gpx], 'Ride.GPX', { type: 'application/gpx+xml' })));
+        expect(res.status).toBe(200);
+        expect(counted).toHaveBeenCalledWith('usage.import.gpx');
+    });
+
+    it('does not count a failed import', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        await POST(makeFileRequest(new File(['not a route'], 'notes.txt', { type: 'text/plain' })));
+        expect(counted.mock.calls.some(([name]) => String(name).startsWith('usage.import'))).toBe(false);
     });
 });

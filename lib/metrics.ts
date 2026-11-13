@@ -80,6 +80,65 @@ export function withApiMetrics<A extends unknown[], R extends { status: number }
     };
 }
 
+export type ExternalOutcome = 'ok' | 'error' | 'rate_limited';
+
+export function outcomeForStatus(status: number): ExternalOutcome {
+    if (status === 429 || status === 509) return 'rate_limited';
+    return status >= 500 ? 'error' : 'ok';
+}
+
+// For services where any non-2xx answer is a failure (unlike Strava, whose 404s are routine).
+export function outcomeForResponse(res: { ok: boolean; status: number }): ExternalOutcome {
+    if (res.ok) return 'ok';
+    return outcomeForStatus(res.status) === 'rate_limited' ? 'rate_limited' : 'error';
+}
+
+// One call to a third-party service (Overpass, Nominatim, elevation, Strava).
+export function recordExternalCall(service: string, outcome: ExternalOutcome): void {
+    incrementMetric(`ext.${service}.requests`);
+    if (outcome !== 'ok') incrementMetric(`ext.${service}.${outcome}`);
+}
+
+// A service taken out of rotation after failing: an Overpass mirror's circuit
+// opening, or elevation falling back to its next provider.
+export function recordExternalBreaker(service: string): void {
+    incrementMetric(`ext.${service}.breaker`);
+}
+
+// Which tier answered a cached lookup; 'miss' means it went to the source.
+export function recordCacheLookup(cache: string, tier: string): void {
+    incrementMetric(`cache.${cache}.${tier}`);
+}
+
+export type RouteKind = 'point' | 'area' | 'lasso' | 'mixed';
+
+export function routeKind(points: number, boxes: number, polygons: number): RouteKind {
+    if (boxes === 0 && polygons === 0) return 'point';
+    if (points > 0 || (boxes > 0 && polygons > 0)) return 'mixed';
+    return boxes > 0 ? 'area' : 'lasso';
+}
+
+// One-degree cells (~100 km): enough to see where the app is used, too coarse to locate anyone.
+export function regionCell(lat: number, lon: number): string {
+    return `${Math.floor(lat)},${Math.floor(lon)}`;
+}
+
+export const ROUTE_MILES_BUCKETS = [5, 10, 25, 50];
+
+export function recordGeneratedRoute(kind: RouteKind, lat: number, lon: number, miles: number, solveMs: number): void {
+    incrementMetric(`usage.route.${kind}`);
+    incrementMetric(`region.${regionCell(lat, lon)}`);
+    recordLatency('cpp.solve', solveMs);
+    const bound = ROUTE_MILES_BUCKETS.find(b => miles < b);
+    incrementMetric(`cpp.route_mi.${bound ?? 'inf'}`);
+}
+
+// A background job run: successful runs are timed, failures counted.
+export function recordJobRun(job: string, ms: number, ok: boolean): void {
+    if (ok) recordLatency(`worker.${job}`, ms);
+    else incrementMetric(`worker.${job}.failed`);
+}
+
 const SEEN_THROTTLE_MS = 15 * 60 * 1000;
 const lastSeenWrite = new Map<string, number>();
 

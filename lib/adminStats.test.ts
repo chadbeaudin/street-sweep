@@ -10,7 +10,7 @@ jest.mock('./prisma', () => {
     };
 });
 
-import { isAdminUser, summarizeApiMetrics, getAdminStats } from './adminStats';
+import { isAdminUser, summarizeApiMetrics, summarizeUsage, summarizeObservability, getAdminStats } from './adminStats';
 import { prisma } from './prisma';
 
 const p = prisma as any;
@@ -54,6 +54,59 @@ describe('summarizeApiMetrics (#117)', () => {
     });
 });
 
+const row = (name: string, count: number, sum = 0) => ({ name, count, sum });
+
+describe('summarizeUsage (#117)', () => {
+    it('breaks usage down by kind and ranks the busiest regions', () => {
+        const usage = summarizeUsage([
+            row('usage.route.point', 5), row('usage.route.area', 2), row('usage.route.point', 1),
+            row('usage.export.gpx', 3), row('usage.import.fit', 1), row('usage.import.library', 2),
+            row('usage.stats_open', 4), row('usage.strava_sync.incremental', 6),
+            row('region.47,-118', 7), row('region.45,-123', 9), row('region.-34,151', 1),
+        ]);
+        expect(usage.routes).toEqual({ point: 6, area: 2 });
+        expect(usage.exports).toEqual({ gpx: 3 });
+        expect(usage.imports).toEqual({ fit: 1, library: 2 });
+        expect(usage.statsOpens).toBe(4);
+        expect(usage.stravaSyncs).toEqual({ incremental: 6 });
+        expect(usage.regions).toEqual([{ lat: 45, lon: -123, count: 9 }, { lat: 47, lon: -118, count: 7 }, { lat: -34, lon: 151, count: 1 }]);
+    });
+
+    it('keeps only the top ten regions', () => {
+        const rows = Array.from({ length: 12 }, (_, i) => row(`region.${i},0`, i + 1));
+        expect(summarizeUsage(rows).regions.map(r => r.count)).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3]);
+    });
+});
+
+describe('summarizeObservability (#117)', () => {
+    it('summarizes routing, services, caches, workers and rate limits', () => {
+        const o = summarizeObservability([
+            row('cpp.solve.ms', 4, 2000), row('cpp.solve.lat_250', 3), row('cpp.solve.lat_1000', 1),
+            row('cpp.route_mi.5', 3), row('cpp.route_mi.inf', 1), row('cpp.too_large.area', 2),
+            row('ext.overpass.requests', 10), row('ext.overpass.error', 2), row('ext.overpass.breaker', 1),
+            row('ext.strava.requests', 30), row('ext.strava.rate_limited', 3),
+            row('cache.osm.memory', 6), row('cache.osm.disk', 2), row('cache.osm.miss', 2),
+            row('worker.ridden_roads.ms', 2, 90_000), row('worker.ridden_roads.lat_60000', 2), row('worker.ridden_roads.failed', 1),
+            row('ratelimit.geocode', 5),
+            row('api.POST /api/step.requests', 99),
+        ]);
+        expect(o.routing.solve).toEqual({ runs: 4, avgMs: 500, p50Ms: 250, p95Ms: 1000 });
+        expect(o.routing.sizes).toEqual([
+            { bound: '5', count: 3 }, { bound: '10', count: 0 }, { bound: '25', count: 0 }, { bound: '50', count: 0 }, { bound: 'inf', count: 1 },
+        ]);
+        expect(o.routing.tooLarge).toEqual({ area: 2 });
+        expect(o.services).toEqual([
+            { service: 'strava', requests: 30, errors: 0, rateLimited: 3, breaker: 0 },
+            { service: 'overpass', requests: 10, errors: 2, rateLimited: 0, breaker: 1 },
+        ]);
+        expect(o.caches[0]).toEqual({ cache: 'osm', hits: { memory: 6, disk: 2 }, misses: 2, hitRate: 0.8 });
+        expect(o.caches[1]).toEqual({ cache: 'graph', hits: {}, misses: 0, hitRate: null });
+        expect(o.workers[0]).toEqual({ job: 'ridden_roads', runs: 2, avgMs: 45_000, p50Ms: 60_000, p95Ms: 60_000, failed: 1 });
+        expect(o.workers[1]).toMatchObject({ job: 'athlete_sync', runs: 0, failed: 0 });
+        expect(o.rateLimited).toEqual({ geocode: 5 });
+    });
+});
+
 describe('getAdminStats (#117)', () => {
     it('assembles user, queue and API figures', async () => {
         const now = Date.UTC(2026, 9, 16);
@@ -64,7 +117,9 @@ describe('getAdminStats (#117)', () => {
         p.riddenRoadsJob.groupBy.mockResolvedValue([{ status: 'queued', _count: { _all: 2 } }, { status: 'failed', _count: { _all: 1 } }]);
         p.stravaSyncEvent.count.mockResolvedValue(1);
         p.stravaSyncEvent.findFirst.mockResolvedValue({ createdAt: new Date(now - 90_000) });
-        p.metricCounter.groupBy.mockResolvedValue([{ name: 'api.GET /api/account.requests', _sum: { count: 9, sum: 0 } }]);
+        p.metricCounter.groupBy
+            .mockResolvedValueOnce([{ name: 'api.GET /api/account.requests', _sum: { count: 9, sum: 0 } }, { name: 'ext.strava.requests', _sum: { count: 4, sum: 0 } }])
+            .mockResolvedValueOnce([{ name: 'usage.route.point', _sum: { count: 2, sum: 0 } }]);
 
         const stats = await getAdminStats(now);
 
@@ -73,6 +128,12 @@ describe('getAdminStats (#117)', () => {
         expect(stats.queues.stravaSync).toEqual({ pending: 1, retrying: 1, oldestAgeMs: 90_000 });
         expect(stats.api[0]).toMatchObject({ route: 'GET /api/account', requests: 9 });
         expect(p.user.count).toHaveBeenCalledWith({ where: { lastSeenAt: { gte: new Date(now - 24 * 60 * 60 * 1000) } } });
-        expect(p.metricCounter.groupBy.mock.calls[0][0].where).toEqual({ bucket: { gte: new Date(now - 24 * 60 * 60 * 1000) }, name: { startsWith: 'api.' } });
+        expect(stats.observability.services).toEqual([{ service: 'strava', requests: 4, errors: 0, rateLimited: 0, breaker: 0 }]);
+        expect(stats.usage.routes).toEqual({ point: 2 });
+        expect(p.metricCounter.groupBy.mock.calls[0][0].where).toEqual({ bucket: { gte: new Date(now - 24 * 60 * 60 * 1000) } });
+        expect(p.metricCounter.groupBy.mock.calls[1][0].where).toEqual({
+            bucket: { gte: new Date(now - 30 * 24 * 60 * 60 * 1000) },
+            OR: [{ name: { startsWith: 'usage.' } }, { name: { startsWith: 'region.' } }],
+        });
     });
 });

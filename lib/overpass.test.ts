@@ -14,6 +14,8 @@ jest.mock('./osmDiskCache', () => ({
 }));
 
 import { fetchOSMData, resetCircuitBreakers } from './overpass';
+import { readDiskCache } from './osmDiskCache';
+import * as metrics from './metrics';
 
 describe('fetchOSMData robustness', () => {
     beforeEach(() => {
@@ -166,5 +168,46 @@ describe('fetchOSMData sparse-floor trust for self-hosted Overpass', () => {
         const otherBBox = { south: 45.05, west: -121.35, north: 45.15, east: -121.15 };
         expect(await fetchWithSelfHosted(otherBBox)).toEqual(nonEmpty);
         expect((global.fetch as jest.Mock).mock.calls[1][0]).toBe(selfHostedUrl);
+    });
+});
+
+describe('fetchOSMData metrics (#117)', () => {
+    beforeEach(() => {
+        global.fetch = jest.fn();
+        resetCircuitBreakers();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    it('records a network miss and Overpass call, then a memory hit for the same tile', async () => {
+        const lookups = jest.spyOn(metrics, 'recordCacheLookup');
+        const calls = jest.spyOn(metrics, 'recordExternalCall');
+        (global.fetch as jest.Mock).mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ elements: [{ type: 'node', id: 1, lat: 41.0, lon: -106.0 }] }) });
+        const bbox = { south: 41.001, west: -106.004, north: 41.003, east: -106.002 };
+
+        await fetchOSMData(bbox);
+        await fetchOSMData(bbox);
+
+        expect(lookups.mock.calls).toEqual([['osm', 'miss'], ['osm', 'memory']]);
+        expect(calls).toHaveBeenCalledWith('overpass', 'ok');
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('records a disk hit', async () => {
+        const lookups = jest.spyOn(metrics, 'recordCacheLookup');
+        (readDiskCache as jest.Mock).mockResolvedValueOnce({ elements: [{ type: 'node', id: 1, lat: 42.0, lon: -107.0 }] });
+        await fetchOSMData({ south: 42.001, west: -107.004, north: 42.003, east: -107.002 });
+        expect(lookups).toHaveBeenCalledWith('osm', 'disk');
+    });
+
+    it('records rate-limited mirrors and their circuits opening', async () => {
+        const calls = jest.spyOn(metrics, 'recordExternalCall');
+        const breakers = jest.spyOn(metrics, 'recordExternalBreaker');
+        (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 429, text: async () => 'slow down' });
+        await fetchOSMData({ south: 43.001, west: -108.004, north: 43.003, east: -108.002 });
+        expect(calls).toHaveBeenCalledWith('overpass', 'rate_limited');
+        expect(breakers).toHaveBeenCalledWith('overpass');
     });
 });

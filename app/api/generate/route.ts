@@ -1,4 +1,4 @@
-import { withApiMetrics } from '@/lib/metrics';
+import { withApiMetrics, incrementMetric, recordGeneratedRoute, routeKind } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
 import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
@@ -6,7 +6,8 @@ import { buildFetchRegions, bboxArea } from '@/lib/fetchRegions';
 import type { BoundingBox } from '@/lib/types';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { haversineM } from '@/lib/geometry';
-import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
+import { calculateElevationProfile } from '@/lib/elevation';
+import { fetchElevationData } from '@/lib/elevationFetch';
 import { z } from 'zod';
 import { BBox, Polyline, PolylineList, LatLon } from '@/lib/validation';
 
@@ -146,6 +147,7 @@ async function handlePOST(request: Request) {
                 const spanM = haversineM(pointsMinLat, pointsMinLon, pointsMaxLat, pointsMaxLon);
                 if (spanM > MAX_POINT_ROUTE_SPAN_M) {
                     console.warn(`${ts()} Point-to-point span too large (${(spanM / 1000).toFixed(1)}km), failing fast.`);
+                    incrementMetric('cpp.too_large.span');
                     return NextResponse.json({ error: 'Those points are too far apart to route directly — try breaking the route into shorter segments.' }, { status: 400 });
                 }
             }
@@ -200,6 +202,7 @@ async function handlePOST(request: Request) {
 
         if (osmData.skippedTooLarge) {
             console.warn(`${ts()} Selected area too large for a single request:`, bufferedBbox);
+            incrementMetric('cpp.too_large.area');
             return NextResponse.json({ error: 'Selected area is too large — zoom in or draw a smaller area and try again.' }, { status: 400 });
         }
 
@@ -241,7 +244,9 @@ async function handlePOST(request: Request) {
         // artificial boundary dead-end. 0 = previous behavior (no change).
         const boxElasticityFeet = routingOptions?.boxElasticity || 0;
         const boxElasticityMeters = boxElasticityFeet * 0.3048;
+        const solveStart = Date.now();
         const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty, selectionPolygons.length > 0 ? selectionPolygons : null, boxElasticityMeters);
+        const solveMs = Date.now() - solveStart;
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
         if (circuit.length === 0) {
@@ -266,6 +271,11 @@ async function handlePOST(request: Request) {
         const profile = calculateElevationProfile(sampledCoords, elevations);
         const lastPoint = profile[profile.length - 1];
         const totalDistance = lastPoint ? lastPoint.distance : 0;
+        recordGeneratedRoute(
+            routeKind(selectedPoints?.length ?? 0, selectionBoxes?.length ?? 0, selectionPolygons.length),
+            (bufferedBbox.south + bufferedBbox.north) / 2, (bufferedBbox.west + bufferedBbox.east) / 2,
+            totalDistance, solveMs,
+        );
 
         // Interpolate sampled elevations back to full-resolution coords so that
         // the rendered polyline exactly matches the CPP circuit geometry

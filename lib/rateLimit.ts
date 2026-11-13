@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { incrementMetric } from './metrics';
 
 const WINDOW_MS = 60 * 1000;
 
@@ -55,6 +56,7 @@ export function withRateLimit<Q extends Request, A extends unknown[], R>(name: R
     return async (request, ...rest) => {
         const retryAfter = consume(`${name}:${clientIp(request)}`, RATE_LIMITS[name]);
         if (retryAfter !== null) {
+            incrementMetric(`ratelimit.${name}`);
             return NextResponse.json(
                 { error: `Too many requests. Try again in ${retryAfter} seconds.` },
                 { status: 429, headers: { 'Retry-After': String(retryAfter) } },

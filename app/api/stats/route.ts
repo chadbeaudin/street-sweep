@@ -1,4 +1,4 @@
-import { withApiMetrics } from '@/lib/metrics';
+import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
@@ -23,7 +23,8 @@ interface StatsResponse extends Partial<StatsPayload> {
 // A fast read of the worker-computed row: never computes in this process.
 async function handlePOST(request: Request) {
     try {
-        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; refresh?: boolean };
+        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; refresh?: boolean; opened?: boolean };
+        if (body.opened) incrementMetric('usage.stats_open');
         const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
         if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         const mode: ActivityMode = body.activityMode === 'running' ? 'running' : 'cycling';

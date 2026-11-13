@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getServerSession } from 'next-auth';
@@ -57,11 +58,49 @@ function ApiTable({ rows }: { rows: RouteHealth[] }) {
     );
 }
 
+function Table({ headers, rows, empty }: { headers: string[]; rows: ReactNode[][]; empty: string }) {
+    if (rows.length === 0) return <p className="text-sm text-gray-500">{empty}</p>;
+    return (
+        <div className="overflow-x-auto bg-white border border-gray-200 rounded-lg">
+            <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-gray-500 text-xs">
+                    <tr>{headers.map((h, i) => <th key={h} className={`${i === 0 ? 'text-left' : 'text-right'} font-medium px-3 py-2`}>{h}</th>)}</tr>
+                </thead>
+                <tbody className="tabular-nums">
+                    {rows.map((cells, r) => (
+                        <tr key={r} className="border-t border-gray-100">
+                            {cells.map((cell, i) => <td key={i} className={`px-3 py-2 ${i === 0 ? 'text-left font-mono text-xs text-gray-800 whitespace-nowrap' : 'text-right'}`}>{cell}</td>)}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+    return (
+        <section className="space-y-3">
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">{title}</h2>
+            {children}
+        </section>
+    );
+}
+
+const sum = (r: Record<string, number>) => Object.values(r).reduce((a, b) => a + b, 0);
+// "3 gpx · 1 fit", in the given key order, skipping zeros; '—' when empty.
+const breakdown = (r: Record<string, number>, order: string[] = Object.keys(r)) =>
+    order.filter(k => r[k]).map(k => `${r[k]} ${k}`).join(' · ') || '—';
+const percent = (rate: number | null) => rate === null ? '—' : `${Math.round(rate * 100)}%`;
+const formatCell = (lat: number, lon: number) => `${Math.abs(lat)}°${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon)}°${lon >= 0 ? 'E' : 'W'}`;
+const SIZE_LABELS: Record<string, string> = { '5': '<5 mi', '10': '5–10', '25': '10–25', '50': '25–50', inf: '50+' };
+
 export default async function AdminPage() {
     const session = await getServerSession(authOptions);
     if (!(await isAdminUser((session?.user as { id?: string } | undefined)?.id))) notFound();
     const stats = await getAdminStats();
-    const { users, exportedRoutes, queues } = stats;
+    const { users, exportedRoutes, queues, usage, observability } = stats;
+    const { routing } = observability;
 
     return (
         <main className="min-h-screen bg-gray-50 text-gray-800">
@@ -100,12 +139,63 @@ export default async function AdminPage() {
                         <Tile label="Strava sync events" value={queues.stravaSync.pending} detail={`oldest ${formatAge(queues.stravaSync.oldestAgeMs)}`} />
                         <Tile label="Strava sync retrying" value={queues.stravaSync.retrying} />
                     </div>
+                    <Table
+                        headers={['Job, last 24 hours', 'Runs', 'Failed', 'Avg', 'p50', 'p95']}
+                        rows={observability.workers.map(w => [w.job, w.runs, <span key="f" className={w.failed > 0 ? 'text-red-600 font-semibold' : ''}>{w.failed}</span>, formatMs(w.avgMs), formatMs(w.p50Ms), formatMs(w.p95Ms)])}
+                        empty=""
+                    />
                 </section>
 
-                <section className="space-y-3">
-                    <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">API, last 24 hours</h2>
+                <Section title="Usage, last 30 days">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Tile label="Routes generated" value={sum(usage.routes)} detail={breakdown(usage.routes, ['point', 'area', 'lasso', 'mixed'])} />
+                        <Tile label="Exports" value={sum(usage.exports)} detail={breakdown(usage.exports, ['gpx', 'fit', 'garmin', 'library'])} />
+                        <Tile label="Imports" value={sum(usage.imports)} detail={breakdown(usage.imports)} />
+                        <Tile label="Stats opens" value={usage.statsOpens} />
+                        <Tile label="Strava syncs" value={sum(usage.stravaSyncs)} detail={breakdown(usage.stravaSyncs, ['incremental', 'full'])} />
+                    </div>
+                    <Table
+                        headers={['Top regions (1° cells)', 'Routes']}
+                        rows={usage.regions.map(r => [
+                            <a key="r" href={`https://www.openstreetmap.org/#map=8/${r.lat + 0.5}/${r.lon + 0.5}`} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">{formatCell(r.lat, r.lon)}</a>,
+                            r.count,
+                        ])}
+                        empty="No routes generated in the last 30 days."
+                    />
+                </Section>
+
+                <Section title="Routing engine, last 24 hours">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Tile label="Route solves" value={routing.solve.runs} detail={`avg ${formatMs(routing.solve.avgMs)} · p50 ${formatMs(routing.solve.p50Ms)} · p95 ${formatMs(routing.solve.p95Ms)}`} />
+                        <Tile label="Route length" value={routing.sizes.reduce((n, s) => n + s.count, 0)} detail={routing.sizes.map(s => `${SIZE_LABELS[s.bound]}: ${s.count}`).join(' · ')} />
+                        <Tile label="Too large, rejected" value={sum(routing.tooLarge)} detail={breakdown(routing.tooLarge, ['area', 'span'])} />
+                    </div>
+                </Section>
+
+                <Section title="External services, last 24 hours">
+                    <Table
+                        headers={['Service', 'Requests', 'Errors', 'Rate limited', 'Breaker trips']}
+                        rows={observability.services.map(s => [
+                            s.service, s.requests,
+                            <span key="e" className={s.errors > 0 ? 'text-red-600 font-semibold' : ''}>{s.errors}</span>,
+                            s.rateLimited, s.breaker,
+                        ])}
+                        empty="No external calls recorded in the last 24 hours."
+                    />
+                </Section>
+
+                <Section title="Caches, last 24 hours">
+                    <Table
+                        headers={['Cache', 'Lookups', 'Hit rate', 'Hits by tier']}
+                        rows={observability.caches.map(c => [c.cache, sum(c.hits) + c.misses, percent(c.hitRate), breakdown(c.hits)])}
+                        empty=""
+                    />
+                </Section>
+
+                <Section title="API, last 24 hours">
                     <ApiTable rows={stats.api} />
-                </section>
+                    <p className="text-sm text-gray-500">Rate limited (429): {breakdown(observability.rateLimited)}</p>
+                </Section>
             </div>
         </main>
     );

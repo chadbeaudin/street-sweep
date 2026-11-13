@@ -13,6 +13,7 @@ import { recomputeStats, statsCacheKey } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { creditMatchingActivities } from './routeCredit';
 import { forwardToBridge } from './bridgeForward';
+import { recordJobRun } from './metrics';
 import { decryptJobCreds, refreshRiddenRoadsInBackground, riddenRoadsCacheKey, tilesForBbox, ActivityMode, Creds } from './riddenRoadsRefresh';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -250,10 +251,13 @@ export async function tickAthleteSyncWorker(now = Date.now()): Promise<{ process
     }
     const claimed = await prisma.stravaSyncEvent.updateMany({ where: { id: { in: ids }, ...claimable }, data: { claimedAt: new Date(now), attempts } });
     if (claimed.count !== ids.length) return { processed: false }; // another tick got there first
+    const start = Date.now();
     try {
         await processAthlete(athleteId, events);
+        recordJobRun('athlete_sync', Date.now() - start, true);
         await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });
     } catch (e: any) {
+        recordJobRun('athlete_sync', Date.now() - start, false);
         if (attempts >= MAX_ATTEMPTS) {
             console.warn(`${ts()} AthleteSync: giving up on athlete ${athleteId} after ${attempts} attempts: ${e.message}`);
             await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });

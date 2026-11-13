@@ -1,4 +1,6 @@
-import { fetchElevationData, calculateElevationProfile, calculateElevationGainLoss, densifyElevationProfile, clearElevationCache } from './elevation';
+import { calculateElevationProfile, calculateElevationGainLoss, densifyElevationProfile } from './elevation';
+import { fetchElevationData, clearElevationCache } from './elevationFetch';
+import * as metrics from './metrics';
 
 describe('calculateElevationGainLoss', () => {
     it('ignores noise below the threshold', () => {
@@ -65,7 +67,9 @@ describe('elevation library robustness', () => {
         );
     });
 
-    it('falls back to Open-Meteo when the self-hosted Open Topo Data instance fails', async () => {
+    it('falls back to Open-Meteo when the self-hosted Open Topo Data instance fails, recording the failover (#117)', async () => {
+        const calls = jest.spyOn(metrics, 'recordExternalCall');
+        const breakers = jest.spyOn(metrics, 'recordExternalBreaker');
         // First call (self-hosted copernicus90) fails
         (global.fetch as jest.Mock).mockResolvedValueOnce({
             ok: false,
@@ -83,6 +87,8 @@ describe('elevation library robustness', () => {
         expect(global.fetch).toHaveBeenCalledTimes(2);
         expect((global.fetch as jest.Mock).mock.calls[0][0]).toContain('copernicus90');
         expect((global.fetch as jest.Mock).mock.calls[1][0]).toContain('api.open-meteo.com');
+        expect(calls.mock.calls).toEqual([['open_topo', 'error'], ['open_meteo', 'ok']]);
+        expect(breakers).toHaveBeenCalledWith('open_topo');
     });
 
     it('throws error when all providers fail', async () => {
@@ -247,5 +253,13 @@ describe('densifyElevationProfile', () => {
     it('falls back to the sparse profile when there is no route geometry', () => {
         const sparse = calculateElevationProfile([routeCoords[0], routeCoords[10]], [100, 200]);
         expect(densifyElevationProfile([], sparse)).toBe(sparse);
+    });
+});
+
+describe('lib/elevation.ts (#117)', () => {
+    it('imports nothing server-only, since the browser bundles it', () => {
+        const source = require('fs').readFileSync(require('path').join(__dirname, 'elevation.ts'), 'utf8') as string;
+        const imports = [...source.matchAll(/from '([^']+)'/g)].map(m => m[1]);
+        expect(imports).toEqual(['@turf/distance', '@turf/helpers']);
     });
 });

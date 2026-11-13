@@ -2,6 +2,7 @@ import { BoundingBox, OverpassResponse, OSMElement } from './types';
 import { isRoutableHighway } from './highwayFilter';
 import { prisma } from './prisma';
 import { readDiskCache, writeDiskCache } from './osmDiskCache';
+import { outcomeForResponse, recordCacheLookup, recordExternalBreaker, recordExternalCall } from './metrics';
 
 // Self-hosted Overpass first (no rate limits, worldwide coverage via Clone Mode),
 // public mirrors as fallback if it's ever unreachable. Set OVERPASS_URL to the
@@ -96,6 +97,7 @@ function isCircuitOpen(endpoint: string): boolean {
 
 function recordFailure(endpoint: string, transient = false) {
   MIRROR_FAILURES.set(endpoint, { time: Date.now(), transient });
+  recordExternalBreaker('overpass');
 }
 
 function recordSuccess(endpoint: string) {
@@ -176,6 +178,7 @@ async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | nu
       headers: { 'User-Agent': 'StreetSweep/1.0 (Local Development)' }
     });
     clearTimeout(timeoutId);
+    recordExternalCall('osm_api', outcomeForResponse(response));
     if (!response.ok) {
       const body = await response.text();
       console.warn(`${ts()} OSM API returned ${response.status}: ${body.substring(0, 200)}`);
@@ -194,6 +197,7 @@ async function fetchFromOSMAPI(bbox: BoundingBox): Promise<OverpassResponse | nu
   } catch (err: any) {
     clearTimeout(timeoutId);
     if (err.rateLimit) throw err; // propagate so quadrant split can bail early
+    recordExternalCall('osm_api', 'error');
     console.error(`${ts()} OSM API fallback failed:`, err.message);
     return null;
   }
@@ -409,6 +413,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
         OSM_CACHE.delete(cacheKey);
       } else {
         console.log(`${ts()} Returning cached OSM data (${cached.data.elements.length} elems) for ${cacheKey}`);
+        recordCacheLookup('osm', 'memory');
         return cached.data;
       }
     } else {
@@ -423,6 +428,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   if (diskCached && diskCached.elements.length > 0) {
     console.log(`${ts()} Returning disk-cached OSM data (${diskCached.elements.length} elems) for ${cacheKey}`);
     setOsmCache(cacheKey, diskCached);
+    recordCacheLookup('osm', 'disk');
     return diskCached;
   }
 
@@ -433,6 +439,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
   if (dbCached && dbCached.elements.length > 0) {
     console.log(`${ts()} Returning DB-cached OSM data (${dbCached.elements.length} elems) for ${cacheKey}`);
     setOsmCache(cacheKey, dbCached);
+    recordCacheLookup('osm', 'db');
     // Seed the local disk so subsequent reads skip Neon entirely.
     // writeDiskCache catches internally, so a fire-and-forget call is safe.
     void writeDiskCache(cacheKey, dbCached);
@@ -445,6 +452,8 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
     console.log(`${ts()} Joining in-flight request for ${cacheKey}`);
     return inFlight;
   }
+
+  recordCacheLookup('osm', 'miss');
 
   // 3. Define the actual fetch logic as a promise
   const requestPromise = (async () => {
@@ -495,6 +504,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
               }
             });
             clearTimeout(timeoutId);
+            recordExternalCall('overpass', outcomeForResponse(response));
 
             if (response.ok) {
               const data = (await response.json()) as OverpassResponse;
@@ -536,6 +546,7 @@ export async function fetchOSMData(requestedBbox: BoundingBox): Promise<Overpass
             throw new Error(`Overpass API error: ${response.status}. ${errorText.substring(0, 100)}`);
           } catch (error: any) {
             console.error(`${ts()} Request to ${endpoint} failed:`, error.message);
+            if (error.name === 'AbortError' || error instanceof TypeError) recordExternalCall('overpass', 'error');
             // Timeouts (AbortError) mean the endpoint is slow/overloaded — use full TTL
             recordFailure(endpoint, false);
             lastError = error;

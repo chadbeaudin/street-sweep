@@ -41,6 +41,7 @@ import { recomputeStats } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { refreshRiddenRoadsInBackground, tilesForBbox } from './riddenRoadsRefresh';
 import { creditMatchingActivities } from './routeCredit';
+import * as metrics from './metrics';
 
 const p = prisma as any;
 const TRACK = polyline.encode([[47.65, -117.42], [47.66, -117.43]]);
@@ -343,5 +344,19 @@ describe('enqueueDueResync (#118)', () => {
         await enqueueDueResync(now);
         await enqueueDueResync(now + 1000);
         expect(p.account.findMany).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('tickAthleteSyncWorker metrics (#117)', () => {
+    it('times a finished batch and counts a failed one', async () => {
+        const recorded = jest.spyOn(metrics, 'recordJobRun');
+        queue(event({ aspect: 'recompute', mode: 'cycling' }));
+        await tick();
+        expect(recorded).toHaveBeenLastCalledWith('athlete_sync', expect.any(Number), true);
+
+        queue(event({ aspect: 'create', activityId: '2' }));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new Error('strava down'));
+        await tick();
+        expect(recorded).toHaveBeenLastCalledWith('athlete_sync', expect.any(Number), false);
     });
 });
