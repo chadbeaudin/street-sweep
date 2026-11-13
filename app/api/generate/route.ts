@@ -10,6 +10,7 @@ import { calculateElevationProfile } from '@/lib/elevation';
 import { fetchElevationData } from '@/lib/elevationFetch';
 import { z } from 'zod';
 import { BBox, Polyline, PolylineList, LatLon } from '@/lib/validation';
+import { buildAreaLegs, distinctAnchors, type AreaAnchors } from '@/lib/areaLegs';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
@@ -25,6 +26,13 @@ const GenerateBody = z.object({
     manualRoute: Polyline.optional().nullable(),
     selectionBoxes: z.array(BBox).max(500).optional().nullable(),
     selectionPolygons: z.array(z.array(z.tuple([z.number().finite(), z.number().finite()])).max(20_000)).max(500).optional().nullable(),
+    // Draw order (#52): the road path between each pair of waypoints, and how
+    // many waypoints existed when each area was drawn.
+    manualSegments: PolylineList.optional().nullable(),
+    areaAnchors: z.object({
+        boxes: z.array(z.number().int().min(0)).max(500),
+        polygons: z.array(z.number().int().min(0)).max(500),
+    }).optional().nullable(),
 }).passthrough();
 
 async function handlePOST(request: Request) {
@@ -245,7 +253,20 @@ async function handlePOST(request: Request) {
         const boxElasticityFeet = routingOptions?.boxElasticity || 0;
         const boxElasticityMeters = boxElasticityFeet * 0.3048;
         const solveStart = Date.now();
-        const circuit = graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty, selectionPolygons.length > 0 ? selectionPolygons : null, boxElasticityMeters);
+        // Areas drawn at different times, with waypoints placed between them, are
+        // ridden in that order. Anything else (one area group, or a browser tab
+        // that predates draw order) keeps the single approach → sweep → exit pass.
+        const anchors = check.data.areaAnchors as AreaAnchors | null | undefined;
+        const ordered = !!anchors
+            && anchors.boxes.length === (selectionBoxes?.length ?? 0)
+            && anchors.polygons.length === selectionPolygons.length
+            && distinctAnchors(anchors).length > 1;
+        const circuit = ordered
+            ? graph.solveOrderedLegs(
+                buildAreaLegs(selectedPoints ?? [], (check.data.manualSegments ?? []) as [number, number][][], selectionBoxes ?? [], selectionPolygons, anchors!, persistentStart && typeof persistentStart.lat === 'number' ? persistentStart : null),
+                riddenPenalty, boxElasticityMeters,
+            )
+            : graph.solveCPP(startPoint, endPoint, manualRoute, combinedSelections.length > 0 ? combinedSelections : null, exitRoute, approachRoute, false, riddenPenalty, selectionPolygons.length > 0 ? selectionPolygons : null, boxElasticityMeters);
         const solveMs = Date.now() - solveStart;
         console.log(`${ts()} Generated circuit with ${circuit.length} points.`);
 
