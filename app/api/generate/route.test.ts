@@ -168,3 +168,59 @@ describe('POST /api/generate metrics (#117)', () => {
         expect(counted).toHaveBeenCalledWith('cpp.too_large.area');
     });
 });
+
+describe('POST /api/generate draw order (#52)', () => {
+    const boxA = { north: 39.022, south: 39.018, east: -104.702, west: -104.706 };
+    const boxB = { north: 39.028, south: 39.024, east: -104.692, west: -104.696 };
+    const selectedPoints = [{ lat: 39.02, lon: -104.71 }, { lat: 39.023, lon: -104.70 }, { lat: 39.03, lon: -104.69 }];
+    const graphMock = () => {
+        const graph = {
+            solveCPP: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]),
+            solveOrderedLegs: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]),
+        };
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        mockedGetCachedGraph.mockReturnValueOnce(graph as any);
+        mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[-104.7, 39.02]] } as any);
+        mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 1 } as any]);
+        return graph;
+    };
+    const body = { bbox: validBbox, selectedPoints, selectionBoxes: [boxA, boxB], manualSegments: [[], []], preAreaPointCount: 1 };
+
+    it('rides areas in the order drawn when waypoints were placed between them', async () => {
+        const graph = graphMock();
+        await POST(makeRequest({ ...body, areaAnchors: { boxes: [1, 2], polygons: [] } }));
+
+        expect(graph.solveCPP).not.toHaveBeenCalled();
+        const [legs] = graph.solveOrderedLegs.mock.calls[0];
+        expect(legs).toHaveLength(2);
+        expect(legs[0]).toMatchObject({ approachStart: selectedPoints[0], boxes: [boxA], endPoint: selectedPoints[1] });
+        expect(legs[1]).toMatchObject({ approachStart: selectedPoints[1], boxes: [boxB], endPoint: selectedPoints[2] });
+    });
+
+    it('keeps the single pass for areas drawn back to back', async () => {
+        const graph = graphMock();
+        await POST(makeRequest({ ...body, areaAnchors: { boxes: [1, 1], polygons: [] } }));
+        expect(graph.solveCPP).toHaveBeenCalled();
+        expect(graph.solveOrderedLegs).not.toHaveBeenCalled();
+    });
+
+    it('keeps the single pass for a request without draw order (an older open tab)', async () => {
+        const graph = graphMock();
+        await POST(makeRequest({ bbox: validBbox, selectedPoints, selectionBoxes: [boxA, boxB], preAreaPointCount: 1 }));
+        expect(graph.solveCPP).toHaveBeenCalled();
+        expect(graph.solveOrderedLegs).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the single pass when the anchors do not match the areas sent', async () => {
+        const graph = graphMock();
+        await POST(makeRequest({ ...body, areaAnchors: { boxes: [1], polygons: [] } }));
+        expect(graph.solveCPP).toHaveBeenCalled();
+        expect(graph.solveOrderedLegs).not.toHaveBeenCalled();
+    });
+
+    it('rejects malformed draw order', async () => {
+        mockJson.mockClear();
+        await POST(makeRequest({ ...body, areaAnchors: { boxes: [-1, 2.5], polygons: [] } }));
+        expect(mockJson.mock.calls[0][1]?.status).toBe(400);
+    });
+});

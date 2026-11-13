@@ -9,6 +9,7 @@ import { haversineM } from './geometry';
 import { polylineSetFingerprint } from './riddenRoads';
 import { legalSnapEnds } from './stepPath';
 import { recordCacheLookup } from './metrics';
+import type { AreaLeg } from './areaLegs';
 
 interface NodeData {
     lat: number;
@@ -1886,6 +1887,265 @@ export class StreetGraph {
         return { distance: this.haversine(pLat, pLon, closestLat, closestLon), lat: closestLat, lon: closestLon };
     }
 
+    // One "walk the approach points, sweep the areas, walk on to the exit points"
+    // leg. solveCPP's mixed mode is a single leg; solveOrderedLegs chains several so
+    // points and areas are ridden in the order they were drawn (#52). Without an
+    // approachStart the leg begins at the sweep itself. Returns null when the areas
+    // can't be swept at all.
+    private solveMixedLeg(
+        approachStart: { lat: number, lon: number } | undefined,
+        approachRoute: [number, number][] | undefined,
+        endPoint: { lat: number, lon: number } | undefined,
+        exitRoute: [number, number][] | undefined,
+        selectionBoxes: { north: number, south: number, east: number, west: number }[] | null | undefined,
+        selectionPolygons: [number, number][][] | null | undefined,
+        riddenPenalty: number,
+        boxElasticityMeters: number,
+    ): { lat: number, lon: number, hasConstruction?: boolean }[] | null {
+        // The point the route actually enters the area from: the last pre-area
+        // waypoint if there were intermediate stops, otherwise approachStart
+        // itself. Distinct from approachStart, which is the route's very FIRST
+        // click — using approachStart here was the root cause of a recurring
+        // straight-line/backtrack artifact: with a route like A -> B -> [area],
+        // the area's own entry node AND its "far corner" target were both being
+        // chosen relative to A instead of B, the point actually adjacent to the
+        // area. That could pick an entry node far from B and/or a "far corner"
+        // that's arbitrary relative to B (sometimes landing right back near B),
+        // instead of truly farthest from where the route actually enters.
+        const areaEntryReference = (approachRoute && approachRoute.length > 0)
+            ? { lat: approachRoute[approachRoute.length - 1][1], lon: approachRoute[approachRoute.length - 1][0] }
+            : approachStart;
+
+        // Where the route goes after the area: the first post-area waypoint, or an
+        // explicit endPoint.
+        const realExitTarget = (exitRoute && exitRoute.length > 0)
+            ? { lat: exitRoute[0][1], lon: exitRoute[0][0] }
+            : endPoint;
+
+        // With a real destination after the area, end the coverage trail at it (this
+        // directly minimizes the exit bridge, see #64). Without one, the rider is most
+        // likely heading back toward where the route started, so let the solver pick
+        // the end that minimizes area doubling plus the ride back to the start. The
+        // old "corner farthest from the entry" target ignored that ride entirely and
+        // could finish the sweep on the far side of the area from home.
+        const areaEnd = realExitTarget ?? undefined;
+        const returnToward = realExitTarget ? undefined : approachStart;
+        let areaPath = this.solveCPP(areaEntryReference, areaEnd, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, returnToward);
+        if (areaPath.length === 0) {
+            // All area streets already ridden — re-solve including ridden roads so the
+            // route still physically connects through the area rather than cutting off.
+            areaPath = this.solveCPP(areaEntryReference, areaEnd, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, returnToward);
+        }
+        if (areaPath.length === 0) return null;
+
+        // Walk pre-computed approach segments through any intermediate pre-area waypoints,
+        // then bridge from the last approach point to the area entry.
+        // When no approachRoute is supplied, bridge directly from approachStart.
+        const hasApproachRoute = approachRoute && approachRoute.length > 0;
+        const entryWalk: { lat: number; lon: number }[] = [];
+        let bridgeSource: { lat: number; lon: number } | undefined = areaEntryReference;
+        if (hasApproachRoute) {
+            for (const p of approachRoute!) {
+                entryWalk.push({ lat: p[1], lon: p[0] });
+            }
+            const last = approachRoute![approachRoute!.length - 1];
+            bridgeSource = { lat: last[1], lon: last[0] };
+        }
+
+        // Prefer fresh streets over already-ridden ones when bridging into/out of the area,
+        // but capped like point-to-point steps so the penalty can't force a multi-mile loop.
+        const bridgePenalty = this.buildRiddenPenaltyMap(riddenPenalty);
+
+        const areaEntryNodeId = this.findClosestNode(areaPath[0].lat, areaPath[0].lon);
+        // Mirror of the exit-bridge fix: target the actual edge bridgeSource snaps
+        // onto (both endpoints), not just "closest node" — on rural/sparse graphs
+        // a long edge can leave the nearest graph node far from where the approach
+        // actually sits, and bridging to that node then jumping straight to the
+        // mid-edge point (skipping the real edge geometry) draws a visible
+        // straight line across open ground.
+        const entryEdgeSnap = bridgeSource ? this.findClosestPointOnEdge(bridgeSource.lat, bridgeSource.lon) : null;
+        const hasLink = (a: string, b: string) => !!this.graph.getLink(a, b);
+        const entryStartCandidates = entryEdgeSnap
+            ? legalSnapEnds(entryEdgeSnap, hasLink).exits
+            : (bridgeSource ? [this.findClosestNode(bridgeSource.lat, bridgeSource.lon)] : []).filter((id): id is string => !!id);
+        let entryBridge: { lat: number; lon: number }[] = [];
+        if (areaEntryNodeId && entryStartCandidates.length > 0) {
+            let bridgePath: { id: string, idNext: string, weight: number }[] = [];
+            let usedEntryStartId: string | null = null;
+            // Check for an exact-match candidate first, before attempting any
+            // pathfinding — see the identical reasoning on the exit bridge below.
+            if (entryStartCandidates.includes(areaEntryNodeId)) {
+                usedEntryStartId = areaEntryNodeId;
+            } else {
+                for (const candidateId of entryStartCandidates) {
+                    const p = this.findClosestTargetCapped(candidateId, new Set([areaEntryNodeId]), bridgePenalty)?.path ?? [];
+                    if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
+                }
+                // The snap-edge nodes can land on a small disconnected fragment (e.g. a trail
+                // stub whose endpoints don't share a node with the surrounding street graph) —
+                // fall back to any reachable node within ~550m so a straight-line gap doesn't
+                // silently replace the bridge. Mirrors /api/step's broader fallback.
+                if (usedEntryStartId === null) {
+                    const broadCandidates = this.findNodeIdsNearPoint(bridgeSource!.lat, bridgeSource!.lon, 10);
+                    for (const candidateId of broadCandidates) {
+                        if (entryStartCandidates.includes(candidateId)) continue;
+                        const p = this.findClosestTargetCapped(candidateId, new Set([areaEntryNodeId]), bridgePenalty)?.path ?? [];
+                        if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
+                    }
+                }
+            }
+            // Walk the "first mile" along the actual snap edge from the precise
+            // mid-edge point to the chosen intersection node, instead of leaving a
+            // straight-line gap between bridgeSource and the reached node.
+            if (entryEdgeSnap && usedEntryStartId && (usedEntryStartId === entryEdgeSnap.u || usedEntryStartId === entryEdgeSnap.v)) {
+                entryBridge.push({ lat: entryEdgeSnap.lat, lon: entryEdgeSnap.lon });
+            }
+            if (bridgePath.length > 0) {
+                const firstNode = this.graph.getNode(bridgePath[0].id);
+                if (firstNode && (entryBridge.length === 0 || entryBridge[entryBridge.length - 1].lat !== firstNode.data.lat || entryBridge[entryBridge.length - 1].lon !== firstNode.data.lon)) {
+                    entryBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
+                }
+                for (const seg of bridgePath) {
+                    const n = this.graph.getNode(seg.idNext);
+                    if (n) entryBridge.push({ lat: n.data.lat, lon: n.data.lon });
+                }
+            }
+        }
+        // The bridge carries no coverage guarantee (only areaPath does — see #64),
+        // so any edge it shares with areaPath's own leading edges is pure redundant
+        // mileage: trim it from the bridge's tail, walking backward only as long as
+        // it exactly mirrors areaPath's start. Never touches areaPath itself, so
+        // this can never drop required coverage — it only removes a bridge detour
+        // that immediately retraces ground the coverage trail is about to walk anyway.
+        entryBridge = trimBridgeOverlap(entryBridge, areaPath);
+
+        // Exit bridge: area end → first post-area point (road bridge), then follow
+        // pre-computed exit segments between subsequent post-area waypoints.
+        // Only built when endPoint is a genuine post-area destination (caller's responsibility).
+        const exitBridge: { lat: number; lon: number }[] = [];
+        if (endPoint) {
+            // Bridge target: first point of exitRoute (first post-area point), or endPoint directly
+            const hasExitRoute = exitRoute && exitRoute.length > 0;
+            const bridgeTarget = hasExitRoute
+                ? { lat: exitRoute![0][1], lon: exitRoute![0][0] }
+                : endPoint;
+
+            const areaEndNodeId = this.findClosestNode(areaPath[areaPath.length - 1].lat, areaPath[areaPath.length - 1].lon);
+            // Target the actual edge the bridgeTarget snaps onto (both endpoints),
+            // not just "closest node" — on rural/sparse graphs, edges between
+            // intersections can run hundreds of meters, so the nearest graph node
+            // can sit far from where the click actually snapped. Bridging to a
+            // node and then jumping straight to the mid-edge point (skipping the
+            // real edge geometry between them) draws a visible straight line
+            // across open ground. Mirrors /api/step's snap-edge handling.
+            const edgeSnap = this.findClosestPointOnEdge(bridgeTarget.lat, bridgeTarget.lon);
+            const exitStartCandidates = edgeSnap
+                ? legalSnapEnds(edgeSnap, hasLink).entries
+                : [this.findClosestNode(bridgeTarget.lat, bridgeTarget.lon)].filter((id): id is string => !!id);
+            if (areaEndNodeId && exitStartCandidates.length > 0) {
+                let bridgePath: { id: string, idNext: string, weight: number }[] = [];
+                let usedExitStartId: string | null = null;
+                // Check for an exact-match candidate FIRST, before attempting any
+                // pathfinding. areaEndNodeId can equal a later candidate in the
+                // array (e.g. the natural-endpoint search already landed the area's
+                // trail on the snap edge's "v" node) — trying "u" first would find
+                // a technically-valid but backwards path to the wrong edge endpoint,
+                // locking in a real detour before ever checking that we were already there.
+                if (exitStartCandidates.includes(areaEndNodeId)) {
+                    usedExitStartId = areaEndNodeId;
+                } else {
+                    for (const candidateId of exitStartCandidates) {
+                        const p = this.findClosestTargetCapped(areaEndNodeId, new Set([candidateId]), bridgePenalty)?.path ?? [];
+                        if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
+                    }
+                    // See the identical broad fallback on the entry bridge above.
+                    if (usedExitStartId === null) {
+                        const broadCandidates = this.findNodeIdsNearPoint(bridgeTarget.lat, bridgeTarget.lon, 10);
+                        for (const candidateId of broadCandidates) {
+                            if (exitStartCandidates.includes(candidateId)) continue;
+                            const p = this.findClosestTargetCapped(areaEndNodeId, new Set([candidateId]), bridgePenalty)?.path ?? [];
+                            if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
+                        }
+                    }
+                }
+                if (bridgePath.length > 0) {
+                    const firstNode = this.graph.getNode(bridgePath[0].id);
+                    if (firstNode) exitBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
+                    for (const seg of bridgePath) {
+                        const n = this.graph.getNode(seg.idNext);
+                        if (n) exitBridge.push({ lat: n.data.lat, lon: n.data.lon });
+                    }
+                }
+                // Walk the final "last mile" along the actual snap edge to the
+                // precise mid-edge point, instead of leaving a straight-line gap
+                // between the reached intersection node and bridgeTarget.
+                if (edgeSnap && usedExitStartId && (usedExitStartId === edgeSnap.u || usedExitStartId === edgeSnap.v)) {
+                    const last = exitBridge[exitBridge.length - 1];
+                    if (!last || last.lat !== edgeSnap.lat || last.lon !== edgeSnap.lon) {
+                        exitBridge.push({ lat: edgeSnap.lat, lon: edgeSnap.lon });
+                    }
+                }
+            }
+            // Unlike the entry bridge, trimming the exit bridge's overlap with
+            // areaPath's own tail isn't a safe no-op: areaPath already used that
+            // ground to legitimately reach its chosen terminus, so if the exit
+            // bridge needs to leave via a different edge, retracing part of the
+            // tail can be genuinely unavoidable (not a pure duplicate-point
+            // artifact like the entry case). Left untrimmed pending a real fix.
+
+            // Append pre-computed road segments between post-area points (C→D, D→E, ...)
+            if (hasExitRoute) {
+                for (const p of exitRoute!) {
+                    exitBridge.push({ lat: p[1], lon: p[0] });
+                }
+            }
+        }
+
+        const assembled = [...(approachStart ? [{ lat: approachStart.lat, lon: approachStart.lon }] : []), ...entryWalk, ...entryBridge, ...areaPath, ...exitBridge];
+        // Adjacent segments (approachStart/entryWalk/entryBridge/areaPath) are each
+        // built independently and can end up meeting at the exact same point —
+        // e.g. approachStart itself already IS the trimmed entry bridge's first
+        // point. A zero-distance consecutive duplicate carries no information, so
+        // it's always safe to collapse regardless of why it occurred.
+        const deduped: { lat: number; lon: number; hasConstruction?: boolean }[] = [];
+        for (const pt of assembled) {
+            const prev = deduped[deduped.length - 1];
+            if (!prev || prev.lat !== pt.lat || prev.lon !== pt.lon) deduped.push(pt);
+        }
+        for (let i = 1; i < deduped.length; i++) {
+            const gapM = this.haversine(deduped[i - 1].lat, deduped[i - 1].lon, deduped[i].lat, deduped[i].lon);
+            if (gapM > 150) {
+                console.warn(`${ts()} [DEBUG] large gap in assembled mixed-mode route: ${gapM.toFixed(0)}m between index ${i - 1} (${deduped[i - 1].lat},${deduped[i - 1].lon}) and ${i} (${deduped[i].lat},${deduped[i].lon})`);
+            }
+        }
+        return deduped;
+    }
+
+    // Rides each leg in turn: the approach points, then that leg's areas, ending
+    // at the next leg's first point, so a route like point → area → point → area
+    // keeps its drawn order instead of sweeping every area in one pass (#52).
+    public solveOrderedLegs(legs: AreaLeg[], riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, boxElasticityMeters = 0): { lat: number, lon: number, hasConstruction?: boolean }[] {
+        const route: { lat: number, lon: number, hasConstruction?: boolean }[] = [];
+        for (const leg of legs) {
+            const solved = this.solveMixedLeg(
+                leg.approachStart, leg.approachRoute, leg.endPoint, leg.exitRoute,
+                leg.boxes.length > 0 ? leg.boxes : null, leg.polygons.length > 0 ? leg.polygons : null,
+                riddenPenalty, boxElasticityMeters,
+            );
+            // An area that can't be swept is skipped: keep the walk to it and on to the next point.
+            const part = solved ?? [
+                ...(leg.approachStart ? [leg.approachStart] : []),
+                ...leg.approachRoute.map(p => ({ lat: p[1], lon: p[0] })),
+                ...leg.exitRoute.map(p => ({ lat: p[1], lon: p[0] })),
+            ];
+            for (const pt of part) {
+                const prev = route[route.length - 1];
+                if (!prev || prev.lat !== pt.lat || prev.lon !== pt.lon) route.push(pt);
+            }
+        }
+        return route;
+    }
+
     public solveCPP(startPoint?: { lat: number, lon: number }, endPoint?: { lat: number, lon: number }, manualRoute?: [number, number][], selectionBoxes?: { north: number, south: number, east: number, west: number }[] | null, exitRoute?: [number, number][], approachRoute?: [number, number][], includeRidden = false, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY, selectionPolygons?: [number, number][][] | null, boxElasticityMeters = 0, returnTowardPoint?: { lat: number, lon: number }): { lat: number, lon: number, hasConstruction?: boolean }[] {
         console.log(`${ts()} Starting RPP Solver... Inputs: manualRoute=${manualRoute?.length || 0} pts, selectionBoxes=${selectionBoxes?.length || 0}`);
 
@@ -1900,223 +2160,8 @@ export class StreetGraph {
             // waypoints (exitRoute). The full manualRoute is not used as-is because its final
             // approach→post-area segment would otherwise route around the area instead of through it.
             const approachStart = startPoint ?? { lat: manualRoute[0][1], lon: manualRoute[0][0] };
-            // The point the route actually enters the area from: the last pre-area
-            // waypoint if there were intermediate stops, otherwise approachStart
-            // itself. Distinct from approachStart, which is the route's very FIRST
-            // click — using approachStart here was the root cause of a recurring
-            // straight-line/backtrack artifact: with a route like A -> B -> [area],
-            // the area's own entry node AND its "far corner" target were both being
-            // chosen relative to A instead of B, the point actually adjacent to the
-            // area. That could pick an entry node far from B and/or a "far corner"
-            // that's arbitrary relative to B (sometimes landing right back near B),
-            // instead of truly farthest from where the route actually enters.
-            const areaEntryReference = (approachRoute && approachRoute.length > 0)
-                ? { lat: approachRoute[approachRoute.length - 1][1], lon: approachRoute[approachRoute.length - 1][0] }
-                : approachStart;
-
-            // Where the route goes after the area: the first post-area waypoint, or an
-            // explicit endPoint.
-            const realExitTarget = (exitRoute && exitRoute.length > 0)
-                ? { lat: exitRoute[0][1], lon: exitRoute[0][0] }
-                : endPoint;
-
-            // With a real destination after the area, end the coverage trail at it (this
-            // directly minimizes the exit bridge, see #64). Without one, the rider is most
-            // likely heading back toward where the route started, so let the solver pick
-            // the end that minimizes area doubling plus the ride back to the start. The
-            // old "corner farthest from the entry" target ignored that ride entirely and
-            // could finish the sweep on the far side of the area from home.
-            const areaEnd = realExitTarget ?? undefined;
-            const returnToward = realExitTarget ? undefined : approachStart;
-            let areaPath = this.solveCPP(areaEntryReference, areaEnd, undefined, selectionBoxes, undefined, undefined, false, riddenPenalty, selectionPolygons, boxElasticityMeters, returnToward);
-            if (areaPath.length === 0) {
-                // All area streets already ridden — re-solve including ridden roads so the
-                // route still physically connects through the area rather than cutting off.
-                areaPath = this.solveCPP(areaEntryReference, areaEnd, undefined, selectionBoxes, undefined, undefined, true, riddenPenalty, selectionPolygons, boxElasticityMeters, returnToward);
-            }
-            if (areaPath.length === 0) return manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
-
-            // Walk pre-computed approach segments through any intermediate pre-area waypoints,
-            // then bridge from the last approach point to the area entry.
-            // When no approachRoute is supplied, bridge directly from approachStart.
-            const hasApproachRoute = approachRoute && approachRoute.length > 0;
-            const entryWalk: { lat: number; lon: number }[] = [];
-            let bridgeSource = areaEntryReference;
-            if (hasApproachRoute) {
-                for (const p of approachRoute!) {
-                    entryWalk.push({ lat: p[1], lon: p[0] });
-                }
-                const last = approachRoute![approachRoute!.length - 1];
-                bridgeSource = { lat: last[1], lon: last[0] };
-            }
-
-            // Prefer fresh streets over already-ridden ones when bridging into/out of the area,
-            // but capped like point-to-point steps so the penalty can't force a multi-mile loop.
-            const bridgePenalty = this.buildRiddenPenaltyMap(riddenPenalty);
-
-            const areaEntryNodeId = this.findClosestNode(areaPath[0].lat, areaPath[0].lon);
-            // Mirror of the exit-bridge fix: target the actual edge bridgeSource snaps
-            // onto (both endpoints), not just "closest node" — on rural/sparse graphs
-            // a long edge can leave the nearest graph node far from where the approach
-            // actually sits, and bridging to that node then jumping straight to the
-            // mid-edge point (skipping the real edge geometry) draws a visible
-            // straight line across open ground.
-            const entryEdgeSnap = this.findClosestPointOnEdge(bridgeSource.lat, bridgeSource.lon);
-            const hasLink = (a: string, b: string) => !!this.graph.getLink(a, b);
-            const entryStartCandidates = entryEdgeSnap
-                ? legalSnapEnds(entryEdgeSnap, hasLink).exits
-                : [this.findClosestNode(bridgeSource.lat, bridgeSource.lon)].filter((id): id is string => !!id);
-            let entryBridge: { lat: number; lon: number }[] = [];
-            if (areaEntryNodeId && entryStartCandidates.length > 0) {
-                let bridgePath: { id: string, idNext: string, weight: number }[] = [];
-                let usedEntryStartId: string | null = null;
-                // Check for an exact-match candidate first, before attempting any
-                // pathfinding — see the identical reasoning on the exit bridge below.
-                if (entryStartCandidates.includes(areaEntryNodeId)) {
-                    usedEntryStartId = areaEntryNodeId;
-                } else {
-                    for (const candidateId of entryStartCandidates) {
-                        const p = this.findClosestTargetCapped(candidateId, new Set([areaEntryNodeId]), bridgePenalty)?.path ?? [];
-                        if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
-                    }
-                    // The snap-edge nodes can land on a small disconnected fragment (e.g. a trail
-                    // stub whose endpoints don't share a node with the surrounding street graph) —
-                    // fall back to any reachable node within ~550m so a straight-line gap doesn't
-                    // silently replace the bridge. Mirrors /api/step's broader fallback.
-                    if (usedEntryStartId === null) {
-                        const broadCandidates = this.findNodeIdsNearPoint(bridgeSource.lat, bridgeSource.lon, 10);
-                        for (const candidateId of broadCandidates) {
-                            if (entryStartCandidates.includes(candidateId)) continue;
-                            const p = this.findClosestTargetCapped(candidateId, new Set([areaEntryNodeId]), bridgePenalty)?.path ?? [];
-                            if (p.length > 0) { bridgePath = p; usedEntryStartId = candidateId; break; }
-                        }
-                    }
-                }
-                // Walk the "first mile" along the actual snap edge from the precise
-                // mid-edge point to the chosen intersection node, instead of leaving a
-                // straight-line gap between bridgeSource and the reached node.
-                if (entryEdgeSnap && usedEntryStartId && (usedEntryStartId === entryEdgeSnap.u || usedEntryStartId === entryEdgeSnap.v)) {
-                    entryBridge.push({ lat: entryEdgeSnap.lat, lon: entryEdgeSnap.lon });
-                }
-                if (bridgePath.length > 0) {
-                    const firstNode = this.graph.getNode(bridgePath[0].id);
-                    if (firstNode && (entryBridge.length === 0 || entryBridge[entryBridge.length - 1].lat !== firstNode.data.lat || entryBridge[entryBridge.length - 1].lon !== firstNode.data.lon)) {
-                        entryBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
-                    }
-                    for (const seg of bridgePath) {
-                        const n = this.graph.getNode(seg.idNext);
-                        if (n) entryBridge.push({ lat: n.data.lat, lon: n.data.lon });
-                    }
-                }
-            }
-            // The bridge carries no coverage guarantee (only areaPath does — see #64),
-            // so any edge it shares with areaPath's own leading edges is pure redundant
-            // mileage: trim it from the bridge's tail, walking backward only as long as
-            // it exactly mirrors areaPath's start. Never touches areaPath itself, so
-            // this can never drop required coverage — it only removes a bridge detour
-            // that immediately retraces ground the coverage trail is about to walk anyway.
-            entryBridge = trimBridgeOverlap(entryBridge, areaPath);
-
-            // Exit bridge: area end → first post-area point (road bridge), then follow
-            // pre-computed exit segments between subsequent post-area waypoints.
-            // Only built when endPoint is a genuine post-area destination (caller's responsibility).
-            const exitBridge: { lat: number; lon: number }[] = [];
-            if (endPoint) {
-                // Bridge target: first point of exitRoute (first post-area point), or endPoint directly
-                const hasExitRoute = exitRoute && exitRoute.length > 0;
-                const bridgeTarget = hasExitRoute
-                    ? { lat: exitRoute![0][1], lon: exitRoute![0][0] }
-                    : endPoint;
-
-                const areaEndNodeId = this.findClosestNode(areaPath[areaPath.length - 1].lat, areaPath[areaPath.length - 1].lon);
-                // Target the actual edge the bridgeTarget snaps onto (both endpoints),
-                // not just "closest node" — on rural/sparse graphs, edges between
-                // intersections can run hundreds of meters, so the nearest graph node
-                // can sit far from where the click actually snapped. Bridging to a
-                // node and then jumping straight to the mid-edge point (skipping the
-                // real edge geometry between them) draws a visible straight line
-                // across open ground. Mirrors /api/step's snap-edge handling.
-                const edgeSnap = this.findClosestPointOnEdge(bridgeTarget.lat, bridgeTarget.lon);
-                const exitStartCandidates = edgeSnap
-                    ? legalSnapEnds(edgeSnap, hasLink).entries
-                    : [this.findClosestNode(bridgeTarget.lat, bridgeTarget.lon)].filter((id): id is string => !!id);
-                if (areaEndNodeId && exitStartCandidates.length > 0) {
-                    let bridgePath: { id: string, idNext: string, weight: number }[] = [];
-                    let usedExitStartId: string | null = null;
-                    // Check for an exact-match candidate FIRST, before attempting any
-                    // pathfinding. areaEndNodeId can equal a later candidate in the
-                    // array (e.g. the natural-endpoint search already landed the area's
-                    // trail on the snap edge's "v" node) — trying "u" first would find
-                    // a technically-valid but backwards path to the wrong edge endpoint,
-                    // locking in a real detour before ever checking that we were already there.
-                    if (exitStartCandidates.includes(areaEndNodeId)) {
-                        usedExitStartId = areaEndNodeId;
-                    } else {
-                        for (const candidateId of exitStartCandidates) {
-                            const p = this.findClosestTargetCapped(areaEndNodeId, new Set([candidateId]), bridgePenalty)?.path ?? [];
-                            if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
-                        }
-                        // See the identical broad fallback on the entry bridge above.
-                        if (usedExitStartId === null) {
-                            const broadCandidates = this.findNodeIdsNearPoint(bridgeTarget.lat, bridgeTarget.lon, 10);
-                            for (const candidateId of broadCandidates) {
-                                if (exitStartCandidates.includes(candidateId)) continue;
-                                const p = this.findClosestTargetCapped(areaEndNodeId, new Set([candidateId]), bridgePenalty)?.path ?? [];
-                                if (p.length > 0) { bridgePath = p; usedExitStartId = candidateId; break; }
-                            }
-                        }
-                    }
-                    if (bridgePath.length > 0) {
-                        const firstNode = this.graph.getNode(bridgePath[0].id);
-                        if (firstNode) exitBridge.push({ lat: firstNode.data.lat, lon: firstNode.data.lon });
-                        for (const seg of bridgePath) {
-                            const n = this.graph.getNode(seg.idNext);
-                            if (n) exitBridge.push({ lat: n.data.lat, lon: n.data.lon });
-                        }
-                    }
-                    // Walk the final "last mile" along the actual snap edge to the
-                    // precise mid-edge point, instead of leaving a straight-line gap
-                    // between the reached intersection node and bridgeTarget.
-                    if (edgeSnap && usedExitStartId && (usedExitStartId === edgeSnap.u || usedExitStartId === edgeSnap.v)) {
-                        const last = exitBridge[exitBridge.length - 1];
-                        if (!last || last.lat !== edgeSnap.lat || last.lon !== edgeSnap.lon) {
-                            exitBridge.push({ lat: edgeSnap.lat, lon: edgeSnap.lon });
-                        }
-                    }
-                }
-                // Unlike the entry bridge, trimming the exit bridge's overlap with
-                // areaPath's own tail isn't a safe no-op: areaPath already used that
-                // ground to legitimately reach its chosen terminus, so if the exit
-                // bridge needs to leave via a different edge, retracing part of the
-                // tail can be genuinely unavoidable (not a pure duplicate-point
-                // artifact like the entry case). Left untrimmed pending a real fix.
-
-                // Append pre-computed road segments between post-area points (C→D, D→E, ...)
-                if (hasExitRoute) {
-                    for (const p of exitRoute!) {
-                        exitBridge.push({ lat: p[1], lon: p[0] });
-                    }
-                }
-            }
-
-            const assembled = [{ lat: approachStart.lat, lon: approachStart.lon }, ...entryWalk, ...entryBridge, ...areaPath, ...exitBridge];
-            // Adjacent segments (approachStart/entryWalk/entryBridge/areaPath) are each
-            // built independently and can end up meeting at the exact same point —
-            // e.g. approachStart itself already IS the trimmed entry bridge's first
-            // point. A zero-distance consecutive duplicate carries no information, so
-            // it's always safe to collapse regardless of why it occurred.
-            const deduped: { lat: number; lon: number; hasConstruction?: boolean }[] = [];
-            for (const pt of assembled) {
-                const prev = deduped[deduped.length - 1];
-                if (!prev || prev.lat !== pt.lat || prev.lon !== pt.lon) deduped.push(pt);
-            }
-            for (let i = 1; i < deduped.length; i++) {
-                const gapM = this.haversine(deduped[i - 1].lat, deduped[i - 1].lon, deduped[i].lat, deduped[i].lon);
-                if (gapM > 150) {
-                    console.warn(`${ts()} [DEBUG] large gap in assembled mixed-mode route: ${gapM.toFixed(0)}m between index ${i - 1} (${deduped[i - 1].lat},${deduped[i - 1].lon}) and ${i} (${deduped[i].lat},${deduped[i].lon})`);
-                }
-            }
-            return deduped;
+            return this.solveMixedLeg(approachStart, approachRoute, endPoint, exitRoute, selectionBoxes, selectionPolygons, riddenPenalty, boxElasticityMeters)
+                ?? manualRoute.map(p => ({ lon: p[0], lat: p[1] }));
         }
 
         const requiredEdges: { u: string, v: string, link: any }[] = [];
