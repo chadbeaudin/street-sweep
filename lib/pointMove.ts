@@ -96,3 +96,14 @@ export function applyMovedPoint(
     updated[idx] = newPoint;
     return updated;
 }
+
+/**
+ * Returns `route` with segment `segmentIdx` set to `path`, padding any missing
+ * earlier segments with empty ones so segment i always joins points[i] → points[i+1].
+ */
+export function setSegment(route: [number, number][][], segmentIdx: number, path: [number, number][]): [number, number][][] {
+    const next = [...route];
+    while (next.length < segmentIdx) next.push([]);
+    next[segmentIdx] = path;
+    return next;
+}

@@ -1,4 +1,4 @@
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from './pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint, setSegment } from './pointMove';
 
 function makePoints(count: number): Waypoint[] {
     return Array.from({ length: count }, (_, i) => ({
@@ -333,5 +333,19 @@ describe('removeWaypoint', () => {
             expect(pts).toHaveLength(4);
             expect(route).toHaveLength(3);
         });
+    });
+});
+
+describe('setSegment (#52)', () => {
+    const path: [number, number][] = [[1, 1], [2, 2]];
+
+    it('replaces an existing segment without touching the original array', () => {
+        const route: [number, number][][] = [[[0, 0]], []];
+        expect(setSegment(route, 1, path)).toEqual([[[0, 0]], path]);
+        expect(route[1]).toEqual([]);
+    });
+
+    it('pads skipped segments with empty ones so indexes stay in step with the points', () => {
+        expect(setSegment([[[0, 0]]], 3, path)).toEqual([[[0, 0]], [], [], path]);
     });
 });

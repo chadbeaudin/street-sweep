@@ -1,13 +1,15 @@
 // Pure undo/redo history stack for the route editor. A snapshot captures the
-// full editable state — including selection boxes and the pre-area point count —
+// full editable state — including selection boxes and where each was drawn —
 // so undo/redo after an area selection restores those too (#25).
+
+import type { AreaAnchors } from './areaLegs';
 
 export interface RouteSnapshot {
     points: { lat: number; lon: number; id: string; status?: 'pending' | 'snapped'; computed?: boolean }[];
     route: [number, number][][];
     selectionBoxes: { north: number; south: number; east: number; west: number }[];
     selectionPolygons: [number, number][][];
-    preAreaPointCount: number | null;
+    areaAnchors: AreaAnchors;
 }
 
 // Push a new snapshot, discarding any redo branch beyond the current index.
@@ -29,23 +31,13 @@ export function redo(history: RouteSnapshot[], index: number): { snapshot: Route
     return { snapshot: null, index };
 }
 
-// When a point is clicked right after an area/lasso is drawn, /api/step must
-// NOT be told to path from the point before the area — that ignores the area
-// entirely and produces a real, but wrong, direct road path bypassing it (a
-// visible straight-ish line parallel to the actual route). The server's
-// mixed-mode bridging already connects the area's own end to this point, so
-// it should be treated like a fresh route start (no path segment requested).
-export function isFirstPointAfterArea(preAreaPointCount: number | null, pointIndex: number): boolean {
-    return preAreaPointCount !== null && pointIndex === preAreaPointCount;
-}
-
 // After generating a mixed-mode area/lasso sweep with no real waypoint placed
 // after it yet, the coverage trail's end is a server-computed point the user
 // has never clicked and can't see or drag. It should be materialized as a
 // real, editable waypoint — but only once: as soon as a real post-area point
-// exists (currentPointCount > preAreaPointCount), don't add another.
-export function shouldAddComputedEndpoint(preAreaPointCount: number | null, currentPointCount: number, hasArea: boolean): boolean {
-    return hasArea && preAreaPointCount !== null && currentPointCount === preAreaPointCount;
+// exists after the last-drawn area (currentPointCount > lastAreaAnchor), don't add another.
+export function shouldAddComputedEndpoint(lastAreaAnchor: number | null, currentPointCount: number, hasArea: boolean): boolean {
+    return hasArea && lastAreaAnchor !== null && currentPointCount === lastAreaAnchor;
 }
 
 /**

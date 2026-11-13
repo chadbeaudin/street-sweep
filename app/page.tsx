@@ -30,8 +30,9 @@ import { useUnits } from '@/components/UnitsContext';
 import { elevationFromFeet, elevationUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint } from '@/lib/pointMove';
-import { RouteSnapshot, undo, redo, isFirstPointAfterArea, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint } from '@/lib/pointMove';
+import { RouteSnapshot, undo, redo, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
+import { NO_ANCHORS, firstAnchor, lastAnchor, segmentCrossesArea, shiftAnchorsForDelete, shiftAnchorsForInsert, type AreaAnchors } from '@/lib/areaLegs';
 import { filterRiddenRoadsToBbox, polylineSetFingerprint } from '@/lib/riddenRoads';
 
 const Map = dynamic<any>(() => import('@/components/Map'), {
@@ -242,8 +243,14 @@ export default function Home() {
     const historyRef = useRef<RouteSnapshot[]>([]);
     const selectionBoxesRef = useRef<{ north: number; south: number; east: number; west: number }[]>([]);
     const selectionPolygonsRef = useRef<[number, number][][]>([]);
-    const preAreaPointCountRef = useRef<number | null>(null);
+    // How many waypoints existed when each area was drawn, which fixes the order
+    // points and areas are ridden in (#52). preAreaPointCount is the first of them.
+    const areaAnchorsRef = useRef<AreaAnchors>(NO_ANCHORS);
     const [preAreaPointCount, setPreAreaPointCount] = useState<number | null>(null);
+    const setAreaAnchors = useCallback((anchors: AreaAnchors) => {
+        areaAnchorsRef.current = anchors;
+        setPreAreaPointCount(firstAnchor(anchors));
+    }, []);
     const historyIndexRef = useRef(-1);
     const bboxRef = useRef<{ south: number; west: number; north: number; east: number } | null>(null);
     const stravaRoadsRef = useRef<[number, number][][] | null>(null);
@@ -721,6 +728,7 @@ export default function Home() {
                 polygon.forEach(([lat, lon]) => expandRiddenBbox(lat, lon));
             });
 
+            const firstArea = firstAnchor(areaAnchorsRef.current);
             const payload = {
                 bbox: currentBbox,
                 riddenRoads: filterRiddenRoadsToBbox(stravaRoadsRef.current, riddenFilterBbox),
@@ -732,17 +740,21 @@ export default function Home() {
                 // Fail-safe: If we don't have at least 2 points (start/end), we shouldn't have a manual route.
                 // This prevents "ghost" segments from previous sessions or undo states from polluting area-only requests.
                 manualRoute: (currentPoints.length >= 2) ? flatManualRoute : [],
-                preAreaPointCount: preAreaPointCountRef.current,
+                preAreaPointCount: firstArea,
                 // Road segments between post-area points (C→D, D→E, ...) so the exit bridge
                 // honours all intermediate post-area waypoints, not just the final one.
-                exitRoute: (preAreaPointCountRef.current !== null && manualRouteRef.current.length > preAreaPointCountRef.current)
-                    ? manualRouteRef.current.slice(preAreaPointCountRef.current).flat()
+                exitRoute: (firstArea !== null && manualRouteRef.current.length > firstArea)
+                    ? manualRouteRef.current.slice(firstArea).flat()
                     : [],
                 // Road segments between pre-area waypoints (A→B, B→C, ...) so the entry bridge
                 // walks through intermediate approach points before bridging to the area.
-                approachRoute: (preAreaPointCountRef.current !== null && preAreaPointCountRef.current > 1)
-                    ? manualRouteRef.current.slice(0, preAreaPointCountRef.current - 1).flat()
-                    : []
+                approachRoute: (firstArea !== null && firstArea > 1)
+                    ? manualRouteRef.current.slice(0, firstArea - 1).flat()
+                    : [],
+                // Draw order (#52): with these the server rides areas and the points
+                // between them in the order they were drawn.
+                manualSegments: manualRouteRef.current,
+                areaAnchors: areaAnchorsRef.current,
             };
 
             console.log('[handleGenerate] Sending request to build route...');
@@ -775,14 +787,19 @@ export default function Home() {
                 // draggable waypoint (same as any clicked point) so it's visible and
                 // the user can drag it to redirect where the sweep ends.
                 const hasArea = selectionBoxesRef.current.length > 0 || selectionPolygonsRef.current.length > 0;
-                if (shouldAddComputedEndpoint(preAreaPointCountRef.current, pointsRef.current.length, hasArea)) {
+                if (shouldAddComputedEndpoint(lastAnchor(areaAnchorsRef.current), pointsRef.current.length, hasArea)) {
                     const coords = feature.geometry.coordinates;
                     if (coords.length > 0) {
                         const [lon, lat] = coords[coords.length - 1];
                         const newPoint = { lat, lon, id: Math.random().toString(36).substr(2, 9), status: 'snapped' as const, computed: true };
+                        // The sweep lies between this point and the one before it, so their segment stays empty.
+                        if (pointsRef.current.length > 0) {
+                            manualRouteRef.current = setSegment(manualRouteRef.current, pointsRef.current.length - 1, []);
+                            setManualRoute(manualRouteRef.current);
+                        }
                         pointsRef.current = [...pointsRef.current, newPoint];
                         setSelectedPoints([...pointsRef.current]);
-                        const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                        const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
                         const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                         historyRef.current = [...newHistory, snapshot];
                         historyIndexRef.current = historyRef.current.length - 1;
@@ -1070,9 +1087,9 @@ export default function Home() {
         pointsRef.current = newPoints;
         manualRouteRef.current = newManualRoute;
         selectionBoxesRef.current = [];
-        preAreaPointCountRef.current = null;
+        setAreaAnchors(NO_ANCHORS);
         historyIndexRef.current = 0;
-        const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], selectionPolygons: [], preAreaPointCount: null };
+        const snapshot = { points: newPoints, route: newManualRoute, selectionBoxes: [], selectionPolygons: [], areaAnchors: NO_ANCHORS };
         historyRef.current = [snapshot];
 
         // Mark as imported so auto-generation is suppressed
@@ -1083,7 +1100,6 @@ export default function Home() {
         setSelectedPoints(newPoints);
         setManualRoute(newManualRoute);
         setSelectionBoxes([]);
-        setPreAreaPointCount(null);
         setRoute(routeCoords);
         setElevationData(data.elevationProfile);
         setTotalDistance(data.totalDistance);
@@ -1244,9 +1260,10 @@ export default function Home() {
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
                 // IMPORTANT: Read from ref to get the correct "last point" in the async sequence.
-                // See isFirstPointAfterArea: skip stepping from the pre-area point when this is
-                // the first point clicked after an area/lasso was drawn.
-                const skipLastPoint = isFirstPointAfterArea(preAreaPointCountRef.current, tempIdx);
+                // The first point clicked after an area must not be stepped to from the point
+                // before that area: that path would bypass the area. The server bridges from
+                // the sweep's end to this point instead, and their segment stays empty.
+                const skipLastPoint = tempIdx > 0 && segmentCrossesArea(areaAnchorsRef.current, tempIdx - 1);
                 const lastPoint = (tempIdx > 0 && !skipLastPoint) ? pointsRef.current[tempIdx - 1] : null;
 
                 const stepRes = await fetch('/api/step', {
@@ -1272,7 +1289,8 @@ export default function Home() {
                     // route to this location even without a road-following path segment.
                     pointsRef.current[tempIdx] = { ...newPoint, status: 'snapped' as const };
                     setSelectedPoints([...pointsRef.current]);
-                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                    if (tempIdx > 0) manualRouteRef.current = setSegment(manualRouteRef.current, tempIdx - 1, []);
+                    const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
                     historyRef.current = [...historyRef.current.slice(0, historyIndexRef.current + 1), snapshot];
                     historyIndexRef.current = historyRef.current.length - 1;
                     setHistory(historyRef.current);
@@ -1287,15 +1305,16 @@ export default function Home() {
                 pointsRef.current[tempIdx] = snappedPoint;
                 setSelectedPoints([...pointsRef.current]);
 
-                let currentSegments = [...manualRouteRef.current];
-                if (stepData.path && stepData.path.length > 0) {
-                    currentSegments.push(stepData.path);
-                }
+                // One segment per pair of neighbouring points, even an empty one, so
+                // segment i always joins point i to point i + 1.
+                const currentSegments = tempIdx > 0
+                    ? setSegment(manualRouteRef.current, tempIdx - 1, stepData.path ?? [])
+                    : [...manualRouteRef.current];
 
                 // Update refs (source of truth for subsequent clicks)
                 manualRouteRef.current = currentSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                const snapshot = { points: [...pointsRef.current], route: [...currentSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
                 // Truncate history based on current index (for redo safety)
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
@@ -1377,6 +1396,7 @@ export default function Home() {
                     const p2 = newestPoints[segmentIdx + 1];
 
                     if (!p1 || !p2) continue;
+                    if (segmentCrossesArea(areaAnchorsRef.current, segmentIdx)) continue;
 
                     const stepRes = await fetch('/api/step', {
                         method: 'POST',
@@ -1400,7 +1420,7 @@ export default function Home() {
 
                 manualRouteRef.current = updatedSegments;
 
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -1437,11 +1457,12 @@ export default function Home() {
         const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pointsRef.current, manualRouteRef.current, idx);
         pointsRef.current = newPoints;
         manualRouteRef.current = newRoute;
+        setAreaAnchors(shiftAnchorsForDelete(areaAnchorsRef.current, idx));
         setSelectedPoints([...newPoints]);
         setManualRoute([...newRoute]);
 
         const commitSnapshot = () => {
-            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
             const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
             historyRef.current = [...newHistory, snapshot];
             historyIndexRef.current = historyRef.current.length - 1;
@@ -1449,7 +1470,8 @@ export default function Home() {
             setHistoryIndex(historyIndexRef.current);
         };
 
-        if (segmentToRoute === null) {
+        // Neighbours with an area between them are joined by the sweep, not a direct path.
+        if (segmentToRoute === null || segmentCrossesArea(areaAnchorsRef.current, segmentToRoute)) {
             commitSnapshot();
             return;
         }
@@ -1509,6 +1531,7 @@ export default function Home() {
         );
         pointsRef.current = newPoints;
         manualRouteRef.current = newRoute;
+        setAreaAnchors(shiftAnchorsForInsert(areaAnchorsRef.current, segmentIdx + 1));
         setSelectedPoints([...newPoints]);
         setManualRoute([...newRoute]);
         setActiveSteps(prev => prev + 2);
@@ -1544,7 +1567,7 @@ export default function Home() {
 
                 // Re-route: points[insertedIdx-1] → snappedPoint
                 const pBefore = latestPoints[insertedIdx - 1];
-                if (pBefore) {
+                if (pBefore && !segmentCrossesArea(areaAnchorsRef.current, insertedIdx - 1)) {
                     const res = await fetch('/api/step', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1564,7 +1587,7 @@ export default function Home() {
 
                 // Re-route: snappedPoint → points[insertedIdx+1]
                 const pAfter = latestPoints[insertedIdx + 1];
-                if (pAfter) {
+                if (pAfter && !segmentCrossesArea(areaAnchorsRef.current, insertedIdx)) {
                     const res = await fetch('/api/step', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1583,7 +1606,7 @@ export default function Home() {
                 }
 
                 manualRouteRef.current = updatedSegments;
-                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                const snapshot = { points: [...pointsRef.current], route: [...updatedSegments], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
                 const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                 historyRef.current = [...newHistory, snapshot];
                 historyIndexRef.current = historyRef.current.length - 1;
@@ -1606,7 +1629,7 @@ export default function Home() {
         historyRef.current = [];
         historyIndexRef.current = -1;
         clickChainRef.current = Promise.resolve();
-        preAreaPointCountRef.current = null;
+        setAreaAnchors(NO_ANCHORS);
         isImportedRouteRef.current = false;
         selectionPolygonsRef.current = [];
 
@@ -1621,24 +1644,33 @@ export default function Home() {
         setTotalDistance(null);
         setSelectionBoxes([]);
         setSelectionPolygons([]);
-        setPreAreaPointCount(null);
         setActiveSteps(0);
         setRwgpsSourceRouteId(null);
     }, []);
+
+    // A new area supersedes the auto-added end of the previous sweep (see
+    // dropStaleComputedEndpoint); its empty incoming segment goes with it.
+    const dropComputedEndpointForNewArea = () => {
+        const trimmed = dropStaleComputedEndpoint(pointsRef.current);
+        if (trimmed === pointsRef.current) return;
+        pointsRef.current = trimmed;
+        manualRouteRef.current = manualRouteRef.current.slice(0, Math.max(0, trimmed.length - 1));
+        setSelectedPoints([...trimmed]);
+        setManualRoute(manualRouteRef.current);
+    };
 
     const applySnapshot = useCallback((snapshot: RouteSnapshot, index: number) => {
         pointsRef.current = [...snapshot.points];
         manualRouteRef.current = [...snapshot.route];
         selectionBoxesRef.current = [...snapshot.selectionBoxes];
         selectionPolygonsRef.current = [...(snapshot.selectionPolygons ?? [])];
-        preAreaPointCountRef.current = snapshot.preAreaPointCount ?? null;
+        setAreaAnchors(snapshot.areaAnchors ?? NO_ANCHORS);
         historyIndexRef.current = index;
 
         setSelectedPoints(pointsRef.current);
         setManualRoute(manualRouteRef.current);
         setSelectionBoxes(selectionBoxesRef.current);
         setSelectionPolygons(selectionPolygonsRef.current);
-        setPreAreaPointCount(preAreaPointCountRef.current);
         setHistoryIndex(index);
     }, []);
 
@@ -2517,7 +2549,7 @@ export default function Home() {
                     )}
                     {(selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
                         <button
-                            onClick={() => { setSelectionBoxes([]); setSelectionPolygons([]); }}
+                            onClick={() => { setSelectionBoxes([]); setSelectionPolygons([]); setAreaAnchors(NO_ANCHORS); }}
                             className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors shadow-md"
                             title="Clear selection area"
                         >
@@ -2560,17 +2592,10 @@ export default function Home() {
                             setSelectionBoxes(newBoxes);
                             // See the lasso handler: a prior sweep's auto-computed endpoint
                             // is superseded by this new area rather than backtracked to.
-                            const trimmed = dropStaleComputedEndpoint(pointsRef.current);
-                            if (trimmed !== pointsRef.current) {
-                                pointsRef.current = trimmed;
-                                setSelectedPoints([...trimmed]);
-                            }
-                            // Lock in how many approach points existed when the first box was drawn
-                            if (preAreaPointCountRef.current === null) {
-                                preAreaPointCountRef.current = pointsRef.current.length;
-                                setPreAreaPointCount(pointsRef.current.length);
-                            }
-                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes, selectionPolygons: [...selectionPolygonsRef.current], preAreaPointCount: preAreaPointCountRef.current };
+                            dropComputedEndpointForNewArea();
+                            // Remember where in the point sequence this area was drawn (#52).
+                            setAreaAnchors({ ...areaAnchorsRef.current, boxes: [...areaAnchorsRef.current.boxes, pointsRef.current.length] });
+                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes, selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
                             const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                             historyRef.current = [...newHistory, snapshot];
                             historyIndexRef.current = historyRef.current.length - 1;
@@ -2578,6 +2603,7 @@ export default function Home() {
                             setHistoryIndex(historyIndexRef.current);
                         } else {
                             setSelectionBoxes([]);
+                            setAreaAnchors({ ...areaAnchorsRef.current, boxes: [] });
                         }
                     }}
                     onSelectionPolygonChange={(polygon: [number, number][] | null) => {
@@ -2588,17 +2614,10 @@ export default function Home() {
                             // A previous sweep's auto-computed endpoint isn't a destination
                             // the user picked — this new area supersedes it, so the route
                             // ends here instead of backtracking to where the last one did.
-                            const trimmed = dropStaleComputedEndpoint(pointsRef.current);
-                            if (trimmed !== pointsRef.current) {
-                                pointsRef.current = trimmed;
-                                setSelectedPoints([...trimmed]);
-                            }
-                            // Lock in how many approach points existed when the first polygon was drawn
-                            if (preAreaPointCountRef.current === null) {
-                                preAreaPointCountRef.current = pointsRef.current.length;
-                                setPreAreaPointCount(pointsRef.current.length);
-                            }
-                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: newPolygons, preAreaPointCount: preAreaPointCountRef.current };
+                            dropComputedEndpointForNewArea();
+                            // Remember where in the point sequence this area was drawn (#52).
+                            setAreaAnchors({ ...areaAnchorsRef.current, polygons: [...areaAnchorsRef.current.polygons, pointsRef.current.length] });
+                            const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: newPolygons, areaAnchors: areaAnchorsRef.current };
                             const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
                             historyRef.current = [...newHistory, snapshot];
                             historyIndexRef.current = historyRef.current.length - 1;
@@ -2606,6 +2625,7 @@ export default function Home() {
                             setHistoryIndex(historyIndexRef.current);
                         } else {
                             setSelectionPolygons([]);
+                            setAreaAnchors({ ...areaAnchorsRef.current, polygons: [] });
                         }
                     }}
                     onSelectionModeChange={setIsSelectionMode}
