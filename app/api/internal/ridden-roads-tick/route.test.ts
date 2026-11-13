@@ -38,6 +38,13 @@ describe('POST /api/internal/ridden-roads-tick', () => {
         expect(mockTick).not.toHaveBeenCalled();
     });
 
+    it('rejects a same-length wrong secret (#197)', async () => {
+        await POST(makeRequest({ 'x-internal-secret': 'test-secreT' }));
+        const [, init] = mockJson.mock.calls[0];
+        expect(init?.status).toBe(404);
+        expect(mockTick).not.toHaveBeenCalled();
+    });
+
     it('rejects every request when INTERNAL_WORKER_SECRET is unset, even a matching-looking header', async () => {
         delete process.env.INTERNAL_WORKER_SECRET;
         await POST(makeRequest({ 'x-internal-secret': '' }));

@@ -671,6 +671,13 @@ describe('getStravaAccessToken (#189)', () => {
             expect(error).not.toBeInstanceOf(StravaTokenRejectedError);
         }
     });
+
+    it('never logs any part of the refresh token (#197)', async () => {
+        const logged = jest.spyOn(console, 'log').mockImplementation(() => {});
+        refuse(500, '{}');
+        await getStravaAccessToken({ ...creds, refreshToken: 'zq9xk2tokenvalue' }).catch(() => {});
+        expect(logged.mock.calls.flat().join(' ')).not.toContain('zq9x');
+    });
 });
 
 describe('syncActivities metrics (#117)', () => {

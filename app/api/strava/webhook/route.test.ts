@@ -38,6 +38,8 @@ describe('GET /api/strava/webhook (subscription handshake)', () => {
     it('rejects a wrong verify token, and every request when none is configured', async () => {
         await get('hub.mode=subscribe&hub.verify_token=nope&hub.challenge=abc123');
         expect(lastResponse()[1]?.status).toBe(403);
+        await get('hub.mode=subscribe&hub.verify_token=verify-mE&hub.challenge=abc123');
+        expect(lastResponse()[1]?.status).toBe(403);
         delete process.env.STRAVA_WEBHOOK_VERIFY_TOKEN;
         await get('hub.mode=subscribe&hub.verify_token=&hub.challenge=abc123');
         expect(lastResponse()[1]?.status).toBe(403);

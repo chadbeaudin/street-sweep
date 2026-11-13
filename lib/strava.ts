@@ -166,7 +166,7 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
     const refreshToken = (creds?.refreshToken?.trim() || process.env.STRAVA_REFRESH_TOKEN?.trim());
 
     const source = hasUICreds ? 'UI' : 'ENV';
-    console.log(`[Strava] Attempting token refresh. Source: ${source}, ClientID: ${clientId?.substring(0, 5)}..., Token: ${refreshToken?.substring(0, 8)}...`);
+    console.log(`[Strava] Attempting token refresh. Source: ${source}, ClientID: ${clientId?.substring(0, 5)}...`);
 
     if (!clientId || !clientSecret || !refreshToken) {
         throw new UserFacingError(`Missing Strava credentials (${source}). Please configure them in Settings or your environment variables.`);

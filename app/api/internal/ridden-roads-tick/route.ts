@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { errorResponse } from '@/lib/apiErrors';
 import { tickRiddenRoadsWorker } from '@/lib/riddenRoadsWorkerJob';
 import { tickAthleteSyncWorker } from '@/lib/athleteSyncWorker';
+import { safeEqual } from '@/lib/secureCompare';
 
 // Only ever called by the worker container's own self-ticking loop over
 // loopback (see scripts/worker-tick-loop.js) -- this same compiled code also
@@ -12,7 +13,7 @@ import { tickAthleteSyncWorker } from '@/lib/athleteSyncWorker';
 // authenticated flow).
 export async function POST(request: Request) {
     const secret = process.env.INTERNAL_WORKER_SECRET;
-    if (!secret || request.headers.get('x-internal-secret') !== secret) {
+    if (!secret || !safeEqual(request.headers.get('x-internal-secret') ?? '', secret)) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     try {
