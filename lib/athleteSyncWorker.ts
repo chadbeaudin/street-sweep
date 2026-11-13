@@ -13,7 +13,7 @@ import { recomputeStats, statsCacheKey } from './statsCompute';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import { creditMatchingActivities } from './routeCredit';
 import { forwardToBridge } from './bridgeForward';
-import { recordJobRun } from './metrics';
+import { incrementMetric, recordJobRun } from './metrics';
 import { decryptJobCreds, refreshRiddenRoadsInBackground, riddenRoadsCacheKey, tilesForBbox, ActivityMode, Creds } from './riddenRoadsRefresh';
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
@@ -62,6 +62,7 @@ async function accessRevoked(athleteId: string, events: StravaSyncEvent[]): Prom
 // Strava requires dropping an athlete's data once they revoke this app's access.
 async function purgeAthlete(athleteId: string): Promise<void> {
     const keys = MODES.map(m => riddenRoadsCacheKey(athleteId, m));
+    incrementMetric('account.strava_deauthorized');
     await prisma.$transaction([
         prisma.statsCache.deleteMany({ where: { athleteId: { in: MODES.map(m => statsCacheKey(athleteId, m)) } } }),
         prisma.stravaActivityCache.deleteMany({ where: { athleteId } }),
@@ -153,11 +154,13 @@ async function processAthlete(athleteId: string, events: StravaSyncEvent[]): Pro
     if (events.some(e => e.aspect === 'deauthorize')) {
         if (await accessRevoked(athleteId, events)) return purgeAthlete(athleteId);
         console.warn(`${ts()} AthleteSync: ignoring deauthorize for athlete ${athleteId}: their token still works`);
+        incrementMetric('webhook.deauth_unconfirmed');
     }
 
     const resolved = await credsFor(athleteId, events);
     if (!resolved) {
         console.warn(`${ts()} AthleteSync: no credentials for athlete ${athleteId}; dropping ${events.length} event(s)`);
+        incrementMetric('worker.athlete_sync.no_creds');
         return;
     }
     const { creds } = resolved;
@@ -246,6 +249,7 @@ export async function tickAthleteSyncWorker(now = Date.now()): Promise<{ process
     const attempts = Math.max(...events.map(ev => ev.attempts)) + 1;
     if (attempts > MAX_ATTEMPTS) {
         console.warn(`${ts()} AthleteSync: giving up on athlete ${athleteId}: ${MAX_ATTEMPTS} attempts never finished`);
+        incrementMetric('worker.athlete_sync.given_up');
         await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });
         return { processed: true, athleteId };
     }
@@ -260,6 +264,7 @@ export async function tickAthleteSyncWorker(now = Date.now()): Promise<{ process
         recordJobRun('athlete_sync', Date.now() - start, false);
         if (attempts >= MAX_ATTEMPTS) {
             console.warn(`${ts()} AthleteSync: giving up on athlete ${athleteId} after ${attempts} attempts: ${e.message}`);
+            incrementMetric('worker.athlete_sync.given_up');
             await prisma.stravaSyncEvent.deleteMany({ where: { id: { in: ids } } });
         } else {
             console.warn(`${ts()} AthleteSync: athlete ${athleteId} failed (attempt ${attempts}), retrying later: ${e.message}`);

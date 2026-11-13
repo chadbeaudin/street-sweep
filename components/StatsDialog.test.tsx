@@ -412,3 +412,12 @@ describe('StatsDialog click away', () => {
         expect(onClose).not.toHaveBeenCalled();
     });
 });
+
+describe('StatsDialog error reporting (#117)', () => {
+    it('reports a stats error the user sees', async () => {
+        renderStats('imperial', { error: 'Strava is temporarily unavailable.' });
+        await waitFor(() => expect((global.fetch as jest.Mock).mock.calls.some(([url]) => url === '/api/client-error')).toBe(true));
+        const report = (global.fetch as jest.Mock).mock.calls.find(([url]) => url === '/api/client-error');
+        expect(JSON.parse(report[1].body)).toEqual({ kind: 'stats' });
+    });
+});

@@ -1,5 +1,5 @@
 import { prisma } from './prisma';
-import { LATENCY_BUCKETS_MS, ROUTE_MILES_BUCKETS } from './metrics';
+import { HEAP_PCT_BUCKETS, LATENCY_BUCKETS_MS, ROUTE_MILES_BUCKETS } from './metrics';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -148,6 +148,37 @@ export function summarizeObservability(rows: CounterRow[]) {
     };
 }
 
+// Lost work and user-visible errors are rare, so they're summed over 30 days (#117).
+const LOST_WORK = ['worker.athlete_sync.given_up', 'worker.athlete_sync.no_creds', 'worker.enqueue_failed', 'worker.ridden_roads.tile_failed'];
+export const MONTHLY_PREFIXES = ['usage.', 'region.', 'account.', 'webhook.', 'client_error.'];
+
+export function summarizeFailures(dayRows: CounterRow[], monthRows: CounterRow[]) {
+    const day = toCounters(dayRows);
+    const month = toCounters(monthRows);
+    const dayErrors = byKey(day, 'client_error');
+    const monthErrors = byKey(month, 'client_error');
+    const memory = [...new Set([...day.keys()].filter(n => n.startsWith('memory.')).map(n => n.split('.')[1]))].map(process => {
+        const samples = day.get(`memory.${process}.pct`) ?? { count: 0, sum: 0 };
+        const buckets = byKey(day, `memory.${process}`);
+        const peak = ['over', ...[...HEAP_PCT_BUCKETS].reverse().map(String)].find(b => buckets[`pct_${b}`]) ?? null;
+        return { process, samples: samples.count, avgPct: samples.count > 0 ? samples.sum / samples.count : 0, peak };
+    });
+    return {
+        userErrors: Object.keys(monthErrors)
+            .map(kind => ({ kind, day: dayErrors[kind] ?? 0, month: monthErrors[kind] }))
+            .sort((x, y) => y.month - x.month),
+        accountHealth: byKey(month, 'account'),
+        lostWork: {
+            syncGivenUp: countOf(month, 'worker.athlete_sync.given_up'),
+            syncNoCredentials: countOf(month, 'worker.athlete_sync.no_creds'),
+            enqueueFailed: countOf(month, 'worker.enqueue_failed'),
+            tilesFailed: countOf(month, 'worker.ridden_roads.tile_failed'),
+            webhook: byKey(month, 'webhook'),
+        },
+        memory,
+    };
+}
+
 export async function getAdminStats(now = Date.now()) {
     const since = (ms: number) => new Date(now - ms);
     const [
@@ -174,10 +205,15 @@ export async function getAdminStats(now = Date.now()) {
         prisma.stravaSyncEvent.count({ where: { attempts: { gt: 0 } } }),
         prisma.stravaSyncEvent.findFirst({ orderBy: { createdAt: 'asc' }, select: { createdAt: true } }),
         prisma.metricCounter.groupBy({ by: ['name'], where: { bucket: { gte: since(DAY_MS) } }, _sum: { count: true, sum: true } }),
-        prisma.metricCounter.groupBy({ by: ['name'], where: { bucket: { gte: since(30 * DAY_MS) }, OR: [{ name: { startsWith: 'usage.' } }, { name: { startsWith: 'region.' } }] }, _sum: { count: true, sum: true } }),
+        prisma.metricCounter.groupBy({
+            by: ['name'],
+            where: { bucket: { gte: since(30 * DAY_MS) }, OR: [...MONTHLY_PREFIXES.map(p => ({ name: { startsWith: p } })), { name: { in: LOST_WORK } }] },
+            _sum: { count: true, sum: true },
+        }),
     ]);
     const counterRows = (rows: typeof dayRows) => rows.map(r => ({ name: r.name, count: r._sum.count ?? 0, sum: r._sum.sum ?? 0 }));
     const day = counterRows(dayRows);
+    const month = counterRows(monthRows);
 
     return {
         users: {
@@ -191,8 +227,9 @@ export async function getAdminStats(now = Date.now()) {
             stravaSync: { pending: syncPending, retrying: syncRetrying, oldestAgeMs: oldestSync ? now - oldestSync.createdAt.getTime() : null },
         },
         api: summarizeApiMetrics(day),
-        usage: summarizeUsage(counterRows(monthRows)),
+        usage: summarizeUsage(month),
         observability: summarizeObservability(day),
+        failures: summarizeFailures(day, month),
     };
 }
 

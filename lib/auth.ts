@@ -4,7 +4,7 @@ import StravaProviderBase from 'next-auth/providers/strava';
 import { PrismaAdapter } from '@auth/prisma-adapter';
 import { prisma } from './prisma';
 import { encryptToken } from './tokenCrypto';
-import { touchUserLastSeen } from './metrics';
+import { incrementMetric, touchUserLastSeen } from './metrics';
 import { alertNewUser, alertUserActive } from './userAlerts';
 import { stravaFetch } from './stravaApi';
 
@@ -94,6 +94,13 @@ const adapter: NextAuthOptions['adapter'] = {
 export const authOptions: NextAuthOptions = {
     adapter,
     providers,
+    // Same console output as NextAuth's default logger, plus a count for /admin.
+    logger: {
+        error(code, metadata) {
+            incrementMetric('account.signin_error');
+            console.error(`[next-auth][error][${code}]`, metadata);
+        },
+    },
     session: { strategy: 'database' },
     events: {
         // The adapter only stores tokens when an account is first linked, so a

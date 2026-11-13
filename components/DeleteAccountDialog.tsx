@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { signOut } from 'next-auth/react';
 import { X, AlertTriangle, Loader2 } from 'lucide-react';
 import { clearCachedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
+import { reportClientError } from '@/lib/clientErrors';
 
 const CONFIRM_WORD = 'DELETE';
 
@@ -39,6 +40,7 @@ export function DeleteAccountDialog({ isOpen, onClose }: DeleteAccountDialogProp
             try { localStorage.removeItem('strava_settings'); } catch { /* ignore */ }
             await signOut({ callbackUrl: '/' });
         } catch (e) {
+            reportClientError('account_delete');
             setError(e instanceof Error ? e.message : 'Account deletion failed. Please try again.');
             setIsDeleting(false);
         }

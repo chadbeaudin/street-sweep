@@ -36,6 +36,12 @@ const stats = {
         workers: [{ job: 'ridden_roads', runs: 2, avgMs: 45_000, p50Ms: 60_000, p95Ms: 60_000, failed: 1 }],
         rateLimited: { geocode: 5 },
     },
+    failures: {
+        userErrors: [{ kind: 'step', day: 2, month: 5 }],
+        accountHealth: { strava_token_rejected: 4, deleted: 1 },
+        lostWork: { syncGivenUp: 2, syncNoCredentials: 0, enqueueFailed: 0, tilesFailed: 7, webhook: { rejected: 3, ignored: 1 } },
+        memory: [{ process: 'worker', samples: 60, avgPct: 62.4, peak: 'over' }],
+    },
 };
 
 describe('/admin (#117)', () => {
@@ -67,6 +73,12 @@ describe('/admin (#117)', () => {
         expect(html).toContain('80%');
         expect(html).toContain('6 memory · 2 disk');
         expect(html).toContain('Rate limited (429): 5 geocode');
+        expect(html).toMatch(/step<\/td><td[^>]*><span class="text-red-600 font-semibold">2<\/span><\/td><td[^>]*>5</);
+        expect(html).toMatch(/Strava tokens rejected<\/div><div[^>]*>4</);
+        expect(html).toMatch(/Accounts deleted<\/div><div[^>]*>1</);
+        expect(html).toMatch(/Strava syncs given up<\/div><div[^>]*>2</);
+        expect(html).toContain('1 ignored · 0 unconfirmed revokes');
+        expect(html).toMatch(/worker<\/td><td[^>]*>60<\/td><td[^>]*>62%<\/td><td[^>]*><span class="text-red-600 font-semibold">&gt;90%/);
         expect(html).toContain('1.5s');
         expect(html).toContain('fly.io/apps/streetsweep/monitoring');
     });

@@ -1,4 +1,4 @@
-import { withApiMetrics } from '@/lib/metrics';
+import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
@@ -38,6 +38,7 @@ async function handlePOST(request: Request) {
     // and all of them when ours isn't configured (#189).
     const subscriptionId = process.env.STRAVA_WEBHOOK_SUBSCRIPTION_ID;
     if (!subscriptionId || String(event.subscription_id) !== subscriptionId) {
+        incrementMetric('webhook.rejected');
         return NextResponse.json({ error: 'Unknown subscription' }, { status: 403 });
     }
 
@@ -45,7 +46,10 @@ async function handlePOST(request: Request) {
     // Ignore athletes this app holds nothing for, so a forged event can't grow the queue.
     const known = await prisma.stravaActivityCache.findUnique({ where: { athleteId }, select: { athleteId: true } })
         ?? await prisma.account.findFirst({ where: { provider: 'strava', providerAccountId: athleteId }, select: { id: true } });
-    if (!known) return NextResponse.json({ ok: true });
+    if (!known) {
+        incrementMetric('webhook.ignored');
+        return NextResponse.json({ ok: true });
+    }
 
     if (event.object_type === 'athlete') {
         if (event.updates?.authorized === 'false') await enqueueAthleteSync(athleteId, 'deauthorize');

@@ -56,6 +56,7 @@ import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles,
 import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
 import { listKeyAction } from '@/lib/listNavigation';
 import { useAvoidedRoadsSync } from '@/lib/useAvoidedRoadsSync';
+import { reportClientError } from '@/lib/clientErrors';
 
 const RIDDEN_PREFETCH_FRACTION = 0.5;
 
@@ -504,6 +505,7 @@ export default function Home() {
                         // which can happen if someone hasn't configured anything yet.
                         setStravaError(data.error);
                         if (!data.error.includes('Missing Strava credentials')) {
+                            reportClientError('strava_connect');
                             setError({ message: data.error, trace: data.trace });
                         }
                     }
@@ -511,6 +513,7 @@ export default function Home() {
                 .catch(err => {
                     console.error('Failed to fetch Strava roads:', err);
                     setStravaError(err.message);
+                    reportClientError('strava_connect');
                     setError({ message: `Strava Connection Failed: ${err.message}` });
                 })
                 .finally(() => {
@@ -656,7 +659,11 @@ export default function Home() {
                         setServiceWarning(!!data.degraded);
                     }
                 })
-                .catch(err => { if (err.name !== 'AbortError') console.error('Failed to fetch roads:', err); });
+                .catch(err => {
+                    if (err.name === 'AbortError') return;
+                    console.error('Failed to fetch roads:', err);
+                    reportClientError('roads_load');
+                });
         }, 300);
 
         return () => {
@@ -784,7 +791,10 @@ export default function Home() {
                     }
                 }
             } else {
-                if (!isSilent) setError({ message: "No route generated." });
+                if (!isSilent) {
+                    reportClientError('generate');
+                    setError({ message: "No route generated." });
+                }
             }
         } catch (e: any) {
             if (e.name === 'AbortError') return;
@@ -805,6 +815,7 @@ export default function Home() {
             } catch {
                 // Not JSON, just use message
             }
+            reportClientError('generate');
             setError({ message, trace });
         } finally {
             if (generateAbortControllerRef.current?.signal.aborted) {
@@ -879,6 +890,7 @@ export default function Home() {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         } catch (err) {
+            reportClientError('fit_download');
             console.error('FIT download error:', err);
         } finally {
             setIsFitDownloading(false);
@@ -906,6 +918,7 @@ export default function Home() {
             alert('Route uploaded successfully! It will now appear in your Garmin Courses.');
         } catch (err: any) {
             console.error('Garmin upload error:', err);
+            reportClientError('garmin_export');
             setError({ message: `Garmin Upload Failed: ${err.message}` });
         } finally {
             setIsGarminUploading(false);
@@ -968,6 +981,7 @@ export default function Home() {
             setRwgpsUploadResult({ routeUrl: data.routeUrl });
         } catch (err: any) {
             console.error('RideWithGPS update error:', err);
+            reportClientError('library_save');
             setError({ message: `RideWithGPS Update Failed: ${err.message}` });
         } finally {
             setIsRwgpsUploading(false);
@@ -1013,6 +1027,7 @@ export default function Home() {
             setRwgpsUploadResult({ routeUrl: data.routeUrl });
         } catch (err: any) {
             console.error('RideWithGPS upload error:', err);
+            reportClientError('library_upload');
             setError({ message: `RideWithGPS Upload Failed: ${err.message}` });
         } finally {
             setIsRwgpsUploading(false);
@@ -1088,6 +1103,7 @@ export default function Home() {
             setRwgpsSourceRouteId(null);
             applyParsedRoute(data);
         } catch (err: any) {
+            reportClientError('import');
             setError({ message: `Import failed: ${err.message}` });
         } finally {
             setIsImporting(false);
@@ -1111,6 +1127,7 @@ export default function Home() {
             setRouteName(data.routeName || routeNameFromLibrary);
             setShowRwgpsLibrary(false);
         } catch (err: any) {
+            reportClientError('library_load');
             setError({ message: `RideWithGPS load failed: ${err.message}` });
         } finally {
             setIsLoadingRwgpsRoute(false);
@@ -1179,6 +1196,7 @@ export default function Home() {
                 avoidDraftPathRef.current = [...avoidDraftPathRef.current, segment];
                 setAvoidDraftPath(avoidDraftPathRef.current);
             } catch (err) {
+                reportClientError('avoid_snap');
                 console.error('Failed to snap avoid segment:', err);
             }
         })();
@@ -1289,6 +1307,7 @@ export default function Home() {
                 setHistoryIndex(historyIndexRef.current);
 
             } catch (err) {
+                reportClientError('step');
                 console.error('Failed to process click step:', err);
                 // Rollback optimistic update on network error
                 pointsRef.current.splice(tempIdx, 1);
@@ -1391,6 +1410,7 @@ export default function Home() {
                 setHistoryIndex(historyIndexRef.current);
 
             } catch (err) {
+                reportClientError('point_move');
                 console.error('Failed to move point:', err);
             } finally {
                 setActiveSteps(prev => Math.max(0, prev - 1));
@@ -1459,6 +1479,7 @@ export default function Home() {
                 setManualRoute(updatedSegments);
                 commitSnapshot();
             } catch (err) {
+                reportClientError('point_delete');
                 console.error('Failed to delete point:', err);
             } finally {
                 setActiveSteps(prev => Math.max(0, prev - 1));
@@ -1570,6 +1591,7 @@ export default function Home() {
                 setHistory(historyRef.current);
                 setHistoryIndex(historyIndexRef.current);
             } catch (err) {
+                reportClientError('segment_insert');
                 console.error('Failed to insert route segment point:', err);
             } finally {
                 setActiveSteps(prev => Math.max(0, prev - 2));

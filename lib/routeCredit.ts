@@ -4,6 +4,7 @@ import { decryptToken } from './tokenCrypto';
 import { getStravaAccessToken, type StravaActivity } from './strava';
 import { haversineM } from './geometry';
 import { stravaFetch } from './stravaApi';
+import { incrementMetric } from './metrics';
 
 export const CREDIT_TEXT = 'Route created by StreetSweep';
 export const CREDIT_LINE = `🚲 ${CREDIT_TEXT}`;
@@ -83,7 +84,10 @@ async function addCreditToActivity(accessToken: string, activityId: number): Pro
     const url = `https://www.strava.com/api/v3/activities/${activityId}`;
     const headers = { Authorization: `Bearer ${accessToken}` };
     const res = await stravaFetch(url, { headers });
-    if (!res.ok) return false;
+    if (!res.ok) {
+        incrementMetric('account.route_credit_failed');
+        return false;
+    }
     const { description } = await res.json() as { description?: string | null };
     const updated = appendCredit(description);
     if (updated === null) return true;
@@ -92,6 +96,7 @@ async function addCreditToActivity(accessToken: string, activityId: number): Pro
         headers: { ...headers, 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: updated }),
     });
+    if (!put.ok) incrementMetric('account.route_credit_failed');
     return put.ok;
 }
 

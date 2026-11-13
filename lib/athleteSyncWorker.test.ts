@@ -360,3 +360,46 @@ describe('tickAthleteSyncWorker metrics (#117)', () => {
         expect(recorded).toHaveBeenLastCalledWith('athlete_sync', expect.any(Number), false);
     });
 });
+
+describe('lost and unconfirmed sync work (#117)', () => {
+    const counted = () => (jest.spyOn(metrics, 'incrementMetric'));
+
+    it('counts a confirmed revocation as a deauthorized account', async () => {
+        const spy = counted();
+        queue(event({ aspect: 'deauthorize' }));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new StravaTokenRejectedError('revoked'));
+        await tick();
+        expect(spy).toHaveBeenCalledWith('account.strava_deauthorized');
+    });
+
+    it('counts a revocation it could not confirm', async () => {
+        const spy = counted();
+        queue(event({ aspect: 'deauthorize' }));
+        await tick();
+        expect(spy).toHaveBeenCalledWith('webhook.deauth_unconfirmed');
+        expect(spy).not.toHaveBeenCalledWith('account.strava_deauthorized');
+    });
+
+    it('counts events dropped for lack of credentials', async () => {
+        const spy = counted();
+        queue(event({ aspect: 'create', activityId: '2' }));
+        p.account.findFirst.mockResolvedValue(null);
+        await tick();
+        expect(spy).toHaveBeenCalledWith('worker.athlete_sync.no_creds');
+    });
+
+    it('counts a batch it gave up on after its last attempt', async () => {
+        const spy = counted();
+        queue(event({ aspect: 'create', activityId: '2', attempts: 4 }));
+        (getStravaAccessToken as jest.Mock).mockRejectedValue(new Error('strava down'));
+        await tick();
+        expect(spy).toHaveBeenCalledWith('worker.athlete_sync.given_up');
+    });
+
+    it('counts a batch whose earlier runs never finished', async () => {
+        const spy = counted();
+        queue(event({ aspect: 'create', activityId: '2', attempts: 5 }));
+        await tick();
+        expect(spy).toHaveBeenCalledWith('worker.athlete_sync.given_up');
+    });
+});

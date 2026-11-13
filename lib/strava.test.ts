@@ -654,11 +654,13 @@ describe('getStravaAccessToken (#189)', () => {
         global.fetch = jest.fn(() => Promise.resolve({ ok: false, status, statusText: 'x', text: async () => body })) as any;
     };
 
-    it('reports a refresh token Strava refuses as rejected', async () => {
+    it('reports a refresh token Strava refuses as rejected, and counts it for /admin', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
         for (const status of [400, 401]) {
             refuse(status, '{"message":"Bad Request"}');
             await expect(getStravaAccessToken(creds)).rejects.toBeInstanceOf(StravaTokenRejectedError);
         }
+        expect(counted.mock.calls.filter(([name]) => name === 'account.strava_token_rejected')).toHaveLength(2);
     });
 
     it('does not report an outage or rate limit as a rejected token', async () => {

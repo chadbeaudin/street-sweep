@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { X, ChevronRight, ChevronDown, Route as RouteIcon, Folder, Loader2 } from 'lucide-react';
 import { useUnits } from './UnitsContext';
 import { distanceFromMeters, distanceUnit } from '@/lib/units';
+import { reportClientError } from '@/lib/clientErrors';
 
 interface RwgpsRouteSummary {
     id: number;
@@ -86,7 +87,10 @@ export function RwgpsLibraryDialog({ isOpen, onClose, accessToken, isLoadingRout
                 if (data.error) throw new Error(data.error);
                 setTree(data);
             })
-            .catch(err => setError(err.message || 'Failed to load your RideWithGPS library'))
+            .catch(err => {
+                reportClientError('library_browse');
+                setError(err.message || 'Failed to load your RideWithGPS library');
+            })
             .finally(() => setIsLoadingTree(false));
     }, [isOpen, accessToken]);
 

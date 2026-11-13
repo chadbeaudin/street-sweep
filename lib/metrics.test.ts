@@ -2,7 +2,7 @@ const executeRawUnsafe = jest.fn();
 const userUpdate = jest.fn();
 jest.mock('./prisma', () => ({ prisma: { $executeRawUnsafe: (...a: unknown[]) => executeRawUnsafe(...a), user: { update: (...a: unknown[]) => userUpdate(...a) } } }));
 
-import { incrementMetric, recordLatency, flushMetrics, withApiMetrics, touchUserLastSeen, hourBucket, outcomeForStatus, outcomeForResponse, recordExternalCall, recordExternalBreaker, recordCacheLookup, routeKind, regionCell, recordGeneratedRoute, recordJobRun } from './metrics';
+import { incrementMetric, recordLatency, flushMetrics, withApiMetrics, touchUserLastSeen, hourBucket, outcomeForStatus, outcomeForResponse, recordExternalCall, recordExternalBreaker, recordCacheLookup, routeKind, regionCell, recordGeneratedRoute, recordJobRun, recordHeapSample, processLabel } from './metrics';
 
 const HOUR = 60 * 60 * 1000;
 const T = Date.UTC(2026, 9, 16, 10, 30);
@@ -151,5 +151,23 @@ describe('usage and observability counters (#117)', () => {
         recordJobRun('athlete_sync', 100, false);
         const counts = await flushedCounts();
         expect(counts).toMatchObject({ 'worker.athlete_sync.ms': 1, 'worker.athlete_sync.lat_5000': 1, 'worker.athlete_sync.failed': 1 });
+    });
+});
+
+describe('process memory (#117)', () => {
+    it('samples heap use per process with an average and a bucket', async () => {
+        recordHeapSample('app', 40);
+        recordHeapSample('app', 95);
+        await flushMetrics();
+        const rows = Object.fromEntries(flushedRows().map(r => [r.name, r]));
+        expect(rows['memory.app.pct']).toMatchObject({ count: 2, sum: 135 });
+        expect(rows['memory.app.pct_50'].count).toBe(1);
+        expect(rows['memory.app.pct_over'].count).toBe(1);
+    });
+
+    it('labels the Fly app, the production worker and local dev apart', () => {
+        expect(processLabel({ FLY_APP_NAME: 'streetsweep', NODE_ENV: 'production' })).toBe('app');
+        expect(processLabel({ NODE_ENV: 'production' })).toBe('worker');
+        expect(processLabel({ NODE_ENV: 'development' })).toBe('dev');
     });
 });

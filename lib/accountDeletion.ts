@@ -3,6 +3,7 @@ import { decryptToken } from './tokenCrypto';
 import { getStravaAccessToken, resolveAthleteId } from './strava';
 import { riddenRoadsCacheKey } from './riddenRoadsRefresh';
 import { stravaFetch } from './stravaApi';
+import { incrementMetric } from './metrics';
 
 // Revokes this app's Strava access for the athlete. Must only ever run with the
 // user's own refresh token: getStravaAccessToken falls back to the server's
@@ -58,4 +59,5 @@ export async function deleteAccount(userId: string): Promise<void> {
         // Cascades to Account and Session.
         prisma.user.delete({ where: { id: userId } }),
     ]);
+    incrementMetric('account.deleted');
 }
