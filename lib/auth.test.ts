@@ -10,6 +10,7 @@ process.env.STRAVA_CLIENT_SECRET = 'secret';
 import { authOptions } from './auth';
 import { prisma } from './prisma';
 import { touchUserLastSeen } from './metrics';
+import { incrementMetric } from './metrics';
 import { alertNewUser, alertUserActive } from './userAlerts';
 
 type StravaProviderOptions = {
@@ -92,5 +93,15 @@ describe('user alerts (#133, #134)', () => {
     it('stays quiet for returning users', async () => {
         await signIn(false);
         expect(alertNewUser).not.toHaveBeenCalled();
+    });
+});
+
+describe('sign-in errors (#117)', () => {
+    it('counts NextAuth errors and still logs them', () => {
+        const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+        authOptions.logger!.error!('OAUTH_CALLBACK_ERROR', new Error('state mismatch'));
+        expect(incrementMetric).toHaveBeenCalledWith('account.signin_error');
+        expect(error).toHaveBeenCalledWith('[next-auth][error][OAUTH_CALLBACK_ERROR]', expect.any(Error));
+        error.mockRestore();
     });
 });

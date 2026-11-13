@@ -3,6 +3,7 @@ jest.mock('./tokenCrypto', () => ({ encryptToken: (v: string) => `enc(${v})` }))
 
 import { enqueueAthleteSync, hasPendingSync } from './athleteSyncQueue';
 import { prisma } from './prisma';
+import * as metrics from './metrics';
 
 const create = prisma.stravaSyncEvent.create as jest.Mock;
 
@@ -27,5 +28,14 @@ describe('athleteSyncQueue (#118)', () => {
         expect(await hasPendingSync('42')).toBe(true);
         (prisma.stravaSyncEvent.count as jest.Mock).mockResolvedValue(0);
         expect(await hasPendingSync('42')).toBe(false);
+    });
+});
+
+describe('athleteSyncQueue metrics (#117)', () => {
+    it('counts a queue write that failed, since that work is lost', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        create.mockRejectedValue(new Error('db down'));
+        await enqueueAthleteSync('42', 'create', { activityId: '1' });
+        expect(counted).toHaveBeenCalledWith('worker.enqueue_failed');
     });
 });

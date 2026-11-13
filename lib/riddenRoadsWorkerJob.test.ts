@@ -204,3 +204,14 @@ describe('tickRiddenRoadsWorker metrics (#117)', () => {
         expect(recorded).toHaveBeenLastCalledWith('ridden_roads', expect.any(Number), false);
     });
 });
+
+describe('ridden-road tile failures (#117)', () => {
+    it('counts a tile that failed and was left for the next tick', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        mockFindFirst.mockResolvedValue(baseJob);
+        mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
+        mockFetchOSMData.mockRejectedValue(new Error('overpass down'));
+        await tickRiddenRoadsWorker();
+        expect(counted).toHaveBeenCalledWith('worker.ridden_roads.tile_failed');
+    });
+});

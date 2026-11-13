@@ -22,6 +22,7 @@ import { deleteAccount } from './accountDeletion';
 import { prisma } from './prisma';
 import { getStravaAccessToken, resolveAthleteId } from './strava';
 import { decryptToken } from './tokenCrypto';
+import * as metrics from './metrics';
 
 const mockedFindUser = prisma.user.findUnique as jest.Mock;
 const mockedGetAccessToken = getStravaAccessToken as jest.Mock;
@@ -163,5 +164,22 @@ describe('deleteAccount', () => {
 
         expect(prisma.$transaction).not.toHaveBeenCalled();
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+});
+
+describe('deleteAccount metrics (#117)', () => {
+    it('counts a completed deletion', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        mockedFindUser.mockResolvedValue(stravaUser);
+        await deleteAccount('user-1');
+        expect(counted).toHaveBeenCalledWith('account.deleted');
+    });
+
+    it('does not count a deletion that failed', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        mockedFindUser.mockResolvedValue(stravaUser);
+        (prisma.$transaction as jest.Mock).mockRejectedValueOnce(new Error('db down'));
+        await expect(deleteAccount('user-1')).rejects.toThrow('db down');
+        expect(counted).not.toHaveBeenCalledWith('account.deleted');
     });
 });

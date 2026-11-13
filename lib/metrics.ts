@@ -133,6 +133,22 @@ export function recordGeneratedRoute(kind: RouteKind, lat: number, lon: number, 
     incrementMetric(`cpp.route_mi.${bound ?? 'inf'}`);
 }
 
+export const HEAP_PCT_BUCKETS = [50, 75, 90];
+
+// The Fly app and the Nastromo worker write to the same database, so per-process
+// metrics are labelled by which one recorded them.
+export function processLabel(env: Record<string, string | undefined> = process.env): string {
+    if (env.FLY_APP_NAME) return 'app';
+    return env.NODE_ENV === 'production' ? 'worker' : 'dev';
+}
+
+// The share of the V8 heap limit in use, sampled each minute per process (#117).
+export function recordHeapSample(process: string, percent: number): void {
+    incrementMetric(`memory.${process}.pct`, 1, percent);
+    const bound = HEAP_PCT_BUCKETS.find(b => percent <= b);
+    incrementMetric(`memory.${process}.pct_${bound ?? 'over'}`);
+}
+
 // A background job run: successful runs are timed, failures counted.
 export function recordJobRun(job: string, ms: number, ok: boolean): void {
     if (ok) recordLatency(`worker.${job}`, ms);

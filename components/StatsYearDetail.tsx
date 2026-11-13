@@ -6,6 +6,7 @@ import { useUnits } from './UnitsContext';
 import { StatsBarChart } from './StatsBarChart';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
 import { ridesInMonth, summarizeRides, type YearDetail, type YearRide } from '@/lib/stats';
+import { reportClientError } from '@/lib/clientErrors';
 
 interface StatsYearDetailProps {
     year: number;
@@ -60,9 +61,16 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
                 });
                 const data = await res.json();
                 if (cancelled) return;
-                if (data.error) setError(data.error); else setDetail(data);
+                if (data.error) {
+                    reportClientError('stats_year');
+                    setError(data.error);
+                } else {
+                    setDetail(data);
+                }
             } catch (err) {
-                if (!cancelled) setError(err instanceof Error ? err.message : `Couldn't load ${year}`);
+                if (cancelled) return;
+                reportClientError('stats_year');
+                setError(err instanceof Error ? err.message : `Couldn't load ${year}`);
             }
         })();
         return () => { cancelled = true; };

@@ -1,5 +1,6 @@
 import { prisma } from './prisma';
 import { encryptToken } from './tokenCrypto';
+import { incrementMetric } from './metrics';
 import type { ActivityMode, Creds } from './riddenRoadsRefresh';
 
 export type SyncAspect = 'create' | 'update' | 'delete' | 'deauthorize' | 'resync' | 'recompute';
@@ -26,6 +27,7 @@ export async function enqueueAthleteSync(
         });
     } catch (e: any) {
         console.warn(`${ts()} AthleteSync: failed to enqueue ${aspect} for ${athleteId}: ${e.message}`);
+        incrementMetric('worker.enqueue_failed');
     }
 }
 

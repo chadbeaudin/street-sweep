@@ -93,13 +93,16 @@ const breakdown = (r: Record<string, number>, order: string[] = Object.keys(r)) 
     order.filter(k => r[k]).map(k => `${r[k]} ${k}`).join(' · ') || '—';
 const percent = (rate: number | null) => rate === null ? '—' : `${Math.round(rate * 100)}%`;
 const formatCell = (lat: number, lon: number) => `${Math.abs(lat)}°${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon)}°${lon >= 0 ? 'E' : 'W'}`;
+const HEAP_LABELS: Record<string, string> = { '50': '≤50%', '75': '50–75%', '90': '75–90%', over: '>90%' };
+const red = (n: number) => <span className={n > 0 ? 'text-red-600 font-semibold' : ''}>{n}</span>;
 const SIZE_LABELS: Record<string, string> = { '5': '<5 mi', '10': '5–10', '25': '10–25', '50': '25–50', inf: '50+' };
 
 export default async function AdminPage() {
     const session = await getServerSession(authOptions);
     if (!(await isAdminUser((session?.user as { id?: string } | undefined)?.id))) notFound();
     const stats = await getAdminStats();
-    const { users, exportedRoutes, queues, usage, observability } = stats;
+    const { users, exportedRoutes, queues, usage, observability, failures } = stats;
+    const { accountHealth, lostWork } = failures;
     const { routing } = observability;
 
     return (
@@ -141,10 +144,49 @@ export default async function AdminPage() {
                     </div>
                     <Table
                         headers={['Job, last 24 hours', 'Runs', 'Failed', 'Avg', 'p50', 'p95']}
-                        rows={observability.workers.map(w => [w.job, w.runs, <span key="f" className={w.failed > 0 ? 'text-red-600 font-semibold' : ''}>{w.failed}</span>, formatMs(w.avgMs), formatMs(w.p50Ms), formatMs(w.p95Ms)])}
+                        rows={observability.workers.map(w => [w.job, w.runs, red(w.failed), formatMs(w.avgMs), formatMs(w.p50Ms), formatMs(w.p95Ms)])}
                         empty=""
                     />
                 </section>
+
+                <Section title="Errors users saw">
+                    <Table
+                        headers={['Error', 'Last 24 hours', 'Last 30 days']}
+                        rows={failures.userErrors.map(e => [e.kind, red(e.day), e.month])}
+                        empty="No errors reported by browsers in the last 30 days."
+                    />
+                </Section>
+
+                <Section title="Account health, last 30 days">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Tile label="Strava tokens rejected" value={accountHealth.strava_token_rejected ?? 0} detail="refreshes Strava refused" />
+                        <Tile label="Revoked Strava access" value={accountHealth.strava_deauthorized ?? 0} />
+                        <Tile label="Accounts deleted" value={accountHealth.deleted ?? 0} />
+                        <Tile label="Sign-in errors" value={accountHealth.signin_error ?? 0} />
+                        <Tile label="Ride credit failures" value={accountHealth.route_credit_failed ?? 0} />
+                    </div>
+                </Section>
+
+                <Section title="Lost background work, last 30 days">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <Tile label="Strava syncs given up" value={lostWork.syncGivenUp} detail="after 5 attempts" />
+                        <Tile label="Sync events dropped" value={lostWork.syncNoCredentials} detail="no credentials to act on" />
+                        <Tile label="Queue writes failed" value={lostWork.enqueueFailed} />
+                        <Tile label="Ridden-road tiles failed" value={lostWork.tilesFailed} detail="retried next tick" />
+                        <Tile label="Webhook events rejected" value={lostWork.webhook.rejected ?? 0} detail={`${lostWork.webhook.ignored ?? 0} ignored · ${lostWork.webhook.deauth_unconfirmed ?? 0} unconfirmed revokes`} />
+                    </div>
+                </Section>
+
+                <Section title="Memory, last 24 hours">
+                    <Table
+                        headers={['Process', 'Samples', 'Avg heap used', 'Peak']}
+                        rows={failures.memory.map(m => [
+                            m.process, m.samples, `${Math.round(m.avgPct)}%`,
+                            <span key="p" className={m.peak === 'over' ? 'text-red-600 font-semibold' : ''}>{m.peak ? HEAP_LABELS[m.peak] : '—'}</span>,
+                        ])}
+                        empty="No memory samples in the last 24 hours."
+                    />
+                </Section>
 
                 <Section title="Usage, last 30 days">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -176,9 +218,7 @@ export default async function AdminPage() {
                     <Table
                         headers={['Service', 'Requests', 'Errors', 'Rate limited', 'Breaker trips']}
                         rows={observability.services.map(s => [
-                            s.service, s.requests,
-                            <span key="e" className={s.errors > 0 ? 'text-red-600 font-semibold' : ''}>{s.errors}</span>,
-                            s.rateLimited, s.breaker,
+                            s.service, s.requests, red(s.errors), s.rateLimited, s.breaker,
                         ])}
                         empty="No external calls recorded in the last 24 hours."
                     />

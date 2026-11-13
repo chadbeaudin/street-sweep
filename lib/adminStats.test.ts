@@ -10,7 +10,7 @@ jest.mock('./prisma', () => {
     };
 });
 
-import { isAdminUser, summarizeApiMetrics, summarizeUsage, summarizeObservability, getAdminStats } from './adminStats';
+import { isAdminUser, summarizeApiMetrics, summarizeUsage, summarizeObservability, summarizeFailures, getAdminStats, MONTHLY_PREFIXES } from './adminStats';
 import { prisma } from './prisma';
 
 const p = prisma as any;
@@ -107,6 +107,27 @@ describe('summarizeObservability (#117)', () => {
     });
 });
 
+describe('summarizeFailures (#117)', () => {
+    it('lists user-visible errors by 30-day count with their last-day count, and rolls up account health and lost work', () => {
+        const f = summarizeFailures(
+            [row('client_error.step', 2), row('memory.app.pct', 3, 150), row('memory.app.pct_50', 2), row('memory.app.pct_90', 1), row('memory.worker.pct', 1, 95), row('memory.worker.pct_over', 1)],
+            [
+                row('client_error.step', 5), row('client_error.generate', 9),
+                row('account.strava_token_rejected', 4), row('account.deleted', 1),
+                row('worker.athlete_sync.given_up', 2), row('worker.ridden_roads.tile_failed', 7),
+                row('webhook.rejected', 3), row('webhook.ignored', 1),
+            ],
+        );
+        expect(f.userErrors).toEqual([{ kind: 'generate', day: 0, month: 9 }, { kind: 'step', day: 2, month: 5 }]);
+        expect(f.accountHealth).toEqual({ strava_token_rejected: 4, deleted: 1 });
+        expect(f.lostWork).toEqual({ syncGivenUp: 2, syncNoCredentials: 0, enqueueFailed: 0, tilesFailed: 7, webhook: { rejected: 3, ignored: 1 } });
+        expect(f.memory).toEqual([
+            { process: 'app', samples: 3, avgPct: 50, peak: '90' },
+            { process: 'worker', samples: 1, avgPct: 95, peak: 'over' },
+        ]);
+    });
+});
+
 describe('getAdminStats (#117)', () => {
     it('assembles user, queue and API figures', async () => {
         const now = Date.UTC(2026, 9, 16);
@@ -131,9 +152,11 @@ describe('getAdminStats (#117)', () => {
         expect(stats.observability.services).toEqual([{ service: 'strava', requests: 4, errors: 0, rateLimited: 0, breaker: 0 }]);
         expect(stats.usage.routes).toEqual({ point: 2 });
         expect(p.metricCounter.groupBy.mock.calls[0][0].where).toEqual({ bucket: { gte: new Date(now - 24 * 60 * 60 * 1000) } });
-        expect(p.metricCounter.groupBy.mock.calls[1][0].where).toEqual({
-            bucket: { gte: new Date(now - 30 * 24 * 60 * 60 * 1000) },
-            OR: [{ name: { startsWith: 'usage.' } }, { name: { startsWith: 'region.' } }],
-        });
+        const monthly = p.metricCounter.groupBy.mock.calls[1][0].where;
+        expect(monthly.bucket).toEqual({ gte: new Date(now - 30 * 24 * 60 * 60 * 1000) });
+        expect(monthly.OR).toEqual(expect.arrayContaining([
+            ...MONTHLY_PREFIXES.map(p => ({ name: { startsWith: p } })),
+            { name: { in: expect.arrayContaining(['worker.athlete_sync.given_up', 'worker.ridden_roads.tile_failed']) } },
+        ]));
     });
 });

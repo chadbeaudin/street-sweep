@@ -17,6 +17,7 @@ import { appendCredit, creditMatchingActivities, recordExportedRoute, routeCover
 import { prisma } from './prisma';
 import { getStravaAccessToken } from './strava';
 import { decryptToken } from './tokenCrypto';
+import * as metrics from './metrics';
 
 type LatLon = [number, number];
 
@@ -176,5 +177,24 @@ describe('creditMatchingActivities', () => {
             Promise.resolve(init?.method === 'PUT' ? { ok: false } : { ok: true, json: async () => ({ description: '' }) }));
         expect(await creditMatchingActivities('user-1')).toBe(0);
         expect(prisma.exportedRoute.update).not.toHaveBeenCalled();
+    });
+});
+
+describe('ride credit failures (#117)', () => {
+    it('counts a credit Strava would not save', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        setup();
+        fetchMock.mockImplementation((_url: string, init?: RequestInit) =>
+            Promise.resolve(init?.method === 'PUT' ? { ok: false, status: 403 } : { ok: true, json: async () => ({ description: 'Morning loop' }) }));
+        await creditMatchingActivities('user-1');
+        expect(counted).toHaveBeenCalledWith('account.route_credit_failed');
+    });
+
+    it('does not count a successful credit', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        setup();
+        await creditMatchingActivities('user-1');
+        expect(putCalls()).toHaveLength(1);
+        expect(counted).not.toHaveBeenCalledWith('account.route_credit_failed');
     });
 });

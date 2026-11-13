@@ -193,7 +193,10 @@ export async function getStravaAccessToken(creds?: { clientId?: string; clientSe
         } catch {
             errorMessage += ` - ${errorText.substring(0, 200)}`;
         }
-        if (response.status === 400 || response.status === 401) throw new StravaTokenRejectedError(errorMessage);
+        if (response.status === 400 || response.status === 401) {
+            incrementMetric('account.strava_token_rejected');
+            throw new StravaTokenRejectedError(errorMessage);
+        }
         throw new Error(errorMessage);
     }
 

@@ -8,6 +8,7 @@ import { StatsBarChart } from './StatsBarChart';
 import { StatsYearDetail } from './StatsYearDetail';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
 import { STATS_REFRESH_COOLDOWN_MS } from '@/lib/stats';
+import { reportClientError } from '@/lib/clientErrors';
 
 interface CityStats {
     name: string;
@@ -198,6 +199,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                 const data = await res.json();
                 if (cancelled) return;
                 if (data.error) {
+                    reportClientError('stats');
                     setError(data.error);
                 } else {
                     setStats(data);
@@ -208,7 +210,9 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                     }
                 }
             } catch (err: any) {
-                if (!cancelled) setError(err.message);
+                if (cancelled) return;
+                reportClientError('stats');
+                setError(err.message);
             } finally {
                 if (isInitial && !cancelled) setLoading(false);
             }

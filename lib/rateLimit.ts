@@ -14,6 +14,7 @@ export const RATE_LIMITS = {
     path: 60,
     import: 10,
     exportFit: 20,
+    clientError: 60,
 } as const;
 
 export type RateLimitName = keyof typeof RATE_LIMITS;

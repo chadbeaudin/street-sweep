@@ -5,7 +5,7 @@
 // or block the whole app's event loop for 10+ minutes (a real prod incident);
 // see lib/riddenRoadsRefresh.ts's own comment for the full story.
 import { prisma } from './prisma';
-import { recordJobRun } from './metrics';
+import { incrementMetric, recordJobRun } from './metrics';
 import { fetchOSMData } from './overpass';
 import { roadsFromOSM } from './roadsFromOSM';
 import { dedupeRiddenRoads, filterRiddenRoadsToBbox } from './riddenRoads';
@@ -110,6 +110,7 @@ async function processJob(job: Job) {
                 done++;
             } catch (e: any) {
                 console.warn(`${ts()} RiddenRoads worker: tile ${tile} failed, will retry next tick: ${e.message}`);
+                incrementMetric('worker.ridden_roads.tile_failed');
             }
         });
         console.log(`${ts()} RiddenRoads worker: ${done}/${pending.length} tiles done for ${key}`);

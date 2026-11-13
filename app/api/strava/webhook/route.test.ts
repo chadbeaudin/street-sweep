@@ -11,6 +11,7 @@ jest.mock('@/lib/athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 import { GET, POST } from './route';
 import { prisma } from '@/lib/prisma';
 import { enqueueAthleteSync } from '@/lib/athleteSyncQueue';
+import * as metrics from '@/lib/metrics';
 
 const ORIGINAL_ENV = process.env;
 beforeEach(() => {
@@ -89,5 +90,16 @@ describe('POST /api/strava/webhook', () => {
         await post(event());
         expect(lastResponse()[1]?.status).toBe(403);
         expect(enqueueAthleteSync).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/strava/webhook metrics (#117)', () => {
+    it('counts rejected events and events for athletes it holds nothing for', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        await post(event({ subscription_id: 999 }));
+        expect(counted).toHaveBeenCalledWith('webhook.rejected');
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue(null);
+        await post(event());
+        expect(counted).toHaveBeenCalledWith('webhook.ignored');
     });
 });
