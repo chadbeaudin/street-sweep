@@ -164,6 +164,7 @@ export default function Home() {
     }, []);
     const [isEraserMode, setIsEraserMode] = useState(false);
     const [isAvoidMode, setIsAvoidMode] = useState(false);
+    const [isAvoidEraserMode, setIsAvoidEraserMode] = useState(false);
 
     // Cycling vs running (#88): filters which Strava activity types count as
     // "ridden" everywhere (map overlay, coverage stats, routing penalty).
@@ -2433,7 +2434,7 @@ export default function Home() {
                     <div className="flex items-center rounded-md border border-gray-300 overflow-hidden text-sm font-medium bg-white shadow-md">
                         <button
                             data-tour="mode-point"
-                            onClick={() => { setIsSelectionMode(false); setIsLassoMode(false); }}
+                            onClick={() => { setIsSelectionMode(false); setIsLassoMode(false); setIsAvoidEraserMode(false); }}
                             className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] transition-colors ${!isSelectionMode && !isLassoMode ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Point Mode (P)"
                         >
@@ -2444,7 +2445,7 @@ export default function Home() {
                         </button>
                         <div data-tour="mode-area-lasso" className="flex">
                             <button
-                                onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); }}
+                                onClick={() => { setIsSelectionMode(true); setIsLassoMode(false); setIsAvoidEraserMode(false); }}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isSelectionMode && !isLassoMode ? 'bg-amber-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                                 title="Area Selection (A)"
                             >
@@ -2454,7 +2455,7 @@ export default function Home() {
                                 Area
                             </button>
                             <button
-                                onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); }}
+                                onClick={() => { setIsLassoMode(true); setIsSelectionMode(false); setIsAvoidEraserMode(false); }}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isLassoMode ? 'bg-blue-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                                 title="Lasso Selection (L)"
                             >
@@ -2466,9 +2467,9 @@ export default function Home() {
                         </div>
                         <button
                             data-tour="mode-avoid"
-                            onClick={toggleAvoidMode}
+                            onClick={() => { setIsAvoidEraserMode(false); toggleAvoidMode(); }}
                             className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isAvoidMode ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-                            title="Click roads to mark them as avoided. Right-click a marked (red) section to remove just that one."
+                            title="Click roads to mark them as avoided. Right-click a marked section to remove just that one."
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 105.636 5.636a9 9 0 0012.728 12.728zM5.636 5.636l12.728 12.728" />
@@ -2476,15 +2477,20 @@ export default function Home() {
                             Avoid
                         </button>
                     </div>
-                    {routingOptions.avoidedRoads.length > 0 && (
+                    {(routingOptions.avoidedRoads.length > 0 || isAvoidEraserMode) && (
                         <button
-                            onClick={() => setRoutingOptions(prev => ({ ...prev, avoidedRoads: [] }))}
-                            className="flex items-center gap-1.5 px-2 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-md text-sm font-medium hover:bg-red-100 transition-colors shadow-md"
-                            title="Clear avoided roads"
+                            onClick={() => {
+                                if (!isAvoidEraserMode) {
+                                    if (isAvoidMode) toggleAvoidMode();
+                                    setIsSelectionMode(false);
+                                    setIsLassoMode(false);
+                                }
+                                setIsAvoidEraserMode(!isAvoidEraserMode);
+                            }}
+                            className={`flex items-center gap-1.5 px-2 py-1.5 max-md:min-h-[44px] border rounded-md text-sm font-medium transition-colors shadow-md ${isAvoidEraserMode ? 'bg-red-600 text-white border-red-600' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}
+                            title="Erase avoided roads: drag over a marked section to remove just that part"
                         >
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
+                            <Eraser className="w-4 h-4" />
                         </button>
                     )}
                     {(selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
@@ -2589,6 +2595,8 @@ export default function Home() {
                     avoidDraftPath={avoidDraftPath}
                     avoidDraftPoints={avoidDraftPoints}
                     onAvoidRoadDelete={(idx: number) => setRoutingOptions(ro => ({ ...ro, avoidedRoads: ro.avoidedRoads.filter((_, i) => i !== idx) }))}
+                    isAvoidEraserMode={isAvoidEraserMode}
+                    onAvoidedRoadsChange={setAvoidedRoads}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
                     onRouteHover={setRouteHoverPoint}
