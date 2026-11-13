@@ -78,6 +78,8 @@ beforeEach(() => {
 
 const sqlCalls = (pattern: RegExp) => mockExecuteRaw.mock.calls.filter(([sql]) => pattern.test(sql));
 
+import * as metrics from './metrics';
+
 describe('claimNextJob', () => {
     it('returns null when there is nothing to claim', async () => {
         mockFindFirst.mockResolvedValue(null);
@@ -186,5 +188,19 @@ describe('tickRiddenRoadsWorker', () => {
         mockFetchCyclingRiddenRoads.mockRejectedValue(new Error('strava down'));
         mockUpdate.mockRejectedValue(new Error('db also down'));
         await expect(tickRiddenRoadsWorker()).resolves.toEqual({ processed: true, key: 'athlete1' });
+    });
+});
+
+describe('tickRiddenRoadsWorker metrics (#117)', () => {
+    it('times a finished job and counts a failed one', async () => {
+        const recorded = jest.spyOn(metrics, 'recordJobRun');
+        mockFindFirst.mockResolvedValue(baseJob);
+        mockFindUnique.mockResolvedValue({ ...baseJob, status: 'running' });
+        await tickRiddenRoadsWorker();
+        expect(recorded).toHaveBeenLastCalledWith('ridden_roads', expect.any(Number), true);
+
+        mockFetchCyclingRiddenRoads.mockRejectedValue(new Error('strava down'));
+        await tickRiddenRoadsWorker();
+        expect(recorded).toHaveBeenLastCalledWith('ridden_roads', expect.any(Number), false);
     });
 });

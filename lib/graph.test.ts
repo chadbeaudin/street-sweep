@@ -2,6 +2,7 @@ import { StreetGraph, pointInPolygon, pointInAnyPolygon, pointNearOrInPolygon, g
 import { isRoutableHighway } from './highwayFilter';
 import { OverpassResponse } from './types';
 import { polylineSetFingerprint } from './riddenRoads';
+import * as metrics from './metrics';
 
 describe('StreetGraph', () => {
     let graph: StreetGraph;
@@ -2084,5 +2085,23 @@ describe('one-way streets (#82)', () => {
         const snap = { lat: 0, lon: 0.0004, u: 'A', v: 'B' };
         expect(applyEndpointSnap(coords, endPoint, snap, A, B, true, false)).toEqual(coords);
         expect(applyEndpointSnap(coords, endPoint, snap, A, B, false, true)).toEqual([...coords, { lat: 0, lon: 0.0004 }]);
+    });
+});
+
+describe('StreetGraph.getCachedGraph metrics (#117)', () => {
+    it('records a build as a miss and a reuse as a memory hit', () => {
+        const lookups = jest.spyOn(metrics, 'recordCacheLookup');
+        const bbox = { south: 10.001, west: 20.001, north: 10.002, east: 20.002 };
+        const data = {
+            version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 10.0011, lon: 20.0011 },
+                { type: 'node', id: 2, lat: 10.0015, lon: 20.0015 },
+                { type: 'way', id: 100, nodes: [1, 2], tags: { highway: 'residential' } },
+            ],
+        } as OverpassResponse;
+        StreetGraph.getCachedGraph(bbox, data);
+        StreetGraph.getCachedGraph(bbox, data);
+        expect(lookups.mock.calls).toEqual([['graph', 'miss'], ['graph', 'memory']]);
     });
 });

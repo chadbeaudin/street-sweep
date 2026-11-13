@@ -8,6 +8,7 @@ import { isRoutableHighway, bicycleTravelDirection } from './highwayFilter';
 import { haversineM } from './geometry';
 import { polylineSetFingerprint } from './riddenRoads';
 import { legalSnapEnds } from './stepPath';
+import { recordCacheLookup } from './metrics';
 
 interface NodeData {
     lat: number;
@@ -394,8 +395,10 @@ export class StreetGraph {
             // Re-insert so this counts as the most recently used entry and the
             // eviction below drops a genuinely cold graph instead of this one.
             setCachedGraph(key, cached);
+            recordCacheLookup('graph', 'memory');
             return cached.graph;
         }
+        recordCacheLookup('graph', 'miss');
         const newGraph = new StreetGraph();
         newGraph.buildFromOSM(data, riddenRoads, options);
         // Don't cache empty graphs — OSM data may have been transiently unavailable

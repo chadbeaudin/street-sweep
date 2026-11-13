@@ -308,6 +308,14 @@ describe('StatsDialog refresh from Strava', () => {
         expect(statsCalls()[1]).toMatchObject({ refresh: true, activityMode: 'cycling' });
     });
 
+    it('marks only the request made on opening as an open, so /admin counts opens and not polls or refreshes (#117)', async () => {
+        renderStats('imperial', { refreshedAt: hourAgo(), refreshing: false });
+        fireEvent.click(await screen.findByRole('button', { name: 'Refresh from Strava' }));
+        await waitFor(() => expect(statsCalls()).toHaveLength(2));
+        expect(statsCalls()[0].opened).toBe(true);
+        expect(statsCalls()[1].opened).toBeUndefined();
+    });
+
     it('keeps the overview on screen while refreshing', async () => {
         renderStats('imperial', { refreshedAt: hourAgo(), refreshing: false });
         fireEvent.click(await screen.findByRole('button', { name: 'Refresh from Strava' }));

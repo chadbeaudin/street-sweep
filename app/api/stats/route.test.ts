@@ -15,6 +15,7 @@ import { resolveAthleteId } from '@/lib/strava';
 import { prisma } from '@/lib/prisma';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { enqueueAthleteSync, hasPendingSync } from '@/lib/athleteSyncQueue';
+import * as metrics from '@/lib/metrics';
 
 const creds = { refreshToken: 'r' };
 const post = (body: unknown) => POST(new Request('http://localhost/api/stats', { method: 'POST', body: JSON.stringify(body) }));
@@ -108,5 +109,15 @@ describe('POST /api/stats (#118)', () => {
         await post({ stravaCredentials: { refreshToken: 'client-tok' } });
         expect(lastResponse()[1]?.status).toBe(401);
         expect(resolveAthleteId).not.toHaveBeenCalled();
+    });
+});
+
+describe('POST /api/stats metrics (#117)', () => {
+    it('counts the dialog opening, not its follow-up polls', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row());
+        await post({ opened: true });
+        await post({});
+        expect(counted.mock.calls.filter(([name]) => name === 'usage.stats_open')).toHaveLength(1);
     });
 });

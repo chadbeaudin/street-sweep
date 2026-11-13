@@ -1,4 +1,4 @@
-import { withApiMetrics } from '@/lib/metrics';
+import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { withRateLimit } from '@/lib/rateLimit';
 import { NextResponse } from 'next/server';
 import { calculateElevationProfile } from '@/lib/elevation';
@@ -83,6 +83,7 @@ async function handlePOST(request: Request) {
             return NextResponse.json({ error: 'Route file contains fewer than 2 valid coordinates' }, { status: 422 });
         }
 
+        incrementMetric(`usage.import.${name.slice(name.lastIndexOf('.') + 1)}`);
         const lonLats = coords.map(c => [c[0], c[1]] as [number, number]);
         const elevations = coords.map(c => (c.length > 2 ? (c as [number, number, number])[2] : 0));
         const elevationProfile = calculateElevationProfile(lonLats, elevations);

@@ -10,6 +10,7 @@ jest.mock('@/lib/rwgps', () => ({
 import { POST } from './route';
 import { getServerSession } from 'next-auth';
 import { fetchRouteGpx } from '@/lib/rwgps';
+import * as metrics from '@/lib/metrics';
 
 const mockedSession = getServerSession as jest.Mock;
 const ROUTE = [[-117.42, 47.65, 600], [-117.43, 47.66, 610]];
@@ -37,11 +38,13 @@ describe('POST /api/rwgps/load-route (#190)', () => {
         expect(fetchRouteGpx).not.toHaveBeenCalled();
     });
 
-    it('loads and parses the route for a signed-in caller', async () => {
+    it('loads and parses the route for a signed-in caller, counting it as a library import (#117)', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
         (fetchRouteGpx as jest.Mock).mockResolvedValue({ gpx: GPX, name: 'Loop' });
         const res = await post({ accessToken: 'tok', routeId: 5 }) as any;
         expect(fetchRouteGpx).toHaveBeenCalledWith('tok', 5);
         expect(res._data.routeName).toBe('Loop');
         expect(res._data.coordinates).toHaveLength(2);
+        expect(counted).toHaveBeenCalledWith('usage.import.library');
     });
 });

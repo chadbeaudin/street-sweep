@@ -1,4 +1,4 @@
-import { withApiMetrics } from '@/lib/metrics';
+import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { z } from 'zod';
@@ -28,6 +28,7 @@ async function handlePOST(req: Request) {
             return NextResponse.json({ error: 'RideWithGPS route contains fewer than 2 valid coordinates' }, { status: 422 });
         }
 
+        incrementMetric('usage.import.library');
         const lonLats = coords.map(c => [c[0], c[1]] as [number, number]);
         const elevations = coords.map(c => (c.length > 2 ? (c as [number, number, number])[2] : 0));
         const elevationProfile = calculateElevationProfile(lonLats, elevations);

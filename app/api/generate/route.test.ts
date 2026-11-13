@@ -11,15 +11,15 @@ jest.mock('@/lib/graph', () => ({
     StreetGraph: { getCachedGraph: jest.fn() },
     filterRiddenRoadsToBbox: jest.fn((riddenRoads: any) => riddenRoads ?? null),
 }));
-jest.mock('@/lib/elevation', () => ({
-    fetchElevationData: jest.fn(),
-    calculateElevationProfile: jest.fn(),
-}));
+jest.mock('@/lib/elevation', () => ({ calculateElevationProfile: jest.fn() }));
+jest.mock('@/lib/elevationFetch', () => ({ fetchElevationData: jest.fn() }));
 
 import { POST } from './route';
 import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
-import { fetchElevationData, calculateElevationProfile } from '@/lib/elevation';
+import { calculateElevationProfile } from '@/lib/elevation';
+import { fetchElevationData } from '@/lib/elevationFetch';
+import * as metrics from '@/lib/metrics';
 
 const mockedFetchOSM = fetchOSMData as jest.MockedFunction<typeof fetchOSMData>;
 const mockedGetCachedGraph = StreetGraph.getCachedGraph as jest.MockedFunction<typeof StreetGraph.getCachedGraph>;
@@ -139,5 +139,32 @@ describe('POST /api/generate', () => {
         expect(solveCPPSpy).toHaveBeenCalled();
         const endPointArg = solveCPPSpy.mock.calls[0][1];
         expect(endPointArg).toBeUndefined();
+    });
+});
+
+describe('POST /api/generate metrics (#117)', () => {
+    it('records the route kind, its region, solve time and length', async () => {
+        const recorded = jest.spyOn(metrics, 'recordGeneratedRoute');
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        mockedGetCachedGraph.mockReturnValueOnce({ solveCPP: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]) } as any);
+        mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[-104.7, 39.02]] } as any);
+        mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 7.5 } as any]);
+
+        await POST(makeRequest({ bbox: validBbox, selectionBoxes: [{ north: 39.025, south: 39.015, east: -104.695, west: -104.705 }] }));
+
+        expect(recorded).toHaveBeenCalledWith('area', expect.closeTo(39.02, 1), expect.closeTo(-104.7, 1), 7.5, expect.any(Number));
+    });
+
+    it('counts a point route rejected for spanning too far', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        await POST(makeRequest({ bbox: validBbox, selectedPoints: [{ lat: 39.0, lon: -104.7 }, { lat: 40.5, lon: -104.7 }] }));
+        expect(counted).toHaveBeenCalledWith('cpp.too_large.span');
+    });
+
+    it('counts an area rejected as too large', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [], skippedTooLarge: true } as any);
+        await POST(makeRequest({ bbox: validBbox, selectionBoxes: [{ north: 39.6, south: 39.0, east: -104.0, west: -104.7 }] }));
+        expect(counted).toHaveBeenCalledWith('cpp.too_large.area');
     });
 });

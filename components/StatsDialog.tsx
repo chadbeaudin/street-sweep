@@ -193,7 +193,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                 const res = await fetch('/api/stats', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ stravaCredentials, activityMode, ...(refresh && { refresh: true }) })
+                    body: JSON.stringify({ stravaCredentials, activityMode, ...(refresh && { refresh: true }), ...(isInitial && { opened: true }) })
                 });
                 const data = await res.json();
                 if (cancelled) return;

@@ -1,7 +1,7 @@
 jest.mock('./prisma', () => ({ prisma: { account: { updateMany: jest.fn() } } }));
 jest.mock('@auth/prisma-adapter', () => ({ PrismaAdapter: () => ({}) }));
 jest.mock('./tokenCrypto', () => ({ encryptToken: (t: string) => `enc:${t}` }));
-jest.mock('./metrics', () => ({ touchUserLastSeen: jest.fn(), incrementMetric: jest.fn() }));
+jest.mock('./metrics', () => ({ ...jest.requireActual('./metrics'), touchUserLastSeen: jest.fn(), incrementMetric: jest.fn() }));
 jest.mock('./userAlerts', () => ({ alertNewUser: jest.fn(), alertUserActive: jest.fn() }));
 
 process.env.STRAVA_CLIENT_ID = 'client';

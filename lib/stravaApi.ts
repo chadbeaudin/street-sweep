@@ -1,4 +1,4 @@
-import { incrementMetric } from './metrics';
+import { outcomeForStatus, recordExternalCall } from './metrics';
 
 // Every Strava call goes through here so the app-wide rate limit, shared by
 // prod, the worker and local dev (#148), shows up in the logs as it's spent.
@@ -22,13 +22,18 @@ export function describeRateLimit(headers: Headers | undefined): string | null {
 const endpointOf = (url: string) => new URL(url).pathname.replace(/\/\d+(?=\/|$)/g, '/:id');
 
 export async function stravaFetch(url: string, init?: RequestInit): Promise<Response> {
-    const res = await fetch(url, init);
+    let res: Response;
+    try {
+        res = await fetch(url, init);
+    } catch (e) {
+        recordExternalCall('strava', 'error');
+        throw e;
+    }
+    recordExternalCall('strava', outcomeForStatus(res.status));
     const method = init?.method ?? 'GET';
     const line = `[Strava] ${method} ${endpointOf(url)} ${res.status}`;
     const usage = describeRateLimit(res.headers);
-    incrementMetric('strava.requests');
     if (res.status === 429) {
-        incrementMetric('strava.429');
         console.warn(`${line} RATE LIMITED${usage ? ` · ${usage}` : ''}`);
     } else {
         console.log(usage ? `${line} · ${usage}` : line);

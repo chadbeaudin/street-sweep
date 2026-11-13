@@ -5,6 +5,7 @@
 // or block the whole app's event loop for 10+ minutes (a real prod incident);
 // see lib/riddenRoadsRefresh.ts's own comment for the full story.
 import { prisma } from './prisma';
+import { recordJobRun } from './metrics';
 import { fetchOSMData } from './overpass';
 import { roadsFromOSM } from './roadsFromOSM';
 import { dedupeRiddenRoads, filterRiddenRoadsToBbox } from './riddenRoads';
@@ -127,10 +128,13 @@ async function processJob(job: Job) {
 export async function tickRiddenRoadsWorker(): Promise<{ processed: boolean; key?: string }> {
     const job = await claimNextJob();
     if (!job) return { processed: false };
+    const start = Date.now();
     try {
         await processJob(job);
+        recordJobRun('ridden_roads', Date.now() - start, true);
         return { processed: true, key: job.key };
     } catch (e: any) {
+        recordJobRun('ridden_roads', Date.now() - start, false);
         console.warn(`${ts()} RiddenRoads worker: job ${job.key} failed: ${e.message}`);
         await prisma.riddenRoadsJob.update({ where: { key: job.key }, data: { status: 'failed', error: e.message } }).catch(() => {});
         return { processed: true, key: job.key };

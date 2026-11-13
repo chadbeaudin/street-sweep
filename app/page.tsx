@@ -840,18 +840,18 @@ export default function Home() {
         return () => clearTimeout(timer);
     }, [manualRoute, selectionBoxes, selectionPolygons, routingOptions, handleGenerate, selectedPoints.length, activeSteps]);
 
-    const recordExport = () => {
+    const recordExport = (format: 'gpx' | 'fit' | 'garmin' | 'library') => {
         if (!route) return;
         fetch('/api/exported-routes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ route }),
-        }).catch(() => { /* best effort: only used to credit a later Strava ride */ });
+            body: JSON.stringify({ route, format }),
+        }).catch(() => { /* best effort: credits a later Strava ride and counts exports for /admin */ });
     };
 
     const downloadGPX = async () => {
         if (!route) return;
-        recordExport();
+        recordExport('gpx');
         const gpx = buildGpxCourse(route, routeName);
         await shareOrDownloadGpx(gpx, 'route.gpx');
     };
@@ -868,7 +868,7 @@ export default function Home() {
                 body: JSON.stringify({ route, name: routeName }),
             });
             if (!res.ok) throw new Error('FIT export failed');
-            recordExport();
+            recordExport('fit');
             const blob = await res.blob();
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -901,7 +901,7 @@ export default function Home() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Garmin upload failed');
-            recordExport();
+            recordExport('garmin');
             setShowGarminSettings(false);
             alert('Route uploaded successfully! It will now appear in your Garmin Courses.');
         } catch (err: any) {
@@ -963,7 +963,7 @@ export default function Home() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'RideWithGPS update failed');
-            recordExport();
+            recordExport('library');
             setRwgpsSourceRouteId(data.routeId);
             setRwgpsUploadResult({ routeUrl: data.routeUrl });
         } catch (err: any) {
@@ -1009,7 +1009,7 @@ export default function Home() {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'RideWithGPS upload failed');
-            recordExport();
+            recordExport('library');
             setRwgpsUploadResult({ routeUrl: data.routeUrl });
         } catch (err: any) {
             console.error('RideWithGPS upload error:', err);

@@ -1,4 +1,5 @@
 import { consume, clientIp, withRateLimit, resetRateLimits, RATE_LIMITS } from './rateLimit';
+import * as metrics from './metrics';
 
 const T = 1_000_000;
 const req = (headers: Record<string, string> = {}) => new Request('http://localhost/api/test', { method: 'POST', headers });
@@ -64,5 +65,14 @@ describe('withRateLimit (#193)', () => {
 
         expect((await importLimited(req({ 'fly-client-ip': '2.2.2.2' }))).status).toBe(200);
         expect((await withRateLimit('generate', handler)(req({ 'fly-client-ip': '1.1.1.1' }))).status).toBe(200);
+    });
+});
+
+describe('withRateLimit metrics (#117)', () => {
+    it('counts each rejected request against its route', async () => {
+        const counted = jest.spyOn(metrics, 'incrementMetric');
+        const limited = withRateLimit('import', jest.fn(async () => new Response('ok')));
+        for (let i = 0; i <= RATE_LIMITS.import; i++) await limited(req({ 'fly-client-ip': '9.9.9.9' }));
+        expect(counted.mock.calls.filter(([name]) => name === 'ratelimit.import')).toHaveLength(1);
     });
 });
