@@ -204,7 +204,8 @@ export default function Home() {
     const [garminCredentials, setGarminCredentials] = useState<any>(undefined);
     const [isGarminUploading, setIsGarminUploading] = useState(false);
     const [showRwgpsSettings, setShowRwgpsSettings] = useState(false);
-    const [rwgpsCredentials, setRwgpsCredentials] = useState<any>(undefined);
+    const [rwgpsConnected, setRwgpsConnected] = useState(false);
+    const pendingRwgpsPromptRef = useRef(false);
     const [isRwgpsUploading, setIsRwgpsUploading] = useState(false);
     const [showRouteNameDialog, setShowRouteNameDialog] = useState(false);
     const [rwgpsUploadResult, setRwgpsUploadResult] = useState<{ routeUrl: string } | null>(null);
@@ -397,9 +398,8 @@ export default function Home() {
         const savedGarminEmail = localStorage.getItem('garmin_email');
         setGarminCredentials(savedGarminEmail ? { email: savedGarminEmail } : {});
 
-        const savedRwgpsSettings = localStorage.getItem('rwgps_settings');
-        const rwgpsSettings = savedRwgpsSettings ? JSON.parse(savedRwgpsSettings) : {};
-        setRwgpsCredentials(rwgpsSettings);
+        // The token now lives server-side (#194); drop any copy an older version left here.
+        localStorage.removeItem('rwgps_settings');
 
         const pendingRwgpsRoute = sessionStorage.getItem('rwgps_pending_route');
         if (pendingRwgpsRoute) {
@@ -407,9 +407,7 @@ export default function Home() {
             const { route: pendingRoute, name: pendingName } = JSON.parse(pendingRwgpsRoute);
             setRoute(pendingRoute);
             if (pendingName) setRouteName(pendingName);
-            if (rwgpsSettings?.accessToken) {
-                setShowRouteNameDialog(true);
-            }
+            pendingRwgpsPromptRef.current = true;
         }
     }, []);
 
@@ -417,6 +415,21 @@ export default function Home() {
     // granted activity access (lib/auth.ts), and the server resolves the token
     // from the session, so the client only carries a `sessionLinked` marker.
     // Runs once per distinct athleteId and reverses itself on sign-out.
+    useEffect(() => {
+        if (sessionStatus !== 'authenticated') {
+            setRwgpsConnected(false);
+            return;
+        }
+        fetch('/api/rwgps/status')
+            .then(res => res.json())
+            .then(({ connected }) => {
+                setRwgpsConnected(!!connected);
+                if (connected && pendingRwgpsPromptRef.current) setShowRouteNameDialog(true);
+                pendingRwgpsPromptRef.current = false;
+            })
+            .catch(() => setRwgpsConnected(false));
+    }, [sessionStatus]);
+
     const syncedAthleteIdRef = useRef<string | null>(null);
     useEffect(() => {
         const athleteId = (session?.user as any)?.athleteId as string | undefined;
@@ -922,7 +935,7 @@ export default function Home() {
     };
 
     const doSendToRwgps = () => {
-        if (!rwgpsCredentials?.accessToken) {
+        if (!rwgpsConnected) {
             if (route) {
                 sessionStorage.setItem('rwgps_pending_route', JSON.stringify({ route, name: routeName }));
             }
@@ -968,7 +981,7 @@ export default function Home() {
             const res = await fetch('/api/rwgps/save-route', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ route, name, accessToken: rwgpsCredentials.accessToken, oldRouteId: rwgpsSourceRouteId }),
+                body: JSON.stringify({ route, name, oldRouteId: rwgpsSourceRouteId }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'RideWithGPS update failed');
@@ -1015,7 +1028,7 @@ export default function Home() {
             const res = await fetch('/api/export/rwgps', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ route, name, accessToken: rwgpsCredentials.accessToken }),
+                body: JSON.stringify({ route, name }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'RideWithGPS upload failed');
@@ -1106,14 +1119,14 @@ export default function Home() {
     }, [applyParsedRoute]);
 
     const handleSelectRwgpsRoute = useCallback(async (routeId: number, routeNameFromLibrary: string) => {
-        if (!rwgpsCredentials?.accessToken) return;
+        if (!rwgpsConnected) return;
         setIsLoadingRwgpsRoute(true);
         setError(null);
         try {
             const res = await fetch('/api/rwgps/load-route', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ accessToken: rwgpsCredentials.accessToken, routeId }),
+                body: JSON.stringify({ routeId }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Failed to load route from RideWithGPS');
@@ -1127,7 +1140,7 @@ export default function Home() {
         } finally {
             setIsLoadingRwgpsRoute(false);
         }
-    }, [applyParsedRoute, rwgpsCredentials]);
+    }, [applyParsedRoute, rwgpsConnected]);
 
     const isDraggingRef = useRef(false);
 
@@ -1734,12 +1747,12 @@ export default function Home() {
                     when the route-dependent group on the right grows. */}
                 <div className="hidden md:flex items-center gap-3 ml-6 mr-auto">
                     <RwgpsHeaderButton
-                        isConnected={!!rwgpsCredentials?.accessToken}
+                        isConnected={rwgpsConnected}
                         isLoading={isRwgpsUploading}
                         onClick={() => setShowRwgpsSettings(true)}
                     />
 
-                    {rwgpsCredentials?.accessToken && (
+                    {rwgpsConnected && (
                         <button
                             onClick={() => setShowRwgpsLibrary(true)}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm mr-2"
@@ -2168,9 +2181,9 @@ export default function Home() {
                                         onClick={() => { setShowRwgpsSettings(true); setShowMobileMenu(false); }}
                                         className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                                     >
-                                        {rwgpsCredentials?.accessToken ? 'RideWithGPS' : 'Connect RideWithGPS'}
+                                        {rwgpsConnected ? 'RideWithGPS' : 'Connect RideWithGPS'}
                                     </button>
-                                    {rwgpsCredentials?.accessToken && (
+                                    {rwgpsConnected && (
                                         <button
                                             onClick={() => { setShowRwgpsLibrary(true); setShowMobileMenu(false); }}
                                             className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center"
@@ -2615,14 +2628,13 @@ export default function Home() {
                 <RwgpsSettingsDialog
                     isOpen={showRwgpsSettings}
                     onClose={() => setShowRwgpsSettings(false)}
-                    isConnected={!!rwgpsCredentials?.accessToken}
+                    isConnected={rwgpsConnected}
                 />
 
-                {rwgpsCredentials?.accessToken && (
+                {rwgpsConnected && (
                     <RwgpsLibraryDialog
                         isOpen={showRwgpsLibrary}
                         onClose={() => setShowRwgpsLibrary(false)}
-                        accessToken={rwgpsCredentials.accessToken}
                         isLoadingRoute={isLoadingRwgpsRoute}
                         onSelectRoute={handleSelectRwgpsRoute}
                     />

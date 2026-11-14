@@ -21,7 +21,6 @@ interface RwgpsLibraryTree {
 interface RwgpsLibraryDialogProps {
     isOpen: boolean;
     onClose: () => void;
-    accessToken: string;
     isLoadingRoute: boolean;
     onSelectRoute: (routeId: number, routeName: string) => void;
 }
@@ -68,7 +67,7 @@ function CollectionNode({ collection, isLoadingRoute, onSelectRoute }: { collect
     );
 }
 
-export function RwgpsLibraryDialog({ isOpen, onClose, accessToken, isLoadingRoute, onSelectRoute }: RwgpsLibraryDialogProps) {
+export function RwgpsLibraryDialog({ isOpen, onClose, isLoadingRoute, onSelectRoute }: RwgpsLibraryDialogProps) {
     const [tree, setTree] = useState<RwgpsLibraryTree | null>(null);
     const [isLoadingTree, setIsLoadingTree] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -77,11 +76,7 @@ export function RwgpsLibraryDialog({ isOpen, onClose, accessToken, isLoadingRout
         if (!isOpen) return;
         setIsLoadingTree(true);
         setError(null);
-        fetch('/api/rwgps/library', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ accessToken }),
-        })
+        fetch('/api/rwgps/library', { method: 'POST' })
             .then(res => res.json())
             .then(data => {
                 if (data.error) throw new Error(data.error);
@@ -92,7 +87,7 @@ export function RwgpsLibraryDialog({ isOpen, onClose, accessToken, isLoadingRout
                 setError(err.message || 'Failed to load your RideWithGPS library');
             })
             .finally(() => setIsLoadingTree(false));
-    }, [isOpen, accessToken]);
+    }, [isOpen]);
 
     if (!isOpen) return null;
 

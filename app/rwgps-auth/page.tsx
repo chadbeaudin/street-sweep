@@ -36,8 +36,7 @@ function RwgpsAuthCallback() {
         })
             .then(res => res.json())
             .then(data => {
-                if (data.access_token) {
-                    localStorage.setItem('rwgps_settings', JSON.stringify({ accessToken: data.access_token }));
+                if (data.connected) {
                     setStatus('Successfully connected to RideWithGPS! Redirecting to map...');
                     setTimeout(() => router.push('/'), 1500);
                 } else {

@@ -1,7 +1,9 @@
 const mockJson = jest.fn();
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
+jest.mock('@/lib/rwgpsToken', () => ({ sessionUserId: jest.fn(), saveRwgpsToken: jest.fn() }));
 
 import { POST } from './route';
+import { sessionUserId, saveRwgpsToken } from '@/lib/rwgpsToken';
 
 const post = (body: unknown, cookie = 'rwgps_oauth_state=st8') => POST(new Request('http://localhost/api/rwgps/exchange', { method: 'POST', body: JSON.stringify(body), headers: { cookie } }));
 const mockCookieSet = jest.fn();
@@ -11,14 +13,16 @@ beforeEach(() => {
     process.env = { ...ORIGINAL_ENV, RWGPS_OAUTH_CLIENT_ID: 'id', RWGPS_OAUTH_CLIENT_SECRET: 'secret', NEXT_PUBLIC_BASE_URL: 'https://example.test' };
     mockJson.mockImplementation((data: unknown, init?: { status?: number }) => ({ status: init?.status ?? 200, _data: data, cookies: { set: mockCookieSet } }));
     jest.spyOn(console, 'error').mockImplementation(() => {});
+    (sessionUserId as jest.Mock).mockResolvedValue('user-1');
 });
 afterEach(() => { process.env = ORIGINAL_ENV; jest.restoreAllMocks(); });
 
 describe('POST /api/rwgps/exchange (#196)', () => {
-    it('returns only the access token on success', async () => {
+    it('stores the token server-side and never returns it (#194)', async () => {
         global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ access_token: 'tok', refresh_token: 'r', user_id: 5 }) }) as unknown as typeof fetch;
         await post({ code: 'c', state: 'st8' });
-        expect(mockJson).toHaveBeenLastCalledWith({ access_token: 'tok' });
+        expect(saveRwgpsToken).toHaveBeenCalledWith('user-1', 'tok');
+        expect(mockJson).toHaveBeenLastCalledWith({ connected: true });
         expect(mockCookieSet).toHaveBeenCalledWith('rwgps_oauth_state', '', { maxAge: 0, path: '/' });
     });
 
@@ -32,6 +36,14 @@ describe('POST /api/rwgps/exchange (#196)', () => {
         global.fetch = jest.fn().mockRejectedValue(new TypeError('getaddrinfo ENOTFOUND ridewithgps.com')) as unknown as typeof fetch;
         await post({ code: 'c', state: 'st8' });
         expect(mockJson).toHaveBeenLastCalledWith({ error: 'Connecting to RideWithGPS failed. Try again.' }, { status: 500 });
+    });
+
+    it('rejects a caller with no session before contacting RideWithGPS (#194)', async () => {
+        (sessionUserId as jest.Mock).mockResolvedValue(null);
+        global.fetch = jest.fn() as unknown as typeof fetch;
+        await post({ code: 'c', state: 'st8' });
+        expect(mockJson).toHaveBeenLastCalledWith({ error: 'Sign in to use RideWithGPS' }, { status: 401 });
+        expect(global.fetch).not.toHaveBeenCalled();
     });
 
     it('rejects a missing or mismatched state before contacting RideWithGPS (#195)', async () => {

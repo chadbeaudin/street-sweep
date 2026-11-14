@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { errorResponse } from '@/lib/apiErrors';
 import { configuredBaseUrl } from '@/lib/baseUrl';
 import { safeEqual } from '@/lib/secureCompare';
+import { sessionUserId, saveRwgpsToken } from '@/lib/rwgpsToken';
 
 const STATE_COOKIE = 'rwgps_oauth_state';
 
@@ -15,6 +16,9 @@ function readCookie(req: Request, name: string): string | undefined {
 
 async function handlePOST(req: Request) {
     try {
+        const userId = await sessionUserId();
+        if (!userId) return NextResponse.json({ error: 'Sign in to use RideWithGPS' }, { status: 401 });
+
         const { code, state } = await req.json();
 
         const expectedState = readCookie(req, STATE_COOKIE);
@@ -54,7 +58,8 @@ async function handlePOST(req: Request) {
             return NextResponse.json({ error: 'Connecting to RideWithGPS failed. Try again.' }, { status: response.status });
         }
 
-        const ok = NextResponse.json({ access_token: data.access_token });
+        await saveRwgpsToken(userId, data.access_token);
+        const ok = NextResponse.json({ connected: true });
         ok.cookies.set(STATE_COOKIE, '', { maxAge: 0, path: '/' });
         return ok;
     } catch (error: any) {

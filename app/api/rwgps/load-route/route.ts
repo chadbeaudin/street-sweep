@@ -1,27 +1,26 @@
 import { withApiMetrics, incrementMetric } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { errorResponse } from '@/lib/apiErrors';
-import { getServerSession } from 'next-auth';
 import { z } from 'zod';
-import { authOptions } from '@/lib/auth';
+import { sessionUserId, getRwgpsToken } from '@/lib/rwgpsToken';
 import { calculateElevationProfile } from '@/lib/elevation';
 import { parseGpxTrack } from '@/lib/gpx';
-import { fetchRouteGpx, RwgpsAccessToken, RwgpsRouteId } from '@/lib/rwgps';
+import { fetchRouteGpx, RwgpsRouteId } from '@/lib/rwgps';
 import { parseBody } from '@/lib/validation';
 
-const Body = z.object({ accessToken: RwgpsAccessToken, routeId: RwgpsRouteId });
+const Body = z.object({ routeId: RwgpsRouteId });
 
 async function handlePOST(req: Request) {
     try {
         // Without this, anyone could drive the RideWithGPS API with the server's API key (#190).
-        const session = await getServerSession(authOptions);
-        if (!(session?.user as { id?: string } | undefined)?.id) {
-            return NextResponse.json({ error: 'Sign in to use RideWithGPS' }, { status: 401 });
-        }
+        const userId = await sessionUserId();
+        if (!userId) return NextResponse.json({ error: 'Sign in to use RideWithGPS' }, { status: 401 });
+        const accessToken = await getRwgpsToken(userId);
+        if (!accessToken) return NextResponse.json({ error: 'Connect RideWithGPS first' }, { status: 401 });
 
         const parsed = await parseBody(req, Body);
         if ('error' in parsed) return parsed.error;
-        const { accessToken, routeId } = parsed.data;
+        const { routeId } = parsed.data;
 
         const { gpx, name } = await fetchRouteGpx(accessToken, routeId);
         const coords = parseGpxTrack(gpx);
