@@ -224,7 +224,7 @@ export default function Home() {
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
     const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
-    const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceM: number } | null>(null);
+    const [suggestion, setSuggestion] = useState<{ distanceM: number; gainM: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
@@ -2411,7 +2411,7 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur pl-5 pr-2 py-1.5 rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 max-w-[calc(100%-32px)]">
                         <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
                         <span className="text-sm text-indigo-900 truncate">
-                            About {distanceFromMeters(suggestion.distanceM, units).toFixed(1)} {distanceUnit(units)} with similar climbing to &ldquo;{suggestion.rideName}&rdquo;, {suggestion.timesRidden > 1 ? `your most-ridden route (${suggestion.timesRidden} rides)` : 'your most recent ride'}
+                            About {distanceFromMeters(suggestion.distanceM, units).toFixed(1)} {distanceUnit(units)} with similar climbing ({Math.round(elevationFromFeet(suggestion.gainM / 0.3048, units)).toLocaleString()} {elevationUnit(units)}) to your usual rides
                         </span>
                         <button onClick={() => setSuggestion(null)} className="p-1 rounded-full hover:bg-indigo-50 text-indigo-700 shrink-0" title="Dismiss">
                             <X className="w-4 h-4" />

@@ -61,7 +61,7 @@ describe('POST /api/suggest (#80)', () => {
         expect(planLoop).toHaveBeenCalledWith(graph, HOME, { distanceM: 30_000, gainM: 350 }, expect.any(Map), expect.any(Function));
         expect(graph.buildRiddenPenaltyMap).toHaveBeenCalledWith(6);
         const data = lastResponse()[0];
-        expect(data).toMatchObject({ distanceM: 29_000, gainM: 380, usual: { rideName: 'Usual', timesRidden: 2, distanceM: 30_000 } });
+        expect(data).toMatchObject({ distanceM: 29_000, gainM: 380, usual: { rideName: 'Usual', timesRidden: 2, distanceM: 30_000, gainM: 400 } });
         expect(data.waypoints[0]).toEqual(HOME);
         expect(data.waypoints[data.waypoints.length - 1]).toEqual(HOME);
         expect(data.waypoints.length).toBeGreaterThan(8);

@@ -39,6 +39,10 @@ describe('suggest a route progress (#80)', () => {
         expect(page).toContain('suggestStart={suggestStart}');
         expect(page).toMatch(/\{isSuggesting && \(\s+<div[^>]*>\s+<Loader2/);
     });
+
+    it("states the usual rides' distance and climbing in the user's units", () => {
+        expect(page).toContain('with similar climbing ({Math.round(elevationFromFeet(suggestion.gainM / 0.3048, units)).toLocaleString()} {elevationUnit(units)}) to your usual rides');
+    });
 });
 
 describe('road payload encoding (#181)', () => {

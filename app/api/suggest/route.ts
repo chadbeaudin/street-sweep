@@ -63,7 +63,7 @@ async function handlePOST(request: Request) {
             waypoints,
             distanceM: loop.distanceM,
             gainM: loop.gainM,
-            usual: { rideName: ride.name, timesRidden, distanceM: ride.distanceM },
+            usual: { rideName: ride.name, timesRidden, distanceM: ride.distanceM, gainM: ride.elevationGainM },
         });
     } catch (error: any) {
         return errorResponse(error, 'Suggest route error:', "Couldn't suggest a route. Try again in a moment.");
