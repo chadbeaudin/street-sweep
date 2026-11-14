@@ -5,6 +5,9 @@ export async function register() {
         const version = process.env.APP_VERSION || process.env.npm_package_version || 'unknown';
         console.log(`\n\x1b[32m ✓\x1b[0m StreetSweep version: \x1b[36m${version}\x1b[0m\n`);
 
+        const { clearRouteCache } = await import('./lib/routeCache');
+        if (clearRouteCache()) console.log('Cleared cached pages from a previous build (#218)');
+
         // Warns ahead of an out-of-memory crash, which Fly only reports afterwards (#117).
         const { getHeapStatistics } = await import('v8');
         const { processLabel, recordHeapSample } = await import('./lib/metrics');
