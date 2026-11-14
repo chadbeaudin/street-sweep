@@ -223,6 +223,7 @@ export default function Home() {
     const [isImporting, setIsImporting] = useState(false);
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
+    const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
     const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceM: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -1652,6 +1653,7 @@ export default function Home() {
     // ordinary points so the point router connects them preferring unridden streets.
     const handleSuggestRoute = useCallback(async (start: { lat: number; lon: number }) => {
         setPickingSuggestStart(false);
+        setSuggestStart(start);
         setIsSuggesting(true);
         setError(null);
         try {
@@ -1672,6 +1674,7 @@ export default function Home() {
             setError({ message: err.message });
         } finally {
             setIsSuggesting(false);
+            setSuggestStart(null);
         }
     }, [activityMode, addPoint, clearPoints]);
 
@@ -2396,11 +2399,19 @@ export default function Home() {
                         </span>
                     </div>
                 )}
+                {isSuggesting && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 max-w-[calc(100%-32px)]">
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+                        <span className="text-sm font-bold text-indigo-900 tracking-tight">
+                            Planning a ride like your usual one&hellip; this can take up to a minute
+                        </span>
+                    </div>
+                )}
                 {suggestion && !(activeSteps > 0 || isAutoGenerating) && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur pl-5 pr-2 py-1.5 rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 max-w-[calc(100%-32px)]">
                         <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
                         <span className="text-sm text-indigo-900 truncate">
-                            About {distanceFromMeters(suggestion.distanceM, units).toFixed(1)} {distanceUnit(units)} with similar climbing to your usual &ldquo;{suggestion.rideName}&rdquo;{suggestion.timesRidden > 1 ? ` (ridden ${suggestion.timesRidden} times)` : ''}
+                            About {distanceFromMeters(suggestion.distanceM, units).toFixed(1)} {distanceUnit(units)} with similar climbing to &ldquo;{suggestion.rideName}&rdquo;, {suggestion.timesRidden > 1 ? `your most-ridden route (${suggestion.timesRidden} rides)` : 'your most recent ride'}
                         </span>
                         <button onClick={() => setSuggestion(null)} className="p-1 rounded-full hover:bg-indigo-50 text-indigo-700 shrink-0" title="Dismiss">
                             <X className="w-4 h-4" />
@@ -2412,7 +2423,7 @@ export default function Home() {
                     first-time connect (isStravaLoading clears once the raw activity list is
                     fetched) landed the user on what looked like a plain, empty map for up to
                     several minutes while the server-side ridden-road overlay was still computing. */}
-                {showRiddenMatchingNotice && !isStravaLoading && (
+                {showRiddenMatchingNotice && !isStravaLoading && !isSuggesting && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="relative flex items-center justify-center">
                             <div className="w-3 h-3 bg-[#FC4C02] rounded-full animate-ping absolute"></div>
@@ -2676,6 +2687,7 @@ export default function Home() {
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
                     fitBoundsRequest={fitBoundsRequest}
+                    suggestStart={suggestStart}
                     onRouteHover={setRouteHoverPoint}
                 />
 
