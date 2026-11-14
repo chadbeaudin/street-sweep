@@ -1,6 +1,6 @@
 {
   "name": "street-sweep",
-  "version": "0.7.124",
+  "version": "0.7.125",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3888",
