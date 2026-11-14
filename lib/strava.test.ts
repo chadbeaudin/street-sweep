@@ -20,7 +20,7 @@ jest.mock('./prisma', () => ({
 
 jest.mock('./athleteSyncQueue', () => ({ enqueueAthleteSync: jest.fn() }));
 
-import { fetchActivitiesForYear, resolveAthleteId, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes, getStravaAccessToken, StravaTokenRejectedError } from './strava';
+import { fetchActivitiesForYear, fetchRideTracks, resolveAthleteId, fetchCyclingRiddenRoads, forceSyncStravaActivities, fetchStravaActivity, fetchFtpReadings, fetchGearFrameTypes, getStravaAccessToken, StravaTokenRejectedError } from './strava';
 import { prisma } from './prisma';
 import { enqueueAthleteSync } from './athleteSyncQueue';
 import * as metrics from './metrics';
@@ -558,6 +558,32 @@ describe('fetchGearFrameTypes (#136)', () => {
         expect(gearCalls()).toHaveLength(0);
         expect(Object.fromEntries(await fetchGearFrameTypes(creds, ['mtb1', 'gone1']))).toEqual({ mtb1: 1 });
         expect(gearCalls().map(([u]) => u)).toEqual(['https://www.strava.com/api/v3/gear/gone1']);
+    });
+});
+
+describe('fetchRideTracks (#80)', () => {
+    const STATIONARY_POLYLINE = require('@mapbox/polyline').encode([[47.65, -117.42], [47.65001, -117.42001]]);
+
+    beforeEach(() => {
+        global.fetch = jest.fn((url: string) => {
+            if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
+            if (url.includes('/athlete')) return Promise.resolve({ ok: true, json: async () => ({ id: 999 }) });
+            throw new Error('unexpected fetch: ' + url);
+        }) as any;
+    });
+
+    it('returns real rides of the mode as tracks, using the detail polyline when stored', async () => {
+        (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '999', syncedAt: new Date(), activities: [
+            mockActivity({ id: 1, name: 'Loop', start_date: '2025-06-01T00:00:00Z', distance: 1000 }),
+            mockActivity({ id: 2, type: 'Run' }),
+            mockActivity({ id: 3, map: { summary_polyline: STATIONARY_POLYLINE } }),
+            mockActivity({ id: 4, map: { summary_polyline: STATIONARY_POLYLINE } }),
+        ] });
+        (prisma.stravaActivityDetail.findMany as jest.Mock).mockResolvedValue([{ activityId: '4', polyline: DETAIL_POLYLINE }]);
+        const tracks = await fetchRideTracks(creds, 'cycling');
+        expect(tracks.map(t => t.id)).toEqual([1, 4]);
+        expect(tracks[0]).toMatchObject({ name: 'Loop', startDate: '2025-06-01T00:00:00Z', distanceM: 1000 });
+        expect(tracks[1].poly).toEqual(require('@mapbox/polyline').decode(DETAIL_POLYLINE));
     });
 });
 

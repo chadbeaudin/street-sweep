@@ -9,6 +9,7 @@ import { enqueueAthleteSync } from './athleteSyncQueue';
 import { stravaFetch } from './stravaApi';
 import { incrementMetric } from './metrics';
 import { UserFacingError } from './apiErrors';
+import type { RideTrack } from './suggestRoute';
 
 // Stationary/indoor-trainer rides imported into Strava keep a fixed GPS point,
 // so their track barely moves. Drop any ride whose bounding-box diagonal is
@@ -146,6 +147,27 @@ export async function fetchActivitiesForYear(creds: { clientId?: string; clientS
     }).catch(() => [] as { activityId: string; polyline: string }[]);
     const detailByActivity = new Map(detailRows.map(d => [d.activityId, d.polyline]));
     return candidates.filter(a => isRealTrack(polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][]));
+}
+
+// Every real-world ride of the mode as a track, preferring the stored full-resolution
+// polyline -- used to find the rider's most common route and mark ridden streets (#80).
+export async function fetchRideTracks(creds: { clientId?: string; clientSecret?: string; refreshToken?: string; athleteId?: string } | undefined, mode: ActivityMode): Promise<RideTrack[]> {
+    const all = await getCachedOrFetchActivities(creds, { staleOk: true });
+    const candidates = all.filter(a => isModeActivity(a.sport_type || a.type, mode));
+    const detailRows = await prisma.stravaActivityDetail.findMany({
+        where: { activityId: { in: candidates.map(a => a.id.toString()) } },
+    }).catch(() => [] as { activityId: string; polyline: string }[]);
+    const detailByActivity = new Map(detailRows.map(d => [d.activityId, d.polyline]));
+    return candidates
+        .map(a => ({
+            id: a.id,
+            name: a.name,
+            startDate: a.start_date ?? '',
+            distanceM: a.distance ?? 0,
+            elevationGainM: a.total_elevation_gain ?? 0,
+            poly: polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][],
+        }))
+        .filter(r => isRealTrack(r.poly));
 }
 
 // Strava refused the refresh token itself (revoked or invalid), as opposed to an outage.

@@ -4,9 +4,10 @@ import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Bike, Footprints } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
+import { boundsOf, suggestionStepBbox } from '@/lib/suggestRoute';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
@@ -220,6 +221,10 @@ export default function Home() {
     const RWGPS_HIDE_RECREATE_WARNING_KEY = 'rwgps_hide_recreate_warning';
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
+    const [isSuggesting, setIsSuggesting] = useState(false);
+    const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
+    const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
+    const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
     const isImportedRouteRef = useRef(false);
@@ -1227,12 +1232,12 @@ export default function Home() {
         });
     }, []);
 
-    const addPoint = useCallback((point: { lat: number; lon: number }) => {
+    const addPoint = useCallback((point: { lat: number; lon: number }, routingBbox?: { south: number; west: number; north: number; east: number }) => {
         if (isDraggingRef.current) return;
         isImportedRouteRef.current = false;
         setIsImportedRoute(false);
 
-        const currentBbox = bboxRef.current;
+        const currentBbox = routingBbox ?? bboxRef.current;
         if (!currentBbox) return;
 
         // De-duplicate: don't add point if it's too close to the last one (prevents drag-ghosting)
@@ -1640,6 +1645,36 @@ export default function Home() {
         setRwgpsSourceRouteId(null);
     }, []);
 
+    const canSuggest = hasStravaCreds(stravaCredentials) && selectedPoints.length === 0 && !route && selectionBoxes.length === 0 && selectionPolygons.length === 0;
+
+    // "Suggest a Route" (#80): waypoints along the rider's most common ride, added as
+    // ordinary points so the point router connects them preferring unridden streets.
+    const handleSuggestRoute = useCallback(async (start: { lat: number; lon: number }) => {
+        setPickingSuggestStart(false);
+        setSuggestStart(start);
+        setIsSuggesting(true);
+        setError(null);
+        try {
+            const res = await fetch('/api/suggest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ start, activityMode, routingOptions: routingOptionsRef.current }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Could not suggest a route');
+
+            const bounds = boundsOf(data.waypoints);
+            setFitBoundsRequest(bounds);
+            clearPoints();
+            for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
+        } catch (err: any) {
+            setError({ message: err.message });
+        } finally {
+            setIsSuggesting(false);
+            setSuggestStart(null);
+        }
+    }, [activityMode, addPoint, clearPoints]);
+
     // A new area supersedes the auto-added end of the previous sweep (see
     // dropStaleComputedEndpoint); its empty incoming segment goes with it.
     const dropComputedEndpointForNewArea = () => {
@@ -1797,6 +1832,17 @@ export default function Home() {
                         )}
                         Import
                     </button>
+                    {canSuggest && (
+                        <button
+                            onClick={() => setPickingSuggestStart(true)}
+                            disabled={isSuggesting}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm disabled:opacity-60"
+                            title="Pick a start point and get a route like the ride you do most, taking unridden streets where it can"
+                        >
+                            {isSuggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                            Suggest
+                        </button>
+                    )}
                     {isImportedRoute && route && (
                         <button
                             onClick={clearPoints}
@@ -2206,6 +2252,15 @@ export default function Home() {
                                     >
                                         {isImporting ? 'Importing…' : 'Import Route'}
                                     </button>
+                                    {canSuggest && (
+                                        <button
+                                            onClick={() => { setPickingSuggestStart(true); setShowMobileMenu(false); }}
+                                            disabled={isSuggesting}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center disabled:opacity-60"
+                                        >
+                                            {isSuggesting ? 'Suggesting…' : 'Suggest a Route'}
+                                        </button>
+                                    )}
                                     {isImportedRoute && route && (
                                         <button
                                             onClick={() => { clearPoints(); setShowMobileMenu(false); }}
@@ -2341,12 +2396,20 @@ export default function Home() {
                         </span>
                     </div>
                 )}
+                {isSuggesting && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 max-w-[calc(100%-32px)]">
+                        <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+                        <span className="text-sm font-bold text-indigo-900 tracking-tight">
+                            Creating a route similar to your most common rides&hellip;
+                        </span>
+                    </div>
+                )}
                 {/* Ridden-Roads Sync Pill: non-blocking, unlike the Strava Loading Overlay
                     below -- the map and routing already work while this runs. Without it, a
                     first-time connect (isStravaLoading clears once the raw activity list is
                     fetched) landed the user on what looked like a plain, empty map for up to
                     several minutes while the server-side ridden-road overlay was still computing. */}
-                {showRiddenMatchingNotice && !isStravaLoading && (
+                {showRiddenMatchingNotice && !isStravaLoading && !isSuggesting && (
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-orange-100 flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
                         <div className="relative flex items-center justify-center">
                             <div className="w-3 h-3 bg-[#FC4C02] rounded-full animate-ping absolute"></div>
@@ -2436,6 +2499,12 @@ export default function Home() {
                         <span className="text-sm font-medium text-amber-800">
                             This route may have construction happening
                         </span>
+                    </div>
+                )}
+                {pickingSuggestStart && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-indigo-600 text-white rounded-full shadow-lg px-4 py-1.5 text-sm font-medium max-w-[calc(100%-32px)]">
+                        <Sparkles className="w-4 h-4 shrink-0" /> Click the map where your ride should start
+                        <button onClick={() => setPickingSuggestStart(false)} className="ml-1 text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
                     </div>
                 )}
                 {pickingStart && (
@@ -2531,8 +2600,8 @@ export default function Home() {
                     precomputedRidden={precomputedRidden}
                     matchedRiddenTiles={matchedRiddenTiles}
                     startPoint={startPoint}
-                    isPickingStart={pickingStart}
-                    onStartPick={handleStartPick}
+                    isPickingStart={pickingStart || pickingSuggestStart}
+                    onStartPick={pickingSuggestStart ? (lat: number, lon: number) => handleSuggestRoute({ lat, lon }) : handleStartPick}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
                     onPointMove={handlePointMove}
@@ -2603,6 +2672,8 @@ export default function Home() {
                     onAvoidedRoadsChange={setAvoidedRoads}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
+                    fitBoundsRequest={fitBoundsRequest}
+                    suggestStart={suggestStart}
                     onRouteHover={setRouteHoverPoint}
                 />
 

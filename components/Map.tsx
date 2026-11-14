@@ -88,6 +88,10 @@ interface MapProps {
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
     preAreaPointCount?: number | null;
     isImportedRoute?: boolean;
+    // Each new object pans/zooms the map to these bounds once.
+    fitBoundsRequest?: { south: number; west: number; north: number; east: number } | null;
+    // Where a "Suggest a Route" start was picked, shown until the suggestion arrives.
+    suggestStart?: { lat: number; lon: number } | null;
     onRouteHover?: (point: { lat: number; lon: number } | null) => void;
     // User-marked "avoid" roads (#45)
     isAvoidMode?: boolean;
@@ -487,7 +491,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, fitBoundsRequest, suggestStart, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -620,6 +624,12 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
         }
         prevRouteRef.current = route;
     }, [route, isImportedRoute]);
+
+    React.useEffect(() => {
+        if (!fitBoundsRequest || !mapRef.current) return;
+        const { south, west, north, east } = fitBoundsRequest;
+        mapRef.current.fitBounds([[south, west], [north, east]], { padding: [40, 40] });
+    }, [fitBoundsRequest]);
 
     // The selection/lasso overlay is a sibling of the Leaflet map container
     // (positioned on top via z-index, not a DOM descendant), so wheel events
@@ -861,6 +871,9 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                 <TileLayer key={tileStyle.id} {...tileLayerProps(tileStyle)} />
                 <MapEvents onBBoxChange={onBBoxChange} onMapClick={handleMapClick} />
                 <RoadHoverCursor index={indexedAllRoads} enabled={!isSelectionMode && !isEraserMode && !isLassoMode} />
+                {suggestStart && (
+                    <Marker position={[suggestStart.lat, suggestStart.lon]} icon={getPointMarkerIcon('#4F46E5', true)} interactive={false} />
+                )}
                 {startPoint && (
                     <Marker
                         position={[startPoint.lat, startPoint.lon]}

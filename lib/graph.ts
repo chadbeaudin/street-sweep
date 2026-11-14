@@ -1590,7 +1590,7 @@ export class StreetGraph {
 
     /** Returns a penalty map (10×) for all ridden edges, for use when bridging disconnected components. */
     // Node ids of the largest connected piece of the road network, ignoring direction.
-    private largestConnectedComponent(): Set<string> {
+    public largestConnectedComponent(): Set<string> {
         const seen = new Set<string>();
         let largest: string[] = [];
         this.graph.forEachNode((start: any) => {
