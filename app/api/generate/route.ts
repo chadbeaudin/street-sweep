@@ -219,7 +219,7 @@ async function handlePOST(request: Request) {
             return NextResponse.json({ error: 'Map data unavailable for this area. The routing servers may be temporarily overloaded — please try again in a moment.', degraded: true }, { status: 503 });
         }
 
-        const graph = StreetGraph.getCachedGraph(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads, bufferedBbox), routingOptions);
+        const graph = await StreetGraph.getCachedGraphAsync(bufferedBbox, osmData, filterRiddenRoadsToBbox(riddenRoads, bufferedBbox), routingOptions);
 
         console.log(`${ts()} Solving Routing Problem...`);
         // Prefer an explicit clicked start; otherwise use the persistent start

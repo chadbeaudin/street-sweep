@@ -54,6 +54,8 @@ type BBox = { south: number; west: number; north: number; east: number };
 interface GraphCacheEntry { graph: StreetGraph; timestamp: number; bbox: BBox; reuseKey?: string }
 const GRAPH_CACHE = new Map<string, GraphCacheEntry>();
 const CACHE_TTL = 1000 * 60 * 60; // 1 hour
+// Longest a graph build runs before letting other requests in (#216).
+const BUILD_SLICE_MS = 50;
 
 // A cached StreetGraph is big — a large selection holds ~100k edges plus the
 // node/edge spatial indices built over them — and entries live for an hour.
@@ -375,6 +377,26 @@ export class StreetGraph {
     }
 
     public static getCachedGraph(bbox: BBox, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions, reuseKey?: string): StreetGraph {
+        const key = StreetGraph.graphCacheKey(bbox, data, riddenRoads, options);
+        const cached = StreetGraph.cachedGraphFor(key);
+        if (cached) return cached;
+        const newGraph = new StreetGraph();
+        newGraph.buildFromOSM(data, riddenRoads, options);
+        return StreetGraph.cacheBuiltGraph(key, newGraph, bbox, reuseKey);
+    }
+
+    // Same as getCachedGraph, but a cold build pauses every few milliseconds so the
+    // server keeps answering other requests (health checks included) meanwhile (#216).
+    public static async getCachedGraphAsync(bbox: BBox, data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions, reuseKey?: string): Promise<StreetGraph> {
+        const key = StreetGraph.graphCacheKey(bbox, data, riddenRoads, options);
+        const cached = StreetGraph.cachedGraphFor(key);
+        if (cached) return cached;
+        const newGraph = new StreetGraph();
+        await newGraph.buildFromOSMAsync(data, riddenRoads, options);
+        return StreetGraph.cacheBuiltGraph(key, newGraph, bbox, reuseKey);
+    }
+
+    private static graphCacheKey(bbox: BBox, data: OverpassResponse, riddenRoads: [number, number][][] | null, options?: RoutingOptions): string {
         const optionsKey = options ? `|G${options.avoidGravel}|H${options.avoidHighways}|T${options.avoidTrails}` : '';
         // riddenRoads affects which edges get marked isRidden during buildFromOSM,
         // so it must be part of the cache key — otherwise a graph built for this
@@ -388,10 +410,12 @@ export class StreetGraph {
         // (see lib/fetchRegions.ts). Including the source and element count keeps a
         // corridor graph from being served for a full-rect request, and vice versa.
         const dataKey = `|D${data.generator === 'StreetSweep regions' ? 'c' : 'f'}${data.elements.length}`;
-        const key = `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
-        const now = Date.now();
+        return `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
+    }
+
+    private static cachedGraphFor(key: string): StreetGraph | null {
         const cached = GRAPH_CACHE.get(key);
-        if (cached && (now - cached.timestamp < CACHE_TTL)) {
+        if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
             console.log(`${ts()} Returning cached StreetGraph for ${key}`);
             // Re-insert so this counts as the most recently used entry and the
             // eviction below drops a genuinely cold graph instead of this one.
@@ -400,13 +424,15 @@ export class StreetGraph {
             return cached.graph;
         }
         recordCacheLookup('graph', 'miss');
-        const newGraph = new StreetGraph();
-        newGraph.buildFromOSM(data, riddenRoads, options);
+        return null;
+    }
+
+    private static cacheBuiltGraph(key: string, graph: StreetGraph, bbox: BBox, reuseKey?: string): StreetGraph {
         // Don't cache empty graphs — OSM data may have been transiently unavailable
-        if (newGraph.graph.getNodesCount() > 0) {
-            setCachedGraph(key, { graph: newGraph, timestamp: Date.now(), bbox, reuseKey });
+        if (graph.graph.getNodesCount() > 0) {
+            setCachedGraph(key, { graph, timestamp: Date.now(), bbox, reuseKey });
         }
-        return newGraph;
+        return graph;
     }
 
     constructor() {
@@ -414,6 +440,21 @@ export class StreetGraph {
     }
 
     public buildFromOSM(data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions) {
+        for (const _ of this.buildSteps(data, riddenRoads, options)) { /* run to completion */ }
+    }
+
+    public async buildFromOSMAsync(data: OverpassResponse, riddenRoads: [number, number][][] | null = null, options?: RoutingOptions) {
+        let sliceStart = Date.now();
+        for (const _ of this.buildSteps(data, riddenRoads, options)) {
+            if (Date.now() - sliceStart >= BUILD_SLICE_MS) {
+                await new Promise(resolve => setImmediate(resolve));
+                sliceStart = Date.now();
+            }
+        }
+    }
+
+    // The build, one OSM element per step, so it can run straight through or in slices.
+    private *buildSteps(data: OverpassResponse, riddenRoads: [number, number][][] | null, options?: RoutingOptions): Generator<void> {
         // Log a summary, not the raw options object: avoidedRoads can hold hundreds of
         // coordinate pairs, and serializing/printing that on every cache-miss graph
         // build (frequent during interactive point-by-point routing, where the bbox
@@ -454,6 +495,7 @@ export class StreetGraph {
 
         // 2. Second pass: Process ways
         for (const elem of data.elements) {
+            yield;
             if (elem.type === 'way') {
                 const way = elem as OSMWay;
                 if (!way.nodes) continue;

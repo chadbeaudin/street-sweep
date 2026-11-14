@@ -46,6 +46,13 @@ describe('checkServices (#129)', () => {
         expect(mockSend).toHaveBeenLastCalledWith('StreetSweep: Postgres is back up after 10 min\nStreetSweep: Open Topo Data is back up after 10 min');
     });
 
+    it('re-probes a service that failed once before calling it down (#216)', async () => {
+        mockQuery.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue([]);
+        expect(await checkServices(0)).toEqual({ database: true, overpass: true, elevation: true });
+        expect(mockQuery).toHaveBeenCalledTimes(2);
+        expect(mockSend).not.toHaveBeenCalled();
+    });
+
     it('reuses a recent result so page loads do not hammer the backends', async () => {
         await checkServices(0);
         await checkServices(10_000);
@@ -58,7 +65,7 @@ describe('checkServices (#129)', () => {
         jest.useFakeTimers();
         mockQuery.mockReturnValue(new Promise(() => {}));
         const result = checkServices(0);
-        await jest.advanceTimersByTimeAsync(4000);
+        await jest.advanceTimersByTimeAsync(8000);
         expect((await result).database).toBe(false);
         jest.useRealTimers();
     });
