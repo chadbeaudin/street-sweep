@@ -5,6 +5,10 @@ import type { ActivityMode, Creds } from './riddenRoadsRefresh';
 
 export type SyncAspect = 'create' | 'update' | 'delete' | 'deauthorize' | 'resync' | 'recompute';
 
+// A forged or runaway event stream can't grow one athlete's queue past this (#199).
+// Deauthorize is exempt: Strava requires acting on a revocation.
+export const MAX_PENDING_PER_ATHLETE = 200;
+
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
 // Fast and side-effect-light: called inline from API routes (including the
@@ -16,12 +20,24 @@ export async function enqueueAthleteSync(
     opts: { activityId?: string; mode?: ActivityMode; creds?: Creds } = {},
 ): Promise<void> {
     try {
+        const activityId = opts.activityId ?? null;
+        const mode = opts.mode ?? null;
+        const pending = { athleteId, claimedAt: null };
+        if (await prisma.stravaSyncEvent.findFirst({ where: { ...pending, aspect, activityId, mode }, select: { id: true } })) {
+            incrementMetric('worker.enqueue_duplicate');
+            return;
+        }
+        if (aspect !== 'deauthorize' && await prisma.stravaSyncEvent.count({ where: pending }) >= MAX_PENDING_PER_ATHLETE) {
+            console.warn(`${ts()} AthleteSync: queue full for ${athleteId}; dropping ${aspect}`);
+            incrementMetric('worker.enqueue_capped');
+            return;
+        }
         await prisma.stravaSyncEvent.create({
             data: {
                 athleteId,
                 aspect,
-                activityId: opts.activityId ?? null,
-                mode: opts.mode ?? null,
+                activityId,
+                mode,
                 credsEncrypted: opts.creds?.refreshToken ? encryptToken(JSON.stringify(opts.creds)) : null,
             },
         });

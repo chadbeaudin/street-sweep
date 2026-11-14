@@ -15,20 +15,20 @@ import * as metrics from '@/lib/metrics';
 
 const ORIGINAL_ENV = process.env;
 beforeEach(() => {
-    process.env = { ...ORIGINAL_ENV, STRAVA_WEBHOOK_VERIFY_TOKEN: 'verify-me', STRAVA_WEBHOOK_SUBSCRIPTION_ID: '120' };
+    process.env = { ...ORIGINAL_ENV, STRAVA_WEBHOOK_VERIFY_TOKEN: 'verify-me', STRAVA_WEBHOOK_SUBSCRIPTION_ID: '120', STRAVA_WEBHOOK_CALLBACK_SECRET: 's3cret' };
     (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue({ athleteId: '42' });
     (prisma.account.findFirst as jest.Mock).mockResolvedValue(null);
 });
 afterAll(() => { process.env = ORIGINAL_ENV; });
 
 const lastResponse = () => mockJson.mock.calls[mockJson.mock.calls.length - 1];
-const post = (body: unknown) => POST(new Request('http://localhost/api/strava/webhook', { method: 'POST', body: JSON.stringify(body) }));
+const post = (body: unknown, key = 's3cret') => POST(new Request(`http://localhost/api/strava/webhook?key=${key}`, { method: 'POST', body: JSON.stringify(body) }));
 const event = (overrides: Record<string, unknown> = {}) => ({
     object_type: 'activity', object_id: 9001, aspect_type: 'create', owner_id: 42, subscription_id: 120, event_time: 1, updates: {}, ...overrides,
 });
 
 describe('GET /api/strava/webhook (subscription handshake)', () => {
-    const get = (query: string) => GET(new Request(`http://localhost/api/strava/webhook?${query}`));
+    const get = (query: string) => GET(new Request(`http://localhost/api/strava/webhook?key=s3cret&${query}`));
 
     it('echoes the challenge when the verify token matches', async () => {
         await get('hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc123');
@@ -103,5 +103,23 @@ describe('POST /api/strava/webhook metrics (#117)', () => {
         (prisma.stravaActivityCache.findUnique as jest.Mock).mockResolvedValue(null);
         await post(event());
         expect(counted).toHaveBeenCalledWith('webhook.ignored');
+    });
+});
+
+describe('callback secret (#199)', () => {
+    it('rejects events without the right key, and all of them when none is configured', async () => {
+        for (const key of ['', 'wrong']) {
+            await post(event(), key);
+            expect(lastResponse()[1]?.status).toBe(403);
+        }
+        delete process.env.STRAVA_WEBHOOK_CALLBACK_SECRET;
+        await post(event());
+        expect(lastResponse()[1]?.status).toBe(403);
+        expect(enqueueAthleteSync).not.toHaveBeenCalled();
+    });
+
+    it('rejects the subscription handshake without the key', async () => {
+        await GET(new Request('http://localhost/api/strava/webhook?hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc'));
+        expect(lastResponse()[1]?.status).toBe(403);
     });
 });

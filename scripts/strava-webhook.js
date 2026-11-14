@@ -1,6 +1,6 @@
 // Manages the Strava app's single push subscription (#118).
 //   node scripts/strava-webhook.js view
-//   node scripts/strava-webhook.js create https://streetsweep.fly.dev/api/strava/webhook
+//   node scripts/strava-webhook.js create 'https://streetsweep.fly.dev/api/strava/webhook?key=<STRAVA_WEBHOOK_CALLBACK_SECRET>'
 //   node scripts/strava-webhook.js delete <subscription id>
 // Needs STRAVA_CLIENT_ID, STRAVA_CLIENT_SECRET and (for create)
 // STRAVA_WEBHOOK_VERIFY_TOKEN, matching the Fly secret the callback checks.
