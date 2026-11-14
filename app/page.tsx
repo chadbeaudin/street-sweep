@@ -4,9 +4,10 @@ import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Bike, Footprints } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
+import { boundsOf, boundsContain } from '@/lib/suggestRoute';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
@@ -24,7 +25,7 @@ import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { MaintenanceNotice } from '@/components/MaintenanceNotice';
 import { useUnits } from '@/components/UnitsContext';
-import { elevationFromFeet, elevationUnit } from '@/lib/units';
+import { elevationFromFeet, elevationUnit, distanceFromMiles, distanceUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint } from '@/lib/pointMove';
@@ -220,6 +221,9 @@ export default function Home() {
     const RWGPS_HIDE_RECREATE_WARNING_KEY = 'rwgps_hide_recreate_warning';
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
+    const [isSuggesting, setIsSuggesting] = useState(false);
+    const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceMiles: number } | null>(null);
+    const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
     const isImportedRouteRef = useRef(false);
@@ -1638,7 +1642,48 @@ export default function Home() {
         setSelectionPolygons([]);
         setActiveSteps(0);
         setRwgpsSourceRouteId(null);
+        setSuggestion(null);
     }, []);
+
+    const canSuggest = hasStravaCreds(stravaCredentials) && selectedPoints.length === 0 && !route && selectionBoxes.length === 0 && selectionPolygons.length === 0;
+
+    // "Suggest a Route" (#80): waypoints along the rider's most common ride, added as
+    // ordinary points so the point router connects them preferring unridden streets.
+    const handleSuggestRoute = useCallback(async () => {
+        const view = bboxRef.current;
+        if (!view) return;
+        setIsSuggesting(true);
+        setError(null);
+        try {
+            const res = await fetch('/api/suggest', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    mapCenter: { lat: (view.north + view.south) / 2, lon: (view.east + view.west) / 2 },
+                    home: startPointRef.current,
+                    activityMode,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Could not suggest a route');
+
+            // Points are routed within the visible map, so show the whole ride first.
+            const bounds = boundsOf(data.waypoints);
+            setFitBoundsRequest(bounds);
+            const deadline = Date.now() + 3000;
+            while (!(bboxRef.current && boundsContain(bboxRef.current, bounds)) && Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            clearPoints();
+            for (const p of data.waypoints) addPoint(p);
+            setSuggestion({ rideName: data.rideName, timesRidden: data.timesRidden, distanceMiles: data.distanceMiles });
+        } catch (err: any) {
+            setError({ message: err.message });
+        } finally {
+            setIsSuggesting(false);
+        }
+    }, [activityMode, addPoint, clearPoints]);
 
     // A new area supersedes the auto-added end of the previous sweep (see
     // dropStaleComputedEndpoint); its empty incoming segment goes with it.
@@ -1797,6 +1842,17 @@ export default function Home() {
                         )}
                         Import
                     </button>
+                    {canSuggest && (
+                        <button
+                            onClick={handleSuggestRoute}
+                            disabled={isSuggesting}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm disabled:opacity-60"
+                            title="Build a route like the ride you do most, taking unridden streets where it can"
+                        >
+                            {isSuggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                            Suggest
+                        </button>
+                    )}
                     {isImportedRoute && route && (
                         <button
                             onClick={clearPoints}
@@ -2206,6 +2262,15 @@ export default function Home() {
                                     >
                                         {isImporting ? 'Importing…' : 'Import Route'}
                                     </button>
+                                    {canSuggest && (
+                                        <button
+                                            onClick={() => { handleSuggestRoute(); setShowMobileMenu(false); }}
+                                            disabled={isSuggesting}
+                                            className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center disabled:opacity-60"
+                                        >
+                                            {isSuggesting ? 'Suggesting…' : 'Suggest a Route'}
+                                        </button>
+                                    )}
                                     {isImportedRoute && route && (
                                         <button
                                             onClick={() => { clearPoints(); setShowMobileMenu(false); }}
@@ -2339,6 +2404,17 @@ export default function Home() {
                         <span className="text-sm font-bold text-indigo-900 tracking-tight">
                             {isAutoGenerating ? 'Updating route...' : 'Calculating route...'}
                         </span>
+                    </div>
+                )}
+                {suggestion && !(activeSteps > 0 || isAutoGenerating) && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur pl-5 pr-2 py-1.5 rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 max-w-[calc(100%-32px)]">
+                        <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span className="text-sm text-indigo-900 truncate">
+                            Like &ldquo;{suggestion.rideName}&rdquo; ({suggestion.timesRidden === 1 ? 'your latest ride' : `ridden ${suggestion.timesRidden} times`}, {distanceFromMiles(suggestion.distanceMiles, units).toFixed(1)} {distanceUnit(units)})
+                        </span>
+                        <button onClick={() => setSuggestion(null)} className="p-1 rounded-full hover:bg-indigo-50 text-indigo-700 shrink-0" title="Dismiss">
+                            <X className="w-4 h-4" />
+                        </button>
                     </div>
                 )}
                 {/* Ridden-Roads Sync Pill: non-blocking, unlike the Strava Loading Overlay
@@ -2603,6 +2679,7 @@ export default function Home() {
                     onAvoidedRoadsChange={setAvoidedRoads}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
+                    fitBoundsRequest={fitBoundsRequest}
                     onRouteHover={setRouteHoverPoint}
                 />
 
