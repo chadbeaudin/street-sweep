@@ -39,7 +39,7 @@ async function handlePOST(request: Request) {
         if (!common) {
             return NextResponse.json({ error: 'No rides to base a suggestion on yet. Sync some rides from Strava first.' }, { status: 404 });
         }
-        const { ride, timesRidden } = common;
+        const { ride } = common;
         const elevationsFor = async (lonLats: [number, number][]) => (await fetchElevationData(lonLats)).elevations;
         const target = { distanceM: ride.distanceM, gainM: await measureGainM(ride.poly, elevationsFor) };
 
@@ -61,9 +61,6 @@ async function handlePOST(request: Request) {
         waypoints[waypoints.length - 1] = start;
         return NextResponse.json({
             waypoints,
-            distanceM: loop.distanceM,
-            gainM: loop.gainM,
-            usual: { rideName: ride.name, timesRidden, distanceM: ride.distanceM, gainM: ride.elevationGainM },
         });
     } catch (error: any) {
         return errorResponse(error, 'Suggest route error:', "Couldn't suggest a route. Try again in a moment.");

@@ -40,8 +40,9 @@ describe('suggest a route progress (#80)', () => {
         expect(page).toMatch(/\{isSuggesting && \(\s+<div[^>]*>\s+<Loader2/);
     });
 
-    it("states the usual rides' distance and climbing in the user's units", () => {
-        expect(page).toContain('with similar climbing ({Math.round(elevationFromFeet(suggestion.gainM / 0.3048, units)).toLocaleString()} {elevationUnit(units)}) to your usual rides');
+    it('names what it is doing, and leaves the result to the route preview', () => {
+        expect(page).toContain('Creating a route similar to your most common rides&hellip;');
+        expect(page).not.toMatch(/setSuggestion\(/);
     });
 });
 

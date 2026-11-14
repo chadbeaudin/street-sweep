@@ -25,7 +25,7 @@ import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { MaintenanceNotice } from '@/components/MaintenanceNotice';
 import { useUnits } from '@/components/UnitsContext';
-import { elevationFromFeet, elevationUnit, distanceFromMeters, distanceUnit } from '@/lib/units';
+import { elevationFromFeet, elevationUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint } from '@/lib/pointMove';
@@ -224,7 +224,6 @@ export default function Home() {
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
     const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
-    const [suggestion, setSuggestion] = useState<{ distanceM: number; gainM: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
@@ -1644,7 +1643,6 @@ export default function Home() {
         setSelectionPolygons([]);
         setActiveSteps(0);
         setRwgpsSourceRouteId(null);
-        setSuggestion(null);
     }, []);
 
     const canSuggest = hasStravaCreds(stravaCredentials) && selectedPoints.length === 0 && !route && selectionBoxes.length === 0 && selectionPolygons.length === 0;
@@ -1669,7 +1667,6 @@ export default function Home() {
             setFitBoundsRequest(bounds);
             clearPoints();
             for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
-            setSuggestion(data.usual);
         } catch (err: any) {
             setError({ message: err.message });
         } finally {
@@ -2403,19 +2400,8 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 max-w-[calc(100%-32px)]">
                         <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
                         <span className="text-sm font-bold text-indigo-900 tracking-tight">
-                            Planning a ride like your usual one&hellip;
+                            Creating a route similar to your most common rides&hellip;
                         </span>
-                    </div>
-                )}
-                {suggestion && !(activeSteps > 0 || isAutoGenerating) && (
-                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur pl-5 pr-2 py-1.5 rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 max-w-[calc(100%-32px)]">
-                        <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
-                        <span className="text-sm text-indigo-900 truncate">
-                            About {distanceFromMeters(suggestion.distanceM, units).toFixed(1)} {distanceUnit(units)} with similar climbing ({Math.round(elevationFromFeet(suggestion.gainM / 0.3048, units)).toLocaleString()} {elevationUnit(units)}) to your usual rides
-                        </span>
-                        <button onClick={() => setSuggestion(null)} className="p-1 rounded-full hover:bg-indigo-50 text-indigo-700 shrink-0" title="Dismiss">
-                            <X className="w-4 h-4" />
-                        </button>
                     </div>
                 )}
                 {/* Ridden-Roads Sync Pill: non-blocking, unlike the Strava Loading Overlay
