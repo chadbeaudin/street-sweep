@@ -22,13 +22,14 @@ beforeEach(() => {
 afterAll(() => { process.env = ORIGINAL_ENV; });
 
 const lastResponse = () => mockJson.mock.calls[mockJson.mock.calls.length - 1];
-const post = (body: unknown, key = 's3cret') => POST(new Request(`http://localhost/api/strava/webhook?key=${key}`, { method: 'POST', body: JSON.stringify(body) }));
+const ctx = (key: string) => ({ params: Promise.resolve({ key }) });
+const post = (body: unknown, key = 's3cret') => POST(new Request(`http://localhost/api/strava/webhook/${key}`, { method: 'POST', body: JSON.stringify(body) }), ctx(key));
 const event = (overrides: Record<string, unknown> = {}) => ({
     object_type: 'activity', object_id: 9001, aspect_type: 'create', owner_id: 42, subscription_id: 120, event_time: 1, updates: {}, ...overrides,
 });
 
 describe('GET /api/strava/webhook (subscription handshake)', () => {
-    const get = (query: string) => GET(new Request(`http://localhost/api/strava/webhook?key=s3cret&${query}`));
+    const get = (query: string) => GET(new Request(`http://localhost/api/strava/webhook/s3cret?${query}`), ctx('s3cret'));
 
     it('echoes the challenge when the verify token matches', async () => {
         await get('hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc123');
@@ -118,8 +119,8 @@ describe('callback secret (#199)', () => {
         expect(enqueueAthleteSync).not.toHaveBeenCalled();
     });
 
-    it('rejects the subscription handshake without the key', async () => {
-        await GET(new Request('http://localhost/api/strava/webhook?hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc'));
+    it('rejects the subscription handshake with the wrong key', async () => {
+        await GET(new Request('http://localhost/api/strava/webhook/wrong?hub.mode=subscribe&hub.verify_token=verify-me&hub.challenge=abc'), ctx('wrong'));
         expect(lastResponse()[1]?.status).toBe(403);
     });
 });
