@@ -28,8 +28,16 @@ describe('page code splitting (#182)', () => {
 describe('ridden-roads matching notice (#183)', () => {
     it('only shows once matching has run for a few seconds', () => {
         expect(page).toMatch(/useDelayedFlag\(isRiddenComputing, RIDDEN_MATCHING_NOTICE_DELAY_MS\)/);
-        expect(page).toMatch(/\{showRiddenMatchingNotice && !isStravaLoading && \(/);
+        expect(page).toMatch(/\{showRiddenMatchingNotice && !isStravaLoading && !isSuggesting && \(/);
         expect(page).not.toMatch(/\{isRiddenComputing && !isStravaLoading && \(/);
+    });
+});
+
+describe('suggest a route progress (#80)', () => {
+    it('marks the picked start and shows a progress pill while the suggestion is planned', () => {
+        expect(page).toMatch(/setSuggestStart\(start\);\s+setIsSuggesting\(true\)/);
+        expect(page).toContain('suggestStart={suggestStart}');
+        expect(page).toMatch(/\{isSuggesting && \(\s+<div[^>]*>\s+<Loader2/);
     });
 });
 
