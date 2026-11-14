@@ -109,6 +109,8 @@ export async function planLoop(
     const candidates: { path: [number, number][]; distanceM: number; unriddenFraction: number }[] = [];
     for (let k = 0; k < DIRECTIONS; k++) {
         const bearing = (360 / DIRECTIONS) * k;
+        // Each direction is a few searches over a large graph; let other requests in between them (#216).
+        await new Promise(resolve => setImmediate(resolve));
         const first = routeTriangle(graph, network, start, firstR, bearing, riddenPenalties);
         if (!first) continue;
         const resizedR = Math.min(maxR, firstR * target.distanceM / first.distanceM);

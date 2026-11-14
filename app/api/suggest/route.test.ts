@@ -6,7 +6,7 @@ jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn() }));
 jest.mock('@/lib/elevationFetch', () => ({ fetchElevationData: jest.fn() }));
 jest.mock('@/lib/suggestLoop', () => ({ planLoop: jest.fn(), loopReachM: jest.fn(), measureGainM: jest.fn() }));
 jest.mock('@/lib/graph', () => ({
-    StreetGraph: { getCachedGraph: jest.fn(), reuseKey: jest.fn() },
+    StreetGraph: { getCachedGraphAsync: jest.fn(), reuseKey: jest.fn() },
     filterRiddenRoadsToBbox: jest.fn(),
 }));
 
@@ -31,7 +31,7 @@ const loopPath: [number, number][] = Array.from({ length: 31 }, (_, k) => [HOME.
 beforeEach(() => {
     (resolveRequestStravaCredentials as jest.Mock).mockResolvedValue({ refreshToken: 'r', athleteId: '1' });
     (fetchRideTracks as jest.Mock).mockResolvedValue([track(1, 'Usual'), track(2, 'Usual')]);
-    (StreetGraph.getCachedGraph as jest.Mock).mockReturnValue(graph);
+    (StreetGraph.getCachedGraphAsync as jest.Mock).mockResolvedValue(graph);
     (StreetGraph.reuseKey as jest.Mock).mockReturnValue('key');
     (filterRiddenRoadsToBbox as jest.Mock).mockImplementation((roads: unknown) => roads);
     (fetchOSMData as jest.Mock).mockResolvedValue({ elements: [] });
@@ -71,7 +71,7 @@ describe('POST /api/suggest (#80)', () => {
         const bbox = (fetchOSMData as jest.Mock).mock.calls[0][0];
         expect(bbox.north - bbox.south).toBeLessThanOrEqual(0.45);
         expect(bbox.east - bbox.west).toBeLessThanOrEqual(0.45);
-        expect((StreetGraph.getCachedGraph as jest.Mock).mock.calls[0][2]).toHaveLength(2);
+        expect((StreetGraph.getCachedGraphAsync as jest.Mock).mock.calls[0][2]).toHaveLength(2);
     });
 
     it('uses rides from anywhere when none start nearby', async () => {

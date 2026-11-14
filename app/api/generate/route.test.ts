@@ -8,7 +8,7 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
 jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn() }));
 jest.mock('@/lib/graph', () => ({
-    StreetGraph: { getCachedGraph: jest.fn() },
+    StreetGraph: { getCachedGraphAsync: jest.fn() },
     filterRiddenRoadsToBbox: jest.fn((riddenRoads: any) => riddenRoads ?? null),
 }));
 jest.mock('@/lib/elevation', () => ({ calculateElevationProfile: jest.fn() }));
@@ -22,7 +22,7 @@ import { fetchElevationData } from '@/lib/elevationFetch';
 import * as metrics from '@/lib/metrics';
 
 const mockedFetchOSM = fetchOSMData as jest.MockedFunction<typeof fetchOSMData>;
-const mockedGetCachedGraph = StreetGraph.getCachedGraph as jest.MockedFunction<typeof StreetGraph.getCachedGraph>;
+const mockedGetCachedGraph = StreetGraph.getCachedGraphAsync as jest.MockedFunction<typeof StreetGraph.getCachedGraphAsync>;
 const mockedFetchElevation = fetchElevationData as jest.MockedFunction<typeof fetchElevationData>;
 const mockedCalcElevationProfile = calculateElevationProfile as jest.MockedFunction<typeof calculateElevationProfile>;
 
@@ -121,7 +121,7 @@ describe('POST /api/generate', () => {
         // its own entry point instead of sweeping away from it.
         mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
         const solveCPPSpy = jest.fn().mockReturnValue([{ lat: 1, lon: 1 }]);
-        mockedGetCachedGraph.mockReturnValueOnce({ solveCPP: solveCPPSpy } as any);
+        mockedGetCachedGraph.mockResolvedValueOnce({ solveCPP: solveCPPSpy } as any);
         mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[1, 1]] } as any);
         mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 0 } as any]);
 
@@ -147,7 +147,7 @@ describe('POST /api/generate metrics (#117)', () => {
     it('records the route kind, its region, solve time and length', async () => {
         const recorded = jest.spyOn(metrics, 'recordGeneratedRoute');
         mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
-        mockedGetCachedGraph.mockReturnValueOnce({ solveCPP: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]) } as any);
+        mockedGetCachedGraph.mockResolvedValueOnce({ solveCPP: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]) } as any);
         mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[-104.7, 39.02]] } as any);
         mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 7.5 } as any]);
 
@@ -180,7 +180,7 @@ describe('POST /api/generate draw order (#52)', () => {
             solveOrderedLegs: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]),
         };
         mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
-        mockedGetCachedGraph.mockReturnValueOnce(graph as any);
+        mockedGetCachedGraph.mockResolvedValueOnce(graph as any);
         mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[-104.7, 39.02]] } as any);
         mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 1 } as any]);
         return graph;

@@ -73,7 +73,13 @@ export async function checkServices(now = Date.now()): Promise<ServiceStatus> {
     if (cached && now - cached.at < CACHE_MS) return cached.status;
     inFlight ??= (async () => {
         const names = Object.keys(PROBES) as ServiceName[];
-        const settled = await Promise.allSettled(names.map(n => PROBES[n]()));
+        const first = await Promise.allSettled(names.map(n => PROBES[n]()));
+        // A busy server (e.g. building a large street graph) can fire a probe's timeout
+        // late, ahead of a response that had already arrived. A real outage still fails
+        // a second try; that false one doesn't, so it no longer shows the maintenance
+        // banner or sends an alert (#216).
+        const settled = await Promise.all(first.map((r, i) =>
+            r.status === 'fulfilled' ? r : Promise.allSettled([PROBES[names[i]]()]).then(([retry]) => retry)));
         const results = Object.fromEntries(names.map((n, i) => {
             const r = settled[i];
             return [n, r.status === 'rejected' ? (r.reason?.message ?? String(r.reason)) : null];

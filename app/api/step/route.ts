@@ -73,7 +73,7 @@ async function handlePOST(req: NextRequest) {
             east: Math.max(point.lon, lastPoint?.lon ?? point.lon) + BUFFER,
         };
         const graph = StreetGraph.findCachedGraphCovering(clicksArea, reuseKey)
-            ?? StreetGraph.getCachedGraph(bufferedBbox, await fetchOSMData(bufferedBbox), filterRiddenRoadsToBbox(riddenRoads as [number, number][][] | undefined, bufferedBbox), routingOptions, reuseKey);
+            ?? await StreetGraph.getCachedGraphAsync(bufferedBbox, await fetchOSMData(bufferedBbox), filterRiddenRoadsToBbox(riddenRoads as [number, number][][] | undefined, bufferedBbox), routingOptions, reuseKey);
 
         // Get link IDs that should be penalized: already traversed in the current
         // session (avoid backtracking) and already ridden per Strava (prefer new

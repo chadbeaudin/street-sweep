@@ -2,7 +2,7 @@ jest.mock('@/lib/overpass', () => ({
     fetchOSMData: jest.fn(() => { throw new Error('should not be called for invalid body'); }),
 }));
 jest.mock('@/lib/graph', () => ({
-    StreetGraph: { getCachedGraph: jest.fn() },
+    StreetGraph: { getCachedGraphAsync: jest.fn() },
 }));
 
 import { POST } from './route';

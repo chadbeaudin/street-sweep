@@ -47,7 +47,7 @@ async function handlePOST(request: Request) {
         const halfLon = Math.min(MAX_HALF_SPAN_DEG, halfLat / Math.cos(start.lat * Math.PI / 180));
         const bbox = { south: start.lat - halfLat, north: start.lat + halfLat, west: start.lon - halfLon, east: start.lon + halfLon };
         const ridden = filterRiddenRoadsToBbox(rides.map(r => r.poly), bbox) ?? [];
-        const graph = StreetGraph.getCachedGraph(bbox, await fetchOSMData(bbox), ridden, routingOptions,
+        const graph = await StreetGraph.getCachedGraphAsync(bbox, await fetchOSMData(bbox), ridden, routingOptions,
             StreetGraph.reuseKey(polylineSetFingerprint(ridden), routingOptions));
         const riddenPenalties = graph.buildRiddenPenaltyMap(routingOptions?.pointRoutePenalty || 4);
 

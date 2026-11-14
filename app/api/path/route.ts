@@ -16,7 +16,7 @@ async function handlePOST(request: Request) {
         const { start, end, bbox } = parsed.data;
 
         const osmData = await fetchOSMData(bbox);
-        const graph = StreetGraph.getCachedGraph(bbox, osmData);
+        const graph = await StreetGraph.getCachedGraphAsync(bbox, osmData);
 
         const startNode = graph.findClosestNode(start.lat, start.lon);
         const endNode = graph.findClosestNode(end.lat, end.lon);
