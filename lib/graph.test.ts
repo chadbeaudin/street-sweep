@@ -1359,6 +1359,77 @@ describe('StreetGraph', () => {
         });
     });
 
+    describe('user-marked preferred roads (#46)', () => {
+        const mockData: OverpassResponse = {
+            version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+            elements: [
+                { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                { type: 'node', id: 2, lat: 47.65, lon: -117.4193 },
+                { type: 'way', id: 800, nodes: [1, 2], tags: { highway: 'residential' } },
+            ]
+        };
+        const along: [number, number][][] = [[
+            [47.65, -117.4204], [47.65, -117.4202], [47.65, -117.4200],
+            [47.65, -117.4198], [47.65, -117.4196], [47.65, -117.4194],
+        ]];
+        const plainWeight = () => {
+            const g = new StreetGraph();
+            g.buildFromOSM(mockData, null);
+            return g.graph.getLink('1', '2')!.data.weight;
+        };
+
+        test('marks a matching edge preferred and lowers its cost to 60%', () => {
+            const graph = new StreetGraph();
+            graph.buildFromOSM(mockData, null, { preferredRoads: along });
+            const link = graph.graph.getLink('1', '2')!;
+            expect(link.data.isPreferred).toBe(true);
+            expect(link.data.weight).toBeCloseTo(plainWeight() * 0.6, 5);
+        });
+
+        test('lets avoidance win when a road is both avoided and preferred', () => {
+            const graph = new StreetGraph();
+            graph.buildFromOSM(mockData, null, { preferredRoads: along, avoidedRoads: along });
+            const link = graph.graph.getLink('1', '2')!;
+            expect(link.data.isPreferred).toBe(false);
+            expect(link.data.weight).toBeCloseTo(plainWeight() * 100, 5);
+        });
+
+        test('routes over a preferred street instead of a somewhat shorter one', () => {
+            // A (1) to B (4): a straight street (via 3, ~750 m) or a loop north via 5 and 2
+            // (~1050 m, 1.4x longer) that leaves A at a right angle to the straight one.
+            const data: OverpassResponse = {
+                version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+                elements: [
+                    { type: 'node', id: 1, lat: 47.65, lon: -117.42 },
+                    { type: 'node', id: 3, lat: 47.65, lon: -117.415 },
+                    { type: 'node', id: 4, lat: 47.65, lon: -117.41 },
+                    { type: 'node', id: 5, lat: 47.6513, lon: -117.42 },
+                    { type: 'node', id: 2, lat: 47.6513, lon: -117.41 },
+                    { type: 'way', id: 801, nodes: [1, 5, 2, 4], tags: { highway: 'residential' } },
+                    { type: 'way', id: 802, nodes: [1, 3, 4], tags: { highway: 'residential' } },
+                ]
+            };
+            const viaNorth = (g: StreetGraph) => g.findClosestTarget('1', new Set(['4']))!.path.some(p => p.idNext === '5');
+            const plain = new StreetGraph();
+            plain.buildFromOSM(data, null);
+            expect(viaNorth(plain)).toBe(false);
+
+            const corners: [number, number][] = [[47.65, -117.42], [47.6513, -117.42], [47.6513, -117.41], [47.65, -117.41]];
+            const north: [number, number][] = corners.flatMap(([lat, lon], k) => {
+                if (k === corners.length - 1) return [[lat, lon] as [number, number]];
+                const [nLat, nLon] = corners[k + 1];
+                return Array.from({ length: 10 }, (_, s) => [lat + (nLat - lat) * s / 10, lon + (nLon - lon) * s / 10] as [number, number]);
+            });
+            const preferring = new StreetGraph();
+            preferring.buildFromOSM(data, null, { preferredRoads: [north] });
+            expect(viaNorth(preferring)).toBe(true);
+        });
+
+        test('builds a separate cached graph when the preferred roads change', () => {
+            expect(StreetGraph.reuseKey('r', { preferredRoads: along })).not.toBe(StreetGraph.reuseKey('r', {}));
+        });
+    });
+
     // The odd-node matching step builds an all-pairs distance matrix. It used
     // to store a full path for every pair, which is what exhausted memory on
     // large selections (206 odd nodes => ~42,000 multi-mile paths held at

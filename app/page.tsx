@@ -4,7 +4,7 @@ import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, Bike, Footprints } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, ThumbsUp, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
 import { boundsOf, suggestionStepBbox } from '@/lib/suggestRoute';
@@ -54,7 +54,7 @@ import { missingTiles as missingRoadTiles, bboxForTiles as roadBboxForTiles, til
 import { missingTiles as missingRiddenTiles, bboxForTiles as riddenBboxForTiles, expandBBox, flattenRiddenTiles, type RiddenTileRoads } from '@/lib/roadTiles';
 import { calculateElevationGainLoss, densifyElevationProfile } from '@/lib/elevation';
 import { listKeyAction } from '@/lib/listNavigation';
-import { useAvoidedRoadsSync } from '@/lib/useAvoidedRoadsSync';
+import { useMarkedRoadsSync } from '@/lib/useMarkedRoadsSync';
 import { reportClientError } from '@/lib/clientErrors';
 
 const RIDDEN_PREFETCH_FRACTION = 0.5;
@@ -96,6 +96,7 @@ export default function Home() {
         pointRoutePenalty: number;
         startFromHome: boolean;
         avoidedRoads: [number, number][][];
+        preferredRoads: [number, number][][];
     }>({
         avoidGravel: false,
         avoidHighways: false,
@@ -107,7 +108,9 @@ export default function Home() {
         // User-marked "avoid" roads (#45): raw coordinate polylines of roads the
         // user has clicked to mark, persisted per-browser and sent alongside the
         // other routing options so the server can heavily penalize them.
-        avoidedRoads: []
+        avoidedRoads: [],
+        // User-marked preferred roads (#46): routing favours them.
+        preferredRoads: []
     });
     // Persist routing options (avoid gravel/highways/trails, penalties) across
     // reloads -- these previously silently reset to defaults on every page load
@@ -135,7 +138,9 @@ export default function Home() {
         try { localStorage.setItem('streetsweep_routing_options', JSON.stringify(routingOptions)); } catch { /* ignore */ }
     }, [routingOptions]);
     const setAvoidedRoads = useCallback((avoidedRoads: [number, number][][]) => setRoutingOptions(ro => ({ ...ro, avoidedRoads })), []);
-    useAvoidedRoadsSync(sessionStatus, routingOptions.avoidedRoads, setAvoidedRoads);
+    useMarkedRoadsSync('/api/avoided-roads', sessionStatus, routingOptions.avoidedRoads, setAvoidedRoads);
+    const setPreferredRoads = useCallback((preferredRoads: [number, number][][]) => setRoutingOptions(ro => ({ ...ro, preferredRoads })), []);
+    useMarkedRoadsSync('/api/preferred-roads', sessionStatus, routingOptions.preferredRoads, setPreferredRoads);
     const [showOptions, setShowOptions] = useState(false);
     const [showMobileMenu, setShowMobileMenu] = useState(false);
     const [showMobileExport, setShowMobileExport] = useState(false);
@@ -163,7 +168,9 @@ export default function Home() {
         try { localStorage.setItem('streetsweep_seen_tutorial', '1'); } catch { /* ignore */ }
     }, []);
     const [isEraserMode, setIsEraserMode] = useState(false);
-    const [isAvoidMode, setIsAvoidMode] = useState(false);
+    // Marking roads on the map to avoid (#45) or prefer (#46); both share the draft below.
+    const [markMode, setMarkMode] = useState<'avoid' | 'prefer' | null>(null);
+    const isMarkingRoads = markMode !== null;
     const [isAvoidEraserMode, setIsAvoidEraserMode] = useState(false);
 
     // Cycling vs running (#88): filters which Strava activity types count as
@@ -1157,12 +1164,12 @@ export default function Home() {
         return () => document.removeEventListener('pointerup', reset);
     }, []);
 
-    // Mark-as-avoided drawing (#45): while isAvoidMode is on, each click drops a
+    // Mark-as-avoided/preferred drawing (#45, #46): while marking roads, each click drops a
     // point and (from the second point on) snaps a path along the street network
     // from the previous point, mirroring how normal Point mode builds manualRoute
     // via /api/step. The accumulated path is a *draft* until the user toggles
-    // Avoid mode back off, at which point it's committed as one entry in
-    // routingOptions.avoidedRoads.
+    // marking back off, at which point it's committed as one entry in
+    // routingOptions.avoidedRoads or preferredRoads.
     const avoidDraftPathRef = useRef<[number, number][][]>([]);
     const avoidLastPointRef = useRef<{ lat: number; lon: number } | null>(null);
     // Bumped on undo (and on entering/leaving Avoid mode) so an /api/step response
@@ -1215,13 +1222,15 @@ export default function Home() {
         })();
     }, []);
 
-    const toggleAvoidMode = useCallback(() => {
-        setIsAvoidMode(prev => {
-            const next = !prev;
-            if (!next && avoidDraftPathRef.current.length > 0) {
-                // Finishing: commit the drawn draft as one avoided-road entry.
+    // Clicking the active kind's button finishes; clicking the other kind finishes and switches.
+    const toggleMarkMode = useCallback((kind: 'avoid' | 'prefer') => {
+        setMarkMode(prev => {
+            const next = prev === kind ? null : kind;
+            if (prev !== null && avoidDraftPathRef.current.length > 0) {
+                // Finishing: commit the drawn draft as one marked-road entry.
                 const combined = avoidDraftPathRef.current.flat() as [number, number][];
-                setRoutingOptions(ro => ({ ...ro, avoidedRoads: [...ro.avoidedRoads, combined] }));
+                const list = prev === 'avoid' ? 'avoidedRoads' : 'preferredRoads';
+                setRoutingOptions(ro => ({ ...ro, [list]: [...ro[list], combined] }));
             }
             avoidEpochRef.current++;
             avoidDraftPathRef.current = [];
@@ -1720,17 +1729,17 @@ export default function Home() {
     }, []);
 
     const handleUndo = useCallback(() => {
-        if (isAvoidMode) { handleUndoAvoidPoint(); return; }
+        if (isMarkingRoads) { handleUndoAvoidPoint(); return; }
         const { snapshot, index } = undo(historyRef.current, historyIndexRef.current);
         if (snapshot) applySnapshot(snapshot, index);
         else if (historyIndexRef.current === 0) clearPoints();
-    }, [clearPoints, applySnapshot, isAvoidMode, handleUndoAvoidPoint]);
+    }, [clearPoints, applySnapshot, isMarkingRoads, handleUndoAvoidPoint]);
 
     const handleRedo = useCallback(() => {
-        if (isAvoidMode) return; // no redo stack for the avoid draft
+        if (isMarkingRoads) return; // no redo stack for the marked-road draft
         const { snapshot, index } = redo(historyRef.current, historyIndexRef.current);
         if (snapshot) applySnapshot(snapshot, index);
-    }, [applySnapshot, isAvoidMode]);
+    }, [applySnapshot, isMarkingRoads]);
 
     useEffect(() => {
         const handleUndoShortcut = (e: KeyboardEvent) => {
@@ -2084,15 +2093,15 @@ export default function Home() {
                     <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
                         <button
                             onClick={handleUndo}
-                            disabled={isAvoidMode ? avoidDraftPoints.length === 0 : historyIndex < 0}
+                            disabled={isMarkingRoads ? avoidDraftPoints.length === 0 : historyIndex < 0}
                             className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md disabled:text-gray-200 transition-colors"
-                            title={isAvoidMode ? 'Undo last avoid point' : 'Undo last point'}
+                            title={isMarkingRoads ? 'Undo last marked point' : 'Undo last point'}
                         >
                             <Undo2 className="w-5 h-5" />
                         </button>
                         <button
                             onClick={handleRedo}
-                            disabled={isAvoidMode ? true : historyIndex >= history.length - 1}
+                            disabled={isMarkingRoads ? true : historyIndex >= history.length - 1}
                             className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-md disabled:text-gray-200 transition-colors"
                             title="Redo point"
                         >
@@ -2552,8 +2561,8 @@ export default function Home() {
                         </div>
                         <button
                             data-tour="mode-avoid"
-                            onClick={() => { setIsAvoidEraserMode(false); toggleAvoidMode(); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${isAvoidMode ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            onClick={() => { setIsAvoidEraserMode(false); toggleMarkMode('avoid'); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${markMode === 'avoid' ? 'bg-red-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                             title="Click roads to mark them as avoided. Right-click a marked section to remove just that one."
                         >
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2561,12 +2570,20 @@ export default function Home() {
                             </svg>
                             Avoid
                         </button>
+                        <button
+                            onClick={() => { setIsAvoidEraserMode(false); toggleMarkMode('prefer'); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 max-md:min-h-[44px] border-l border-gray-300 transition-colors ${markMode === 'prefer' ? 'bg-green-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            title="Click roads you like riding so routes favour them. Right-click a marked section to remove it."
+                        >
+                            <ThumbsUp className="w-4 h-4" />
+                            Prefer
+                        </button>
                     </div>
                     {(routingOptions.avoidedRoads.length > 0 || isAvoidEraserMode) && (
                         <button
                             onClick={() => {
                                 if (!isAvoidEraserMode) {
-                                    if (isAvoidMode) toggleAvoidMode();
+                                    if (markMode) toggleMarkMode(markMode);
                                     setIsSelectionMode(false);
                                     setIsLassoMode(false);
                                 }
@@ -2662,7 +2679,10 @@ export default function Home() {
                     onSelectionModeChange={setIsSelectionMode}
                     onLassoModeChange={setIsLassoMode}
                     isEraserMode={isEraserMode}
-                    isAvoidMode={isAvoidMode}
+                    isMarkingRoads={isMarkingRoads}
+                    markKind={markMode}
+                    preferredRoads={routingOptions.preferredRoads}
+                    onPreferredRoadDelete={(idx: number) => setRoutingOptions(ro => ({ ...ro, preferredRoads: ro.preferredRoads.filter((_, i) => i !== idx) }))}
                     onAvoidPointAdd={handleAvoidPointAdd}
                     avoidedRoads={routingOptions.avoidedRoads}
                     avoidDraftPath={avoidDraftPath}

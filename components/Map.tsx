@@ -25,6 +25,8 @@ L.Icon.Default.mergeOptions({
     shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
+const PREFERRED_COLOR = '#16A34A';
+
 // Cached per (color, pending) combo instead of rebuilt on every render — a fresh
 // L.divIcon each render makes react-leaflet call marker.setIcon() on every update,
 // which can collide with Leaflet's own drag-cleanup (finishDrag) and throw.
@@ -93,8 +95,11 @@ interface MapProps {
     // Where a "Suggest a Route" start was picked, shown until the suggestion arrives.
     suggestStart?: { lat: number; lon: number } | null;
     onRouteHover?: (point: { lat: number; lon: number } | null) => void;
-    // User-marked "avoid" roads (#45)
-    isAvoidMode?: boolean;
+    // User-marked "avoid" (#45) and "prefer" (#46) roads; markKind colours the draft.
+    isMarkingRoads?: boolean;
+    markKind?: 'avoid' | 'prefer' | null;
+    preferredRoads?: [number, number][][];
+    onPreferredRoadDelete?: (index: number) => void;
     onAvoidPointAdd?: (point: { lat: number; lon: number }) => void;
     avoidedRoads?: [number, number][][];
     avoidDraftPath?: [number, number][][];
@@ -491,7 +496,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, fitBoundsRequest, suggestStart, onRouteHover, isAvoidMode = false, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, fitBoundsRequest, suggestStart, onRouteHover, isMarkingRoads = false, markKind, preferredRoads, onPreferredRoadDelete, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -775,10 +780,10 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
     const handleMapClick = useCallback((latlng: L.LatLng) => {
         if (isPickingStart) { onStartPick?.(latlng.lat, latlng.lng); return; }
-        if (isAvoidMode) { onAvoidPointAdd?.({ lat: latlng.lat, lon: latlng.lng }); return; }
+        if (isMarkingRoads) { onAvoidPointAdd?.({ lat: latlng.lat, lon: latlng.lng }); return; }
         if (isSelectionMode || isLassoMode || isEraserMode) return;
         onPointAdd({ lat: latlng.lat, lon: latlng.lng });
-    }, [onPointAdd, onAvoidPointAdd, isSelectionMode, isLassoMode, isEraserMode, isAvoidMode, isPickingStart, onStartPick]);
+    }, [onPointAdd, onAvoidPointAdd, isSelectionMode, isLassoMode, isEraserMode, isMarkingRoads, isPickingStart, onStartPick]);
 
     // Split route into normal and construction segments
     const { normalSegments, constructionSegments, hasConstruction } = React.useMemo(() => {
@@ -1024,9 +1029,52 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                     </Polyline>
                 ))}
 
+                {/* User-marked preferred roads (#46): green, so they read as the opposite of avoided. */}
+                {preferredRoads && preferredRoads.map((road, idx) => (
+                    <Polyline
+                        key={`preferred-${idx}`}
+                        positions={road as [number, number][]}
+                        color={PREFERRED_COLOR}
+                        weight={5}
+                        opacity={0.6}
+                        interactive={false}
+                    />
+                ))}
+                {preferredRoads && onPreferredRoadDelete && preferredRoads.map((road, idx) => (
+                    <Polyline
+                        key={`preferred-hitbox-${idx}`}
+                        positions={road as [number, number][]}
+                        color={PREFERRED_COLOR}
+                        weight={16}
+                        opacity={0}
+                        interactive={true}
+                        bubblingMouseEvents={true}
+                        eventHandlers={{
+                            contextmenu: (e) => {
+                                e.originalEvent.preventDefault();
+                                onPreferredRoadDelete(idx);
+                            },
+                        }}
+                    >
+                        <Tooltip sticky>Right-click to stop preferring this section</Tooltip>
+                    </Polyline>
+                ))}
+
+                {/* In-progress preferred-road draft (#46): lighter green until finalized. */}
+                {markKind === 'prefer' && avoidDraftPath && avoidDraftPath.map((segment, idx) => (
+                    <Polyline
+                        key={`preferred-draft-${idx}`}
+                        positions={segment as [number, number][]}
+                        color={PREFERRED_COLOR}
+                        weight={4}
+                        opacity={0.4}
+                        interactive={false}
+                    />
+                ))}
+
                 {/* In-progress avoid-segment draft (#45) — same black/white hash as the
                     committed lines above, just lighter/thinner until finalized */}
-                {avoidDraftPath && avoidDraftPath.map((segment, idx) => (
+                {markKind !== 'prefer' && avoidDraftPath && avoidDraftPath.map((segment, idx) => (
                     <React.Fragment key={`avoided-draft-${idx}`}>
                         <Polyline
                             positions={segment as [number, number][]}
