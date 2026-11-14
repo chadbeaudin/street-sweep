@@ -2403,7 +2403,7 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 max-w-[calc(100%-32px)]">
                         <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
                         <span className="text-sm font-bold text-indigo-900 tracking-tight">
-                            Planning a ride like your usual one&hellip; this can take up to a minute
+                            Planning a ride like your usual one&hellip;
                         </span>
                     </div>
                 )}
