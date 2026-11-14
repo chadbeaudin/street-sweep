@@ -1,15 +1,15 @@
 import { haversineM } from './geometry';
 
-// "Suggest a Route" (#80): find the ride the rider repeats most, then lay
-// waypoints along it. The normal point router connects them preferring
-// unridden streets, so the suggestion keeps the familiar start, shape and
-// length while drifting onto fresh streets between waypoints.
+// "Suggest a Route" (#80): find the ride the rider repeats most -- its distance and
+// climbing are what a suggestion aims for (lib/suggestLoop.ts) -- and lay the chosen
+// loop out as waypoints the client routes like clicked points.
 
 export interface RideTrack {
     id: number;
     name: string;
     startDate: string;
     distanceM: number;
+    elevationGainM: number;
     poly: [number, number][]; // [lat, lon]
 }
 
@@ -25,8 +25,8 @@ const SIMILARITY_CELL_M = 100;
 export const SAME_ROUTE_SIMILARITY = 0.6;
 // Pairwise comparison is quadratic; the most recent rides best reflect current habits.
 const MAX_RIDES_COMPARED = 400;
-// A ride starting within this of the chosen start is ridden from there as-is.
-export const LOCAL_RADIUS_M = 3_000;
+// Rides starting within this of the chosen start set the target; otherwise all rides do.
+export const LOCAL_RADIUS_M = 15_000;
 
 // Cell (y, x) packed into one number; |x| stays far below ROW for any longitude.
 const ROW = 1_000_000;
@@ -147,16 +147,6 @@ export function waypointsAlong(poly: [number, number][], spacingM: number): { la
 // for the router to pick unridden streets.
 export function waypointSpacingM(distanceM: number): number {
     return Math.min(3000, Math.max(1000, distanceM / 12));
-}
-
-// Moves a ride so it starts at `start`, keeping its shape and size in metres --
-// how a familiar ride is carried to an area the rider hasn't ridden from.
-export function translateRide(poly: [number, number][], start: { lat: number; lon: number }): [number, number][] {
-    if (poly.length === 0) return [];
-    const [lat0, lon0] = poly[0];
-    const fromCos = Math.cos(lat0 * Math.PI / 180);
-    const toCos = Math.cos(start.lat * Math.PI / 180);
-    return poly.map(([lat, lon]) => [start.lat + (lat - lat0), start.lon + (lon - lon0) * fromCos / toCos]);
 }
 
 type Bounds = { south: number; west: number; north: number; east: number };

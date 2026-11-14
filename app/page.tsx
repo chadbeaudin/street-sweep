@@ -25,7 +25,7 @@ import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { MaintenanceNotice } from '@/components/MaintenanceNotice';
 import { useUnits } from '@/components/UnitsContext';
-import { elevationFromFeet, elevationUnit, distanceFromMiles, distanceUnit } from '@/lib/units';
+import { elevationFromFeet, elevationUnit, distanceFromMeters, distanceUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
 import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint } from '@/lib/pointMove';
@@ -223,7 +223,7 @@ export default function Home() {
     const [isImporting, setIsImporting] = useState(false);
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
-    const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceMiles: number; moved: boolean } | null>(null);
+    const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceM: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
@@ -1658,7 +1658,7 @@ export default function Home() {
             const res = await fetch('/api/suggest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ start, activityMode }),
+                body: JSON.stringify({ start, activityMode, routingOptions: routingOptionsRef.current }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Could not suggest a route');
@@ -1667,7 +1667,7 @@ export default function Home() {
             setFitBoundsRequest(bounds);
             clearPoints();
             for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
-            setSuggestion({ rideName: data.rideName, timesRidden: data.timesRidden, distanceMiles: data.distanceMiles, moved: data.moved });
+            setSuggestion(data.usual);
         } catch (err: any) {
             setError({ message: err.message });
         } finally {
@@ -2400,7 +2400,7 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur pl-5 pr-2 py-1.5 rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 max-w-[calc(100%-32px)]">
                         <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
                         <span className="text-sm text-indigo-900 truncate">
-                            {suggestion.moved ? 'Shaped like' : 'Like'} &ldquo;{suggestion.rideName}&rdquo; ({suggestion.timesRidden === 1 ? 'your latest ride' : `ridden ${suggestion.timesRidden} times`}, {distanceFromMiles(suggestion.distanceMiles, units).toFixed(1)} {distanceUnit(units)})
+                            About {distanceFromMeters(suggestion.distanceM, units).toFixed(1)} {distanceUnit(units)} with similar climbing to your usual &ldquo;{suggestion.rideName}&rdquo;{suggestion.timesRidden > 1 ? ` (ridden ${suggestion.timesRidden} times)` : ''}
                         </span>
                         <button onClick={() => setSuggestion(null)} className="p-1 rounded-full hover:bg-indigo-50 text-indigo-700 shrink-0" title="Dismiss">
                             <X className="w-4 h-4" />

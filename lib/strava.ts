@@ -150,7 +150,7 @@ export async function fetchActivitiesForYear(creds: { clientId?: string; clientS
 }
 
 // Every real-world ride of the mode as a track, preferring the stored full-resolution
-// polyline -- used to find the rider's most common route (#80).
+// polyline -- used to find the rider's most common route and mark ridden streets (#80).
 export async function fetchRideTracks(creds: { clientId?: string; clientSecret?: string; refreshToken?: string; athleteId?: string } | undefined, mode: ActivityMode): Promise<RideTrack[]> {
     const all = await getCachedOrFetchActivities(creds, { staleOk: true });
     const candidates = all.filter(a => isModeActivity(a.sport_type || a.type, mode));
@@ -164,6 +164,7 @@ export async function fetchRideTracks(creds: { clientId?: string; clientSecret?:
             name: a.name,
             startDate: a.start_date ?? '',
             distanceM: a.distance ?? 0,
+            elevationGainM: a.total_elevation_gain ?? 0,
             poly: polyline.decode(detailByActivity.get(a.id.toString()) || a.map.summary_polyline) as [number, number][],
         }))
         .filter(r => isRealTrack(r.poly));

@@ -1,4 +1,4 @@
-import { boundsOf, suggestionStepBbox, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, translateRide, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
+import { boundsOf, suggestionStepBbox, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
 import { haversineM } from './geometry';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -23,7 +23,7 @@ function loop(w: number, h: number, origin = HOME, jitter = 0): [number, number]
 
 let nextId = 1;
 const ride = (poly: [number, number][], startDate = '2026-10-01T00:00:00Z', name = 'Ride'): RideTrack =>
-    ({ id: nextId++, name, startDate, distanceM: 0, poly });
+    ({ id: nextId++, name, startDate, distanceM: 0, elevationGainM: 0, poly });
 
 describe('routeSimilarity (#80)', () => {
     it('treats the same loop with GPS noise as the same route', () => {
@@ -89,17 +89,6 @@ describe('waypointSpacingM (#80)', () => {
         expect(waypointSpacingM(24_000)).toBe(2000);
         expect(waypointSpacingM(5_000)).toBe(1000);
         expect(waypointSpacingM(100_000)).toBe(3000);
-    });
-});
-
-describe('translateRide (#80)', () => {
-    it('moves a ride to a new start keeping its size in metres', () => {
-        const ride = loop(3, 2);
-        const away = { lat: 40.76, lon: -111.89 };
-        const moved = translateRide(ride, away);
-        expect(moved[0]).toEqual([away.lat, away.lon]);
-        const len = (p: [number, number][]) => p.slice(1).reduce((m, q, k) => m + haversineM(p[k][0], p[k][1], q[0], q[1]), 0);
-        expect(len(moved)).toBeCloseTo(len(ride), -1);
     });
 });
 
