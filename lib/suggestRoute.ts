@@ -169,6 +169,19 @@ export function boundsOf(points: { lat: number; lon: number }[]): Bounds {
     };
 }
 
-export function boundsContain(outer: Bounds, inner: Bounds): boolean {
-    return outer.south <= inner.south && outer.north >= inner.north && outer.west <= inner.west && outer.east >= inner.east;
+// The area a suggested point is routed in. The step router fetches streets for this
+// box, and a box over the 0.5° Overpass limit returns no streets at all, so it can't
+// be the map view (that depends on window size). The whole ride when it fits; for a
+// very long ride, the area around each point (the router adds the previous point).
+const STEP_PAD_DEG = 0.01;
+const MAX_STEP_SPAN_DEG = 0.45;
+const LEG_PAD_DEG = 0.02;
+
+export function suggestionStepBbox(rideBounds: Bounds, point: { lat: number; lon: number }): Bounds {
+    const padded = {
+        south: rideBounds.south - STEP_PAD_DEG, north: rideBounds.north + STEP_PAD_DEG,
+        west: rideBounds.west - STEP_PAD_DEG, east: rideBounds.east + STEP_PAD_DEG,
+    };
+    if (padded.north - padded.south <= MAX_STEP_SPAN_DEG && padded.east - padded.west <= MAX_STEP_SPAN_DEG) return padded;
+    return { south: point.lat - LEG_PAD_DEG, north: point.lat + LEG_PAD_DEG, west: point.lon - LEG_PAD_DEG, east: point.lon + LEG_PAD_DEG };
 }

@@ -1,4 +1,4 @@
-import { boundsOf, boundsContain, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, resolveAnchor, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
+import { boundsOf, suggestionStepBbox, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, resolveAnchor, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
 import { haversineM } from './geometry';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -97,11 +97,26 @@ describe('waypointSpacingM / resolveAnchor (#80)', () => {
     });
 });
 
-describe('boundsOf / boundsContain (#80)', () => {
-    it('wraps the points and checks the map view covers them', () => {
-        const b = boundsOf([{ lat: 1, lon: 5 }, { lat: 3, lon: 2 }]);
-        expect(b).toEqual({ south: 1, north: 3, west: 2, east: 5 });
-        expect(boundsContain({ south: 0, north: 4, west: 1, east: 6 }, b)).toBe(true);
-        expect(boundsContain({ south: 2, north: 4, west: 1, east: 6 }, b)).toBe(false);
+describe('boundsOf (#80)', () => {
+    it('wraps the points', () => {
+        expect(boundsOf([{ lat: 1, lon: 5 }, { lat: 3, lon: 2 }])).toEqual({ south: 1, north: 3, west: 2, east: 5 });
+    });
+});
+
+describe('suggestionStepBbox (#80)', () => {
+    it('routes every point within the padded ride, whatever the window size', () => {
+        const ride = { south: 47.54, north: 47.65, west: -117.44, east: -117.35 };
+        const box = suggestionStepBbox(ride, { lat: 47.6, lon: -117.4 });
+        expect(box.south).toBeCloseTo(47.53);
+        expect(box.north).toBeCloseTo(47.66);
+        expect(box.west).toBeCloseTo(-117.45);
+        expect(box.east).toBeCloseTo(-117.34);
+    });
+
+    it('falls back to the area around each point for a ride too large to fetch at once', () => {
+        const box = suggestionStepBbox({ south: 47.0, north: 47.8, west: -117.5, east: -117.3 }, { lat: 47.2, lon: -117.4 });
+        expect(box.north - box.south).toBeCloseTo(0.04);
+        expect(box.east - box.west).toBeCloseTo(0.04);
+        expect(box.south).toBeCloseTo(47.18);
     });
 });

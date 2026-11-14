@@ -7,7 +7,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
-import { boundsOf, boundsContain } from '@/lib/suggestRoute';
+import { boundsOf, suggestionStepBbox } from '@/lib/suggestRoute';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
@@ -1231,12 +1231,12 @@ export default function Home() {
         });
     }, []);
 
-    const addPoint = useCallback((point: { lat: number; lon: number }) => {
+    const addPoint = useCallback((point: { lat: number; lon: number }, routingBbox?: { south: number; west: number; north: number; east: number }) => {
         if (isDraggingRef.current) return;
         isImportedRouteRef.current = false;
         setIsImportedRoute(false);
 
-        const currentBbox = bboxRef.current;
+        const currentBbox = routingBbox ?? bboxRef.current;
         if (!currentBbox) return;
 
         // De-duplicate: don't add point if it's too close to the last one (prevents drag-ghosting)
@@ -1667,16 +1667,10 @@ export default function Home() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Could not suggest a route');
 
-            // Points are routed within the visible map, so show the whole ride first.
             const bounds = boundsOf(data.waypoints);
             setFitBoundsRequest(bounds);
-            const deadline = Date.now() + 3000;
-            while (!(bboxRef.current && boundsContain(bboxRef.current, bounds)) && Date.now() < deadline) {
-                await new Promise(r => setTimeout(r, 100));
-            }
-
             clearPoints();
-            for (const p of data.waypoints) addPoint(p);
+            for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
             setSuggestion({ rideName: data.rideName, timesRidden: data.timesRidden, distanceMiles: data.distanceMiles });
         } catch (err: any) {
             setError({ message: err.message });
