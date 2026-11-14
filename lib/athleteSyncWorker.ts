@@ -47,6 +47,8 @@ async function credsFor(athleteId: string, events: StravaSyncEvent[]): Promise<{
 
 // Strava doesn't sign webhook events, so a revocation is only believed once the
 // athlete's token has stopped working (#189). An outage throws, and the batch retries.
+// With no stored token there is nothing to confirm against and nothing to rebuild
+// the cache from, so a deauthorize purges -- the safe choice for Strava compliance (#199).
 async function accessRevoked(athleteId: string, events: StravaSyncEvent[]): Promise<boolean> {
     const resolved = await credsFor(athleteId, events);
     if (!resolved) return true;

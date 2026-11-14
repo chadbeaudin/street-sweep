@@ -9,13 +9,21 @@ import { safeEqual } from '@/lib/secureCompare';
 // Strava push subscription callback (#118). Strava gives up on an event after
 // a few retries if this doesn't answer 200 within 2 seconds, so it only queues
 // the event; the worker machine does the actual work (lib/athleteSyncWorker.ts).
-// Register the subscription with scripts/strava-webhook.js.
+// Register the subscription with scripts/strava-webhook.js, with
+// ?key=<STRAVA_WEBHOOK_CALLBACK_SECRET> on the callback URL.
+
+// Strava doesn't sign events, and the subscription id is a guessable integer,
+// so the callback URL carries a secret only Strava knows (#199).
+function hasCallbackSecret(request: Request): boolean {
+    const secret = process.env.STRAVA_WEBHOOK_CALLBACK_SECRET;
+    return !!secret && safeEqual(new URL(request.url).searchParams.get('key') ?? '', secret);
+}
 
 // Subscription validation handshake, sent once when the subscription is created.
 async function handleGET(request: Request) {
     const params = new URL(request.url).searchParams;
     const verifyToken = process.env.STRAVA_WEBHOOK_VERIFY_TOKEN;
-    if (!verifyToken || params.get('hub.mode') !== 'subscribe' || !safeEqual(params.get('hub.verify_token') ?? '', verifyToken)) {
+    if (!hasCallbackSecret(request) || !verifyToken || params.get('hub.mode') !== 'subscribe' || !safeEqual(params.get('hub.verify_token') ?? '', verifyToken)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json({ 'hub.challenge': params.get('hub.challenge') });
@@ -31,6 +39,10 @@ const Event = z.object({
 });
 
 async function handlePOST(request: Request) {
+    if (!hasCallbackSecret(request)) {
+        incrementMetric('webhook.rejected');
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
     const parsed = await parseBody(request, Event);
     if ('error' in parsed) return parsed.error;
     const event = parsed.data;
