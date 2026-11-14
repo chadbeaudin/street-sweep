@@ -13,6 +13,18 @@ function jobBlock(name: string): string {
 }
 
 describe('deploy config', () => {
+    it('pins every action to a full commit SHA (#198)', () => {
+        const uses = [...workflow.matchAll(/uses: (\S+)/g)].map(m => m[1]);
+        expect(uses.length).toBeGreaterThan(0);
+        for (const ref of uses) expect(ref).toMatch(/@[0-9a-f]{40}$/);
+    });
+
+    it('defaults the token to read-only and grants write only to deploy-fly (#198)', () => {
+        expect(workflow).toMatch(/^permissions:\n  contents: read$/m);
+        expect(jobBlock('deploy-fly')).toMatch(/permissions:\n\s+contents: write/);
+        for (const job of ['test', 'build-and-push', 'publish-dockerhub']) expect(jobBlock(job)).not.toContain('contents: write');
+    });
+
     it('only publishes the DockerHub :latest image the worker auto-pulls after tests pass', () => {
         const job = jobBlock('publish-dockerhub');
         expect(job).toMatch(/needs: \[.*\btest\b.*\]/);

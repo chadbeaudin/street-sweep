@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { parseBody } from '@/lib/validation';
 import { enqueueAthleteSync } from '@/lib/athleteSyncQueue';
+import { safeEqual } from '@/lib/secureCompare';
 
 // Strava push subscription callback (#118). Strava gives up on an event after
 // a few retries if this doesn't answer 200 within 2 seconds, so it only queues
@@ -14,7 +15,7 @@ import { enqueueAthleteSync } from '@/lib/athleteSyncQueue';
 async function handleGET(request: Request) {
     const params = new URL(request.url).searchParams;
     const verifyToken = process.env.STRAVA_WEBHOOK_VERIFY_TOKEN;
-    if (!verifyToken || params.get('hub.mode') !== 'subscribe' || params.get('hub.verify_token') !== verifyToken) {
+    if (!verifyToken || params.get('hub.mode') !== 'subscribe' || !safeEqual(params.get('hub.verify_token') ?? '', verifyToken)) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
     return NextResponse.json({ 'hub.challenge': params.get('hub.challenge') });

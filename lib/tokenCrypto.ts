@@ -26,13 +26,9 @@ export function encryptToken(plain: string): string {
     return [VERSION, iv.toString('base64'), tag.toString('base64'), encrypted.toString('base64')].join(':');
 }
 
-// Tolerates plaintext values written before this encryption was added
-// (existing test-only Account rows from this session) -- anything not
-// matching the versioned ciphertext shape is returned as-is rather than
-// throwing, so old rows keep working until they're naturally re-linked.
 export function decryptToken(value: string): string {
     const parts = value.split(':');
-    if (parts.length !== 4 || parts[0] !== VERSION) return value;
+    if (parts.length !== 4 || parts[0] !== VERSION) throw new Error('Token is not in encrypted format');
 
     const [, ivB64, tagB64, dataB64] = parts;
     try {

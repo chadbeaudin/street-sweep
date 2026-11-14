@@ -1,10 +1,26 @@
 import { withApiMetrics } from '@/lib/metrics';
 import { NextResponse } from 'next/server';
 import { errorResponse } from '@/lib/apiErrors';
+import { configuredBaseUrl } from '@/lib/baseUrl';
+import { safeEqual } from '@/lib/secureCompare';
+
+const STATE_COOKIE = 'rwgps_oauth_state';
+
+function readCookie(req: Request, name: string): string | undefined {
+    return req.headers.get('cookie')?.split(';')
+        .map(c => c.trim())
+        .find(c => c.startsWith(`${name}=`))
+        ?.slice(name.length + 1);
+}
 
 async function handlePOST(req: Request) {
     try {
-        const { code } = await req.json();
+        const { code, state } = await req.json();
+
+        const expectedState = readCookie(req, STATE_COOKIE);
+        if (typeof state !== 'string' || !expectedState || !safeEqual(state, expectedState)) {
+            return NextResponse.json({ error: 'Invalid state. Please try connecting again.' }, { status: 400 });
+        }
 
         const clientId = process.env.RWGPS_OAUTH_CLIENT_ID;
         const clientSecret = process.env.RWGPS_OAUTH_CLIENT_SECRET;
@@ -16,13 +32,7 @@ async function handlePOST(req: Request) {
             );
         }
 
-        // req.url's host reflects the server's own bind address (e.g. 0.0.0.0:3888) when
-        // running the standalone server behind a reverse proxy (Fly.io, etc.) rather than
-        // the real incoming request — the Host/X-Forwarded-* headers are the reliable source.
-        const proto = req.headers.get('x-forwarded-proto') || new URL(req.url).protocol.replace(':', '');
-        const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || new URL(req.url).host;
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${host}`;
-        const redirectUri = `${baseUrl}/rwgps-auth`;
+        const redirectUri = `${configuredBaseUrl()}/rwgps-auth`;
 
         const params = new URLSearchParams();
         params.append('grant_type', 'authorization_code');
@@ -44,7 +54,9 @@ async function handlePOST(req: Request) {
             return NextResponse.json({ error: 'Connecting to RideWithGPS failed. Try again.' }, { status: response.status });
         }
 
-        return NextResponse.json({ access_token: data.access_token });
+        const ok = NextResponse.json({ access_token: data.access_token });
+        ok.cookies.set(STATE_COOKIE, '', { maxAge: 0, path: '/' });
+        return ok;
     } catch (error: any) {
         return errorResponse(error, 'RideWithGPS OAuth Exchange Error:', 'Connecting to RideWithGPS failed. Try again.');
     }
