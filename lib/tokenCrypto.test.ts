@@ -27,9 +27,9 @@ describe('tokenCrypto', () => {
         expect(a).not.toBe(b);
     });
 
-    it('passes through a legacy plaintext value unchanged (pre-encryption rows)', () => {
+    it('throws on a plaintext value instead of passing it through', () => {
         const { decryptToken } = require('./tokenCrypto');
-        expect(decryptToken('plain-old-refresh-token')).toBe('plain-old-refresh-token');
+        expect(() => decryptToken('plain-old-refresh-token')).toThrow('Token is not in encrypted format');
     });
 
     it('throws on tampered ciphertext rather than returning garbage', () => {
