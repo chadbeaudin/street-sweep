@@ -1,4 +1,4 @@
-import { boundsOf, suggestionStepBbox, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, resolveAnchor, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
+import { boundsOf, suggestionStepBbox, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, translateRide, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
 import { haversineM } from './geometry';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -52,8 +52,11 @@ describe('findMostCommonRide (#80)', () => {
         expect(haversineM(HOME.lat, HOME.lon, away.lat, away.lon)).toBeGreaterThan(LOCAL_RADIUS_M);
     });
 
-    it('returns null with no local rides', () => {
+    it('returns null with no local rides, and searches everywhere given no radius limit', () => {
         expect(findMostCommonRide([], HOME)).toBeNull();
+        const away = { lat: 40.76, lon: -111.89 };
+        expect(findMostCommonRide([ride(loop(3, 2))], away)).toBeNull();
+        expect(findMostCommonRide([ride(loop(3, 2), '2026-10-01T00:00:00Z', 'Home loop')], away, Infinity)!.ride.name).toBe('Home loop');
     });
 
     it('prefers the most recent ride when nothing repeats', () => {
@@ -81,19 +84,22 @@ describe('waypointsAlong (#80)', () => {
     });
 });
 
-describe('waypointSpacingM / resolveAnchor (#80)', () => {
+describe('waypointSpacingM (#80)', () => {
     it('keeps about a dozen legs within 1-3 km spacing', () => {
         expect(waypointSpacingM(24_000)).toBe(2000);
         expect(waypointSpacingM(5_000)).toBe(1000);
         expect(waypointSpacingM(100_000)).toBe(3000);
     });
+});
 
-    it('anchors at home unless the map is far away or there is no home', () => {
-        const near = { lat: HOME.lat + 0.1, lon: HOME.lon };
-        const far = { lat: 40.76, lon: -111.89 };
-        expect(resolveAnchor(HOME, near)).toBe(HOME);
-        expect(resolveAnchor(HOME, far)).toBe(far);
-        expect(resolveAnchor(null, near)).toBe(near);
+describe('translateRide (#80)', () => {
+    it('moves a ride to a new start keeping its size in metres', () => {
+        const ride = loop(3, 2);
+        const away = { lat: 40.76, lon: -111.89 };
+        const moved = translateRide(ride, away);
+        expect(moved[0]).toEqual([away.lat, away.lon]);
+        const len = (p: [number, number][]) => p.slice(1).reduce((m, q, k) => m + haversineM(p[k][0], p[k][1], q[0], q[1]), 0);
+        expect(len(moved)).toBeCloseTo(len(ride), -1);
     });
 });
 

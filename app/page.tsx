@@ -222,7 +222,8 @@ export default function Home() {
     const [routeName, setRouteName] = useState('StreetSweep Route');
     const [isImporting, setIsImporting] = useState(false);
     const [isSuggesting, setIsSuggesting] = useState(false);
-    const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceMiles: number } | null>(null);
+    const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
+    const [suggestion, setSuggestion] = useState<{ rideName: string; timesRidden: number; distanceMiles: number; moved: boolean } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
@@ -1649,20 +1650,15 @@ export default function Home() {
 
     // "Suggest a Route" (#80): waypoints along the rider's most common ride, added as
     // ordinary points so the point router connects them preferring unridden streets.
-    const handleSuggestRoute = useCallback(async () => {
-        const view = bboxRef.current;
-        if (!view) return;
+    const handleSuggestRoute = useCallback(async (start: { lat: number; lon: number }) => {
+        setPickingSuggestStart(false);
         setIsSuggesting(true);
         setError(null);
         try {
             const res = await fetch('/api/suggest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    mapCenter: { lat: (view.north + view.south) / 2, lon: (view.east + view.west) / 2 },
-                    home: startPointRef.current,
-                    activityMode,
-                }),
+                body: JSON.stringify({ start, activityMode }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Could not suggest a route');
@@ -1671,7 +1667,7 @@ export default function Home() {
             setFitBoundsRequest(bounds);
             clearPoints();
             for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
-            setSuggestion({ rideName: data.rideName, timesRidden: data.timesRidden, distanceMiles: data.distanceMiles });
+            setSuggestion({ rideName: data.rideName, timesRidden: data.timesRidden, distanceMiles: data.distanceMiles, moved: data.moved });
         } catch (err: any) {
             setError({ message: err.message });
         } finally {
@@ -1838,10 +1834,10 @@ export default function Home() {
                     </button>
                     {canSuggest && (
                         <button
-                            onClick={handleSuggestRoute}
+                            onClick={() => setPickingSuggestStart(true)}
                             disabled={isSuggesting}
                             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm disabled:opacity-60"
-                            title="Build a route like the ride you do most, taking unridden streets where it can"
+                            title="Pick a start point and get a route like the ride you do most, taking unridden streets where it can"
                         >
                             {isSuggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                             Suggest
@@ -2258,7 +2254,7 @@ export default function Home() {
                                     </button>
                                     {canSuggest && (
                                         <button
-                                            onClick={() => { handleSuggestRoute(); setShowMobileMenu(false); }}
+                                            onClick={() => { setPickingSuggestStart(true); setShowMobileMenu(false); }}
                                             disabled={isSuggesting}
                                             className="w-full text-left px-4 py-2.5 min-h-[44px] text-sm text-gray-700 hover:bg-gray-100 flex items-center disabled:opacity-60"
                                         >
@@ -2404,7 +2400,7 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur pl-5 pr-2 py-1.5 rounded-full shadow-lg border border-indigo-100 flex items-center gap-2 max-w-[calc(100%-32px)]">
                         <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
                         <span className="text-sm text-indigo-900 truncate">
-                            Like &ldquo;{suggestion.rideName}&rdquo; ({suggestion.timesRidden === 1 ? 'your latest ride' : `ridden ${suggestion.timesRidden} times`}, {distanceFromMiles(suggestion.distanceMiles, units).toFixed(1)} {distanceUnit(units)})
+                            {suggestion.moved ? 'Shaped like' : 'Like'} &ldquo;{suggestion.rideName}&rdquo; ({suggestion.timesRidden === 1 ? 'your latest ride' : `ridden ${suggestion.timesRidden} times`}, {distanceFromMiles(suggestion.distanceMiles, units).toFixed(1)} {distanceUnit(units)})
                         </span>
                         <button onClick={() => setSuggestion(null)} className="p-1 rounded-full hover:bg-indigo-50 text-indigo-700 shrink-0" title="Dismiss">
                             <X className="w-4 h-4" />
@@ -2508,6 +2504,12 @@ export default function Home() {
                         </span>
                     </div>
                 )}
+                {pickingSuggestStart && (
+                    <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-indigo-600 text-white rounded-full shadow-lg px-4 py-1.5 text-sm font-medium max-w-[calc(100%-32px)]">
+                        <Sparkles className="w-4 h-4 shrink-0" /> Click the map where your ride should start
+                        <button onClick={() => setPickingSuggestStart(false)} className="ml-1 text-white/80 hover:text-white"><X className="w-4 h-4" /></button>
+                    </div>
+                )}
                 {pickingStart && (
                     <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2 bg-indigo-600 text-white rounded-full shadow-lg px-4 py-1.5 text-sm font-medium">
                         <HomeIcon className="w-4 h-4" /> Click the map to set your start point
@@ -2601,8 +2603,8 @@ export default function Home() {
                     precomputedRidden={precomputedRidden}
                     matchedRiddenTiles={matchedRiddenTiles}
                     startPoint={startPoint}
-                    isPickingStart={pickingStart}
-                    onStartPick={handleStartPick}
+                    isPickingStart={pickingStart || pickingSuggestStart}
+                    onStartPick={pickingSuggestStart ? (lat: number, lon: number) => handleSuggestRoute({ lat, lon }) : handleStartPick}
                     selectedPoints={selectedPoints}
                     onPointAdd={handlePointAdd}
                     onPointMove={handlePointMove}

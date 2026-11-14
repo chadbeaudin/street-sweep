@@ -25,30 +25,43 @@ beforeEach(() => {
 describe('POST /api/suggest (#80)', () => {
     it('rejects a caller who is not signed in with Strava', async () => {
         (resolveRequestStravaCredentials as jest.Mock).mockResolvedValue(null);
-        await post({ mapCenter: HOME });
+        await post({ start: HOME });
         expect(lastResponse()[1]).toEqual({ status: 401 });
         expect(fetchRideTracks).not.toHaveBeenCalled();
     });
 
-    it('rejects a missing map centre', async () => {
+    it('rejects a missing start', async () => {
         await post({});
         expect(lastResponse()[1]).toEqual({ status: 400 });
     });
 
     it('returns waypoints along the most common ride, closing the loop at its start', async () => {
-        await post({ mapCenter: HOME, home: HOME });
+        const start = { lat: HOME.lat + 0.005, lon: HOME.lon };
+        await post({ start });
         const data = lastResponse()[0];
-        expect(data).toMatchObject({ rideName: 'Hill repeat', timesRidden: 2 });
+        expect(data).toMatchObject({ rideName: 'Hill repeat', timesRidden: 2, moved: false });
         expect(data.distanceMiles).toBeCloseTo(3.73, 1);
-        expect(data.waypoints[0]).toEqual(HOME);
-        expect(data.waypoints[data.waypoints.length - 1]).toEqual(HOME);
+        expect(data.waypoints[0]).toEqual(start);
+        expect(data.waypoints[data.waypoints.length - 1]).toEqual(start);
+        expect(data.waypoints[1].lat).toBeGreaterThan(start.lat); // follows the ride north
         expect(data.waypoints.length).toBeGreaterThan(3);
         expect(fetchRideTracks).toHaveBeenCalledWith({ refreshToken: 'r', athleteId: '1' }, 'cycling');
     });
 
-    it('says so when no ride starts near the anchor', async () => {
-        await post({ mapCenter: { lat: 40.76, lon: -111.89 }, home: null, activityMode: 'running' });
-        expect(lastResponse()[1]).toEqual({ status: 404 });
+    it('moves the most common ride to a start with no rides nearby', async () => {
+        const away = { lat: 40.76, lon: -111.89 };
+        await post({ start: away, activityMode: 'running' });
+        const data = lastResponse()[0];
+        expect(data).toMatchObject({ rideName: 'Hill repeat', moved: true });
+        expect(data.waypoints[0]).toEqual(away);
+        expect(data.waypoints[1].lat).toBeGreaterThan(away.lat);
+        expect(data.waypoints[1].lat).toBeLessThan(away.lat + 0.03);
         expect(fetchRideTracks).toHaveBeenCalledWith(expect.anything(), 'running');
+    });
+
+    it('says so when there are no rides at all', async () => {
+        (fetchRideTracks as jest.Mock).mockResolvedValue([]);
+        await post({ start: HOME });
+        expect(lastResponse()[1]).toEqual({ status: 404 });
     });
 });

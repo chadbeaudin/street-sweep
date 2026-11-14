@@ -25,8 +25,8 @@ const SIMILARITY_CELL_M = 100;
 export const SAME_ROUTE_SIMILARITY = 0.6;
 // Pairwise comparison is quadratic; the most recent rides best reflect current habits.
 const MAX_RIDES_COMPARED = 400;
-// Rides starting farther than this from the anchor belong to another area (e.g. a trip).
-export const LOCAL_RADIUS_M = 15_000;
+// A ride starting within this of the chosen start is ridden from there as-is.
+export const LOCAL_RADIUS_M = 3_000;
 
 // Cell (y, x) packed into one number; |x| stays far below ROW for any longitude.
 const ROW = 1_000_000;
@@ -80,12 +80,12 @@ function pathLengthM(poly: [number, number][]): number {
 // the pairwise comparison fast on a long ride history.
 const MAX_LENGTH_RATIO = 2;
 
-// The rider's most common ride near `anchor`: the ride that the most other
-// rides closely match. Similarity is symmetric, so a short ride that merely
-// sits inside longer loops doesn't count as repeating them.
-export function findMostCommonRide(rides: RideTrack[], anchor: { lat: number; lon: number }): CommonRide | null {
+// The rider's most common ride starting within `radiusM` of `anchor`: the ride
+// that the most other rides closely match. Similarity is symmetric, so a short
+// ride that merely sits inside longer loops doesn't count as repeating them.
+export function findMostCommonRide(rides: RideTrack[], anchor: { lat: number; lon: number }, radiusM = LOCAL_RADIUS_M): CommonRide | null {
     const local = rides
-        .filter(r => r.poly.length >= 2 && haversineM(anchor.lat, anchor.lon, r.poly[0][0], r.poly[0][1]) <= LOCAL_RADIUS_M)
+        .filter(r => r.poly.length >= 2 && haversineM(anchor.lat, anchor.lon, r.poly[0][0], r.poly[0][1]) <= radiusM)
         .sort((a, b) => b.startDate.localeCompare(a.startDate))
         .slice(0, MAX_RIDES_COMPARED);
     if (local.length === 0) return null;
@@ -149,13 +149,14 @@ export function waypointSpacingM(distanceM: number): number {
     return Math.min(3000, Math.max(1000, distanceM / 12));
 }
 
-// Home normally; the map's centre when the rider has panned far from home
-// (travelling) or has no home set.
-export const TRAVELLING_THRESHOLD_M = 50_000;
-
-export function resolveAnchor(home: { lat: number; lon: number } | null, mapCenter: { lat: number; lon: number }): { lat: number; lon: number } {
-    if (!home) return mapCenter;
-    return haversineM(home.lat, home.lon, mapCenter.lat, mapCenter.lon) > TRAVELLING_THRESHOLD_M ? mapCenter : home;
+// Moves a ride so it starts at `start`, keeping its shape and size in metres --
+// how a familiar ride is carried to an area the rider hasn't ridden from.
+export function translateRide(poly: [number, number][], start: { lat: number; lon: number }): [number, number][] {
+    if (poly.length === 0) return [];
+    const [lat0, lon0] = poly[0];
+    const fromCos = Math.cos(lat0 * Math.PI / 180);
+    const toCos = Math.cos(start.lat * Math.PI / 180);
+    return poly.map(([lat, lon]) => [start.lat + (lat - lat0), start.lon + (lon - lon0) * fromCos / toCos]);
 }
 
 type Bounds = { south: number; west: number; north: number; east: number };
