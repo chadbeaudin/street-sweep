@@ -13,7 +13,7 @@ async function handlePOST(req: Request) {
         const { forceSync, activityMode } = body;
         const mode: 'cycling' | 'running' = activityMode === 'running' ? 'running' : 'cycling';
 
-        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        const stravaCredentials = await resolveRequestStravaCredentials();
         if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
 
         if (forceSync) {

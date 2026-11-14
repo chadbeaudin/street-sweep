@@ -5,9 +5,6 @@ import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Bike, Footprints } from 'lucide-react';
-import { StravaSettingsDialog } from '@/components/StravaSettingsDialog';
-import { StravaHeaderButton } from '@/components/StravaHeaderButton';
-import { featureFlags } from '@/lib/featureFlags';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
 import { preloadAfter } from '@/lib/deferredPreload';
@@ -195,14 +192,11 @@ export default function Home() {
         try { localStorage.setItem(ACTIVITY_MODE_KEY, mode); } catch { /* ignore */ }
     }, []);
 
-    const [showStravaSettings, setShowStravaSettings] = useState(false);
     const [stravaCredentials, setStravaCredentials] = useState<any>(undefined);
     // Session-signed-in users have no refreshToken on the client at all (it
     // never leaves the server, see lib/serverStravaCredentials.ts) -- their
     // "connected" state is marked by this sentinel instead.
     const hasStravaCreds = (c: any) => !!(c?.refreshToken || c?.sessionLinked);
-    const stravaCredentialsRef = useRef<any>(undefined);
-    useEffect(() => { stravaCredentialsRef.current = stravaCredentials; }, [stravaCredentials]);
     const [stravaError, setStravaError] = useState<string | null>(null);
     const [stravaRefreshKey, setStravaRefreshKey] = useState(0);
     const [showStats, setShowStats] = useState(false);
@@ -395,22 +389,10 @@ export default function Home() {
     }, []);
 
     useEffect(() => {
-        const saved = localStorage.getItem('strava_settings');
-        // Outside advanced mode Strava is connected by signing in (#126); drop any
-        // token an earlier "Connect Strava" left in this browser.
-        if (saved && !featureFlags.advancedStravaIntegration) localStorage.removeItem('strava_settings');
-        if (saved && featureFlags.advancedStravaIntegration) {
-            const parsed = JSON.parse(saved);
-            // `sessionLinked` only means anything alongside a live NextAuth
-            // session -- session status isn't known yet this early (useSession()
-            // starts in 'loading'), so a stale sentinel from a previous sign-in
-            // must not be trusted here. The athleteId-driven effect below
-            // re-sets it once the current session is actually confirmed.
-            const { sessionLinked: _sessionLinked, ...rest } = parsed;
-            setStravaCredentials(rest);
-        } else {
-            setStravaCredentials({}); // Set to empty object to signal we've checked localStorage
-        }
+        // Strava is connected by signing in (#126); drop any token an earlier
+        // "Connect Strava" left in this browser.
+        localStorage.removeItem('strava_settings');
+        setStravaCredentials({});
 
         const savedGarminEmail = localStorage.getItem('garmin_email');
         setGarminCredentials(savedGarminEmail ? { email: savedGarminEmail } : {});
@@ -434,15 +416,12 @@ export default function Home() {
     // Signing in with Strava is how Strava gets connected (#126): the sign-in
     // granted activity access (lib/auth.ts), and the server resolves the token
     // from the session, so the client only carries a `sessionLinked` marker.
-    // Runs once per distinct athleteId and reverses itself on sign-out. Skipped
-    // if the user has their own Strava app credentials (advancedStravaIntegration)
-    // -- sign-in shouldn't silently override a deliberate manual setup.
+    // Runs once per distinct athleteId and reverses itself on sign-out.
     const syncedAthleteIdRef = useRef<string | null>(null);
     useEffect(() => {
         const athleteId = (session?.user as any)?.athleteId as string | undefined;
         if (athleteId) {
             if (syncedAthleteIdRef.current === athleteId) return;
-            if (stravaCredentialsRef.current?.clientId || stravaCredentialsRef.current?.clientSecret) return;
             syncedAthleteIdRef.current = athleteId;
             (async () => {
                 try {
@@ -1754,22 +1733,6 @@ export default function Home() {
                 {/* Fixed buttons sit right after the logo; mr-auto keeps them from shifting
                     when the route-dependent group on the right grows. */}
                 <div className="hidden md:flex items-center gap-3 ml-6 mr-auto">
-                    {/* Only for power users bringing their own Strava app; everyone else
-                        connects Strava by signing in (#126). */}
-                    {featureFlags.advancedStravaIntegration && !(session?.user as any)?.athleteId && (
-                        <StravaHeaderButton
-                            isConnected={hasStravaCreds(stravaCredentials)}
-                            stravaError={stravaError}
-                            isLoading={isStravaLoading}
-                            onClick={() => setShowStravaSettings(true)}
-                            onRefresh={() => {
-                                clearCachedRoads();
-                                clearCachedPrecomputedRoads();
-                                setStravaRefreshKey(k => k + 1);
-                            }}
-                        />
-                    )}
-
                     <RwgpsHeaderButton
                         isConnected={!!rwgpsCredentials?.accessToken}
                         isLoading={isRwgpsUploading}
@@ -2158,20 +2121,6 @@ export default function Home() {
                 </div>
 
                 <div className="flex md:hidden items-center gap-2">
-                    {featureFlags.advancedStravaIntegration && !(session?.user as any)?.athleteId && (
-                        <StravaHeaderButton
-                            isConnected={hasStravaCreds(stravaCredentials)}
-                            stravaError={stravaError}
-                            isLoading={isStravaLoading}
-                            onClick={() => setShowStravaSettings(true)}
-                            onRefresh={() => {
-                                clearCachedRoads();
-                                clearCachedPrecomputedRoads();
-                                setStravaRefreshKey(k => k + 1);
-                            }}
-                        />
-                    )}
-
                     <div className="relative">
                         <button
                             onClick={() => setShowMobileMenu(!showMobileMenu)}
@@ -2425,11 +2374,11 @@ export default function Home() {
                                 </p>
                             </div>
                             <button
-                                onClick={() => featureFlags.advancedStravaIntegration ? setShowStravaSettings(true) : signIn('strava')}
+                                onClick={() => signIn('strava')}
                                 className="w-full flex items-center justify-center gap-2 px-6 py-3.5 bg-[#FC4C02] text-white rounded-xl text-sm font-bold hover:bg-[#e34402] transition-colors shadow-md shadow-orange-200"
                             >
                                 <Settings className="w-4 h-4" />
-                                {featureFlags.advancedStravaIntegration ? 'Setup Strava Connection' : 'Sign in with Strava'}
+                                Sign in with Strava
                             </button>
                         </div>
                     </div>
@@ -2654,14 +2603,6 @@ export default function Home() {
                     />
                 )}
 
-                <StravaSettingsDialog
-                    isOpen={featureFlags.advancedStravaIntegration && showStravaSettings}
-                    onClose={() => setShowStravaSettings(false)}
-                    onSave={(creds) => {
-                        setStravaCredentials(creds);
-                        // No need to close, let them see the "Saved!" state
-                    }}
-                />
 
                 <GarminSettingsDialog
                     isOpen={showGarminSettings}

@@ -24,7 +24,7 @@ import { POST } from './route';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
-const SIGNED_IN = { refreshToken: 'session-tok' };
+const SIGNED_IN = { refreshToken: 'session-tok', athleteId: 'athlete-1' };
 const bbox = { south: 0, north: 1, west: 0, east: 1 };
 
 function makeRequest(body: any): Request {
@@ -93,7 +93,7 @@ describe('POST /api/ridden-roads', () => {
         mockGetCachedRiddenTiles.mockResolvedValue({ tiles: {}, refreshedAt: null, missing: [] });
         const sent = { refreshToken: 'client-supplied' };
         await POST(makeRequest({ stravaCredentials: sent, bbox }));
-        expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
+        expect(mockedResolveCreds).toHaveBeenCalledWith();
         expect(mockResolveAthleteId).toHaveBeenCalledWith(SIGNED_IN);
     });
 

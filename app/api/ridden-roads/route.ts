@@ -16,13 +16,12 @@ import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 
 const FRESH_TTL_MS = 24 * 60 * 60 * 1000;
 
-interface Creds { clientId?: string; clientSecret?: string; refreshToken?: string }
 
 async function handlePOST(request: Request) {
     try {
-        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; bbox?: BBox };
+        const body = await request.json() as { activityMode?: string; bbox?: BBox };
         const { activityMode, bbox } = body;
-        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        const stravaCredentials = await resolveRequestStravaCredentials();
         if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         if (!bbox) {
             return NextResponse.json({ error: 'bbox required -- only the requested viewport is matched against OSM roads' }, { status: 400 });

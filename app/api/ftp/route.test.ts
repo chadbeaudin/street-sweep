@@ -22,7 +22,7 @@ const mockedResolveAthleteId = resolveAthleteId as jest.MockedFunction<typeof re
 const mockedFindUnique = prisma.ftpReadingCache.findUnique as jest.MockedFunction<typeof prisma.ftpReadingCache.findUnique>;
 const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
 const mockedFetchFtp = fetchFtpReadings as jest.MockedFunction<typeof fetchFtpReadings>;
-const SIGNED_IN = { refreshToken: 'session-tok' };
+const SIGNED_IN = { refreshToken: 'session-tok', athleteId: 'athlete-1' };
 
 beforeEach(() => {
     jest.clearAllMocks();
@@ -51,7 +51,7 @@ describe('POST /api/ftp', () => {
     it('uses the resolved credentials, never the body as-is (#126)', async () => {
         const sent = { refreshToken: 'client-tok' };
         await POST(makeRequest({ stravaCredentials: sent }));
-        expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
+        expect(mockedResolveCreds).toHaveBeenCalledWith();
         expect(mockedResolveAthleteId).toHaveBeenCalledWith(SIGNED_IN);
     });
 

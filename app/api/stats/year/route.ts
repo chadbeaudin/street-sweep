@@ -8,8 +8,8 @@ import type { ActivityMode, Creds } from '@/lib/riddenRoadsRefresh';
 
 async function handlePOST(request: Request) {
     try {
-        const body = await request.json() as { stravaCredentials?: Creds; activityMode?: string; year?: unknown };
-        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        const body = await request.json() as { activityMode?: string; year?: unknown };
+        const stravaCredentials = await resolveRequestStravaCredentials();
         if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         const { year } = body;
         if (typeof year !== 'number' || !Number.isInteger(year)) return NextResponse.json({ error: 'A year is required' }, { status: 400 });

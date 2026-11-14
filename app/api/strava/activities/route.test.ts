@@ -25,7 +25,7 @@ import { UserFacingError } from '@/lib/apiErrors';
 const mockedFetch = fetchCyclingRiddenRoads as jest.MockedFunction<typeof fetchCyclingRiddenRoads>;
 const mockedForceSync = forceSyncStravaActivities as jest.MockedFunction<typeof forceSyncStravaActivities>;
 const mockedResolveCreds = resolveRequestStravaCredentials as jest.MockedFunction<typeof resolveRequestStravaCredentials>;
-const SIGNED_IN = { refreshToken: 'session-tok' };
+const SIGNED_IN = { refreshToken: 'session-tok', athleteId: 'athlete-1' };
 
 const mockedSession = getServerSession as jest.Mock;
 const mockedCredit = creditMatchingActivities as jest.Mock;
@@ -150,7 +150,7 @@ describe('POST /api/strava/activities', () => {
         mockedFetch.mockResolvedValueOnce(emptyRides);
         const sent = { sessionLinked: true };
         await POST(makeRequest({ stravaCredentials: sent }));
-        expect(mockedResolveCreds).toHaveBeenCalledWith(sent);
+        expect(mockedResolveCreds).toHaveBeenCalledWith();
         expect(mockedFetch).toHaveBeenCalledWith(SIGNED_IN, 'cycling');
     });
 

@@ -100,7 +100,7 @@ describe('POST /api/stats (#118)', () => {
     it('gets credentials only through the shared resolver (#126)', async () => {
         (prisma.statsCache.findUnique as jest.Mock).mockResolvedValue(row());
         await post({ stravaCredentials: { sessionLinked: true } });
-        expect(resolveRequestStravaCredentials).toHaveBeenCalledWith({ sessionLinked: true });
+        expect(resolveRequestStravaCredentials).toHaveBeenCalledWith();
         expect(resolveAthleteId).toHaveBeenCalledWith(creds);
     });
 
