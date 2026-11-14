@@ -1,7 +1,6 @@
 const mockJson = jest.fn();
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
-jest.mock('next-auth', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/auth', () => ({ authOptions: {} }));
+jest.mock('@/lib/rwgpsToken', () => ({ sessionUserId: jest.fn(), getRwgpsToken: jest.fn() }));
 jest.mock('@/lib/rwgps', () => ({
     ...jest.requireActual('@/lib/rwgps'),
     uploadRouteToRwgps: jest.fn(),
@@ -9,10 +8,10 @@ jest.mock('@/lib/rwgps', () => ({
 }));
 
 import { POST } from './route';
-import { getServerSession } from 'next-auth';
+import { sessionUserId, getRwgpsToken } from '@/lib/rwgpsToken';
 import { uploadRouteToRwgps, deleteRwgpsRoute } from '@/lib/rwgps';
 
-const mockedSession = getServerSession as jest.Mock;
+const mockedSession = sessionUserId as jest.Mock;
 // Shaped like a generated route: [lon, lat, elevation, construction] (#201).
 const ROUTE = [[-117.42, 47.65, 600, 0], [-117.43, 47.66, 610, 1]];
 const post = (body: unknown) => POST(new Request('http://localhost/api/test', { method: 'POST', body: JSON.stringify(body) }));
@@ -20,11 +19,12 @@ const post = (body: unknown) => POST(new Request('http://localhost/api/test', { 
 beforeEach(() => {
     // resetMocks clears the implementation between tests.
     mockJson.mockImplementation((data: any, init?: { status?: number }) => ({ status: init?.status ?? 200, _data: data }));
-    mockedSession.mockResolvedValue({ user: { id: 'user-1' } });
+    mockedSession.mockResolvedValue('user-1');
+    (getRwgpsToken as jest.Mock).mockResolvedValue('tok');
 });
 
 describe('POST /api/rwgps/save-route (#190)', () => {
-    const body = { route: ROUTE, name: 'Loop', accessToken: 'tok', oldRouteId: 5 };
+    const body = { route: ROUTE, name: 'Loop', oldRouteId: 5 };
 
     it('rejects a caller with no session before touching the upstream API', async () => {
         mockedSession.mockResolvedValue(null);

@@ -34,8 +34,7 @@ async function refreshInBackground(athleteId: string, creds: Creds, previous?: F
 
 async function handlePOST(request: Request) {
     try {
-        const body = await request.json() as { stravaCredentials?: Creds };
-        const stravaCredentials = await resolveRequestStravaCredentials(body.stravaCredentials);
+        const stravaCredentials = await resolveRequestStravaCredentials();
         if (!stravaCredentials) return NextResponse.json({ error: 'Sign in with Strava first' }, { status: 401 });
         const athleteId = await resolveAthleteId(stravaCredentials);
         const cached = await prisma.ftpReadingCache.findUnique({ where: { athleteId } });

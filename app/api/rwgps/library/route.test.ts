@@ -1,7 +1,6 @@
 const mockJson = jest.fn();
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
-jest.mock('next-auth', () => ({ getServerSession: jest.fn() }));
-jest.mock('@/lib/auth', () => ({ authOptions: {} }));
+jest.mock('@/lib/rwgpsToken', () => ({ sessionUserId: jest.fn(), getRwgpsToken: jest.fn() }));
 jest.mock('@/lib/rwgps', () => ({
     ...jest.requireActual('@/lib/rwgps'),
     listRoutes: jest.fn(),
@@ -9,28 +8,29 @@ jest.mock('@/lib/rwgps', () => ({
 }));
 
 import { POST } from './route';
-import { getServerSession } from 'next-auth';
+import { sessionUserId, getRwgpsToken } from '@/lib/rwgpsToken';
 import { listRoutes, listCollections } from '@/lib/rwgps';
 
-const mockedSession = getServerSession as jest.Mock;
-const ROUTE = [[-117.42, 47.65, 600], [-117.43, 47.66, 610]];
-const post = (body: unknown) => POST(new Request('http://localhost/api/test', { method: 'POST', body: JSON.stringify(body) }));
+const mockedSession = sessionUserId as jest.Mock;
+const post = () => POST();
 
 beforeEach(() => {
     // resetMocks clears the implementation between tests.
     mockJson.mockImplementation((data: any, init?: { status?: number }) => ({ status: init?.status ?? 200, _data: data }));
-    mockedSession.mockResolvedValue({ user: { id: 'user-1' } });
+    mockedSession.mockResolvedValue('user-1');
+    (getRwgpsToken as jest.Mock).mockResolvedValue('tok');
 });
 
 describe('POST /api/rwgps/library (#190)', () => {
     it('rejects a caller with no session before touching the upstream API', async () => {
         mockedSession.mockResolvedValue(null);
-        expect((await post({ accessToken: 'tok' })).status).toBe(401);
+        expect((await post()).status).toBe(401);
         expect(listRoutes).not.toHaveBeenCalled();
     });
 
-    it('rejects a missing access token', async () => {
-        expect((await post({})).status).toBe(400);
+    it('rejects a signed-in caller with no stored token (#194)', async () => {
+        (getRwgpsToken as jest.Mock).mockResolvedValue(null);
+        expect((await post()).status).toBe(401);
         expect(listRoutes).not.toHaveBeenCalled();
     });
 
@@ -38,7 +38,7 @@ describe('POST /api/rwgps/library (#190)', () => {
         const route = { id: 1, name: 'A', distance: 1000, url: 'u1' };
         (listRoutes as jest.Mock).mockResolvedValue([route]);
         (listCollections as jest.Mock).mockResolvedValue([]);
-        const res = await post({ accessToken: 'tok' }) as any;
+        const res = await post() as any;
         expect(res._data).toEqual({ collections: [], uncategorized: [route] });
     });
 });

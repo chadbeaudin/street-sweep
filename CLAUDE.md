@@ -41,10 +41,10 @@ Next.js 14 App Router, TypeScript, TailwindCSS. Path alias `@/` maps to repo roo
 - `roads` — raw OSM ways for a bbox.
 - `import` — parses uploaded `.fit`/GPX into coords + elevation.
 - `export/fit`, `export/garmin` — GPX/FIT export; garmin uses `garmin-connect` to upload directly.
-- `strava/{auth,exchange,activities}` — OAuth + activity import.
+- `strava/{activities,webhook}` — activity import and Strava webhook events.
 - `stats` — coverage % per country/state/city/county via Nominatim reverse-geocoding.
 
-**Strava** (`lib/strava.ts`, `lib/stravaCache.ts`): OAuth token exchange and activity fetch. By default uses server-side `STRAVA_CLIENT_ID/SECRET/REFRESH_TOKEN` with public scopes. The `advancedStravaIntegration` feature flag (`lib/featureFlags.ts`, gated on `NEXT_PUBLIC_ADVANCED_STRAVA_INTEGRATION`) lets power-users supply their own app credentials for private scopes. Client-visible flags must be `NEXT_PUBLIC_`-prefixed.
+**Strava** (`lib/strava.ts`, `lib/stravaCache.ts`): OAuth token exchange and activity fetch. Strava is connected by signing in; API routes get the user's token server-side via `resolveRequestStravaCredentials` (`lib/serverStravaCredentials.ts`) and never trust credentials in a request body.
 
 **Elevation** (`lib/elevation.ts`): multi-provider fallback — Open Topo Data (primary) → Open-Meteo (batched fallback) — switching on outage/rate-limit.
 
