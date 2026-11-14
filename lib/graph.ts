@@ -1589,6 +1589,27 @@ export class StreetGraph {
     }
 
     /** Returns a penalty map (10×) for all ridden edges, for use when bridging disconnected components. */
+    // Node ids of the largest connected piece of the road network, ignoring direction.
+    private largestConnectedComponent(): Set<string> {
+        const seen = new Set<string>();
+        let largest: string[] = [];
+        this.graph.forEachNode((start: any) => {
+            const startId = start.id.toString();
+            if (seen.has(startId)) return;
+            const component = [startId];
+            seen.add(startId);
+            for (let k = 0; k < component.length; k++) {
+                const u = component[k];
+                this.graph.getNode(u)?.links?.forEach((link: any) => {
+                    const v = (link.fromId.toString() === u ? link.toId : link.fromId).toString();
+                    if (!seen.has(v)) { seen.add(v); component.push(v); }
+                });
+            }
+            if (component.length > largest.length) largest = component;
+        });
+        return new Set(largest);
+    }
+
     public buildRiddenPenaltyMap(riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): Map<string, number> {
         const penalties = new Map<string, number>();
         this.graph.forEachLink((link: any) => {
@@ -2383,6 +2404,26 @@ export class StreetGraph {
         if (this.graph.getNodesCount() === 0) {
             console.warn(`${ts()} Cannot solve CPP: Graph is empty.`);
             return manualRoute ? manualRoute.map(p => ({ lon: p[0], lat: p[1] })) : [];
+        }
+
+        // A required edge that shares no path with the main road network (e.g. a
+        // footpath stub mapped without a junction) can never be ridden to. Left in,
+        // it could become the "main" component the sweep starts from, breaking the
+        // route around it (#210), so treat it as already covered.
+        const mainNetwork = this.largestConnectedComponent();
+        const unreachable = requiredEdges.filter(re => !mainNetwork.has(re.u) || !mainNetwork.has(re.v));
+        if (unreachable.length > 0) {
+            console.log(`${ts()} Skipping ${unreachable.length} required edge(s) not connected to the road network.`);
+            const keep = requiredEdges.filter(re => mainNetwork.has(re.u) && mainNetwork.has(re.v));
+            requiredEdges.length = 0;
+            requiredEdges.push(...keep);
+            requiredEdgeKeys.clear();
+            unriddenNodes.clear();
+            for (const re of keep) {
+                requiredEdgeKeys.add(edgeKey(re.u, re.v));
+                unriddenNodes.add(re.u);
+                unriddenNodes.add(re.v);
+            }
         }
 
         if (requiredEdges.length === 0) {

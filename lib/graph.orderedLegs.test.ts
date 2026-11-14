@@ -91,3 +91,36 @@ describe('solveOrderedLegs (#52)', () => {
     });
 
 });
+
+describe('area whose only unridden streets are unreachable stubs (#210)', () => {
+    // A short footpath inside area one that shares no node with the street grid.
+    const STUB_A = { lat: LAT0 + STEP * 1.4, lon: LON0 + STEP * 2.6 };
+    const STUB_B = { lat: LAT0 + STEP * 1.4, lon: LON0 + STEP * 3.4 };
+
+    function buildGridWithStub(): StreetGraph {
+        const g = buildGrid();
+        g.graph.forEachLink((link: any) => { link.data.isRidden = true; });
+        const stub = new StreetGraph();
+        stub.buildFromOSM({ version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' }, elements: [
+            { type: 'way', id: 999, nodes: [9001, 9002], geometry: [STUB_A, STUB_B], tags: { highway: 'footway' } },
+        ] } as OverpassResponse);
+        stub.graph.forEachNode((n: any) => { g.graph.addNode(n.id, n.data); });
+        stub.graph.forEachLink((l: any) => { g.graph.addLink(l.fromId, l.toId, { ...l.data }); });
+        return g;
+    }
+
+    const start = coord(0, 0), finish = coord(0, 6);
+    const solve = (g: StreetGraph) =>
+        g.solveOrderedLegs(buildAreaLegs([start, finish], [[]], [boxOver(2, 4)], [], { boxes: [1], polygons: [] }));
+
+    it('skips the stub and rides on to the next point in one continuous line', () => {
+        const route = solve(buildGridWithStub());
+        expect(route[0]).toMatchObject(start);
+        expect(haversineM(route[route.length - 1].lat, route[route.length - 1].lon, finish.lat, finish.lon)).toBeLessThan(1);
+        for (let k = 1; k < route.length; k++) {
+            expect(haversineM(route[k - 1].lat, route[k - 1].lon, route[k].lat, route[k].lon)).toBeLessThan(maxEdge * 1.5);
+        }
+        const nearStub = route.some(p => haversineM(p.lat, p.lon, STUB_A.lat, STUB_A.lon) < 1 || haversineM(p.lat, p.lon, STUB_B.lat, STUB_B.lon) < 1);
+        expect(nearStub).toBe(false);
+    });
+});
