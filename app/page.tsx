@@ -1,5 +1,6 @@
 'use client';
 
+import { joinContiguousSegments } from '@/lib/joinContiguousSegments';
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
@@ -1228,9 +1229,9 @@ export default function Home() {
             const next = prev === kind ? null : kind;
             if (prev !== null && avoidDraftPathRef.current.length > 0) {
                 // Finishing: commit the drawn draft as one marked-road entry.
-                const combined = avoidDraftPathRef.current.flat() as [number, number][];
+                const joined = joinContiguousSegments(avoidDraftPathRef.current);
                 const list = prev === 'avoid' ? 'avoidedRoads' : 'preferredRoads';
-                setRoutingOptions(ro => ({ ...ro, [list]: [...ro[list], combined] }));
+                setRoutingOptions(ro => ({ ...ro, [list]: [...ro[list], ...joined] }));
             }
             avoidEpochRef.current++;
             avoidDraftPathRef.current = [];
