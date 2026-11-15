@@ -1378,12 +1378,12 @@ describe('StreetGraph', () => {
             return g.graph.getLink('1', '2')!.data.weight;
         };
 
-        test('marks a matching edge preferred and lowers its cost to 60%', () => {
+        test('marks a matching edge preferred and lowers its cost to 40% by default', () => {
             const graph = new StreetGraph();
             graph.buildFromOSM(mockData, null, { preferredRoads: along });
             const link = graph.graph.getLink('1', '2')!;
             expect(link.data.isPreferred).toBe(true);
-            expect(link.data.weight).toBeCloseTo(plainWeight() * 0.6, 5);
+            expect(link.data.weight).toBeCloseTo(plainWeight() * 0.4, 5);
         });
 
         test('lets avoidance win when a road is both avoided and preferred', () => {
@@ -1423,6 +1423,30 @@ describe('StreetGraph', () => {
             const preferring = new StreetGraph();
             preferring.buildFromOSM(data, null, { preferredRoads: [north] });
             expect(viaNorth(preferring)).toBe(true);
+        });
+
+        test('scales the preferred discount and the avoided penalty by the chosen strength', () => {
+            const weightWith = (options: object) => {
+                const g = new StreetGraph();
+                g.buildFromOSM(mockData, null, options);
+                return g.graph.getLink('1', '2')!.data.weight;
+            };
+            expect(weightWith({ preferredRoads: along, preferStrength: 4 })).toBeCloseTo(plainWeight() / 4, 5);
+            expect(weightWith({ avoidedRoads: along, avoidStrength: 10 })).toBeCloseTo(plainWeight() * 10, 5);
+        });
+
+        test('ignores unusable strengths and falls back to the defaults', () => {
+            const g = new StreetGraph();
+            g.buildFromOSM(mockData, null, { preferredRoads: along, preferStrength: 'x' as never });
+            expect(g.graph.getLink('1', '2')!.data.weight).toBeCloseTo(plainWeight() * 0.4, 5);
+            const h = new StreetGraph();
+            h.buildFromOSM(mockData, null, { preferredRoads: along, preferStrength: 0 });
+            expect(h.graph.getLink('1', '2')!.data.weight).toBeCloseTo(plainWeight() * 0.4, 5);
+        });
+
+        test('builds a separate cached graph when a strength changes', () => {
+            expect(StreetGraph.reuseKey('r', { preferStrength: 4 })).not.toBe(StreetGraph.reuseKey('r', {}));
+            expect(StreetGraph.reuseKey('r', { avoidStrength: 10 })).not.toBe(StreetGraph.reuseKey('r', {}));
         });
 
         test('builds a separate cached graph when the preferred roads change', () => {

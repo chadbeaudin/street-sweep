@@ -1,4 +1,5 @@
 // @ts-ignore
+import { DEFAULT_AVOID_STRENGTH, DEFAULT_PREFER_STRENGTH } from './markedRoadStrength';
 import createGraph, { Graph } from 'ngraph.graph';
 // @ts-ignore
 import path from 'ngraph.path';
@@ -43,17 +44,16 @@ export interface RoutingOptions {
     avoidedRoads?: [number, number][][];
     // User-marked preferred roads (#46), matched the same way.
     preferredRoads?: [number, number][][];
+    // How strongly marked roads steer routing (#45, #46): avoided roads cost this many
+    // times their length, preferred roads this many times less.
+    avoidStrength?: number;
+    preferStrength?: number;
 }
 
-// Heavy soft penalty for user-marked avoided roads: much larger than the
-// isAvoided category penalty (50x) so a manually-marked street is a last
-// resort, but still not a hard exclude -- a route that has no other way in
-// can still use it.
-const USER_AVOIDED_PENALTY = 100;
-
-// User-marked preferred roads (#46) cost this share of their length, so a route
-// takes one over an alternative up to ~1.6x shorter. Avoidance still wins.
-const USER_PREFERRED_FACTOR = 0.6;
+// Options arrive from the client as untyped JSON, so anything unusable falls back.
+function strengthOption(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? value : fallback;
+}
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
@@ -364,7 +364,7 @@ export class StreetGraph {
     // while they pan; each request's riddenRoads is filtered to the viewport and
     // padded with per-tile precomputed data, so it changes with nearly every pan.
     public static reuseKey(riddenFingerprint: string, options?: RoutingOptions): string {
-        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${riddenFingerprint}|A${polylineSetFingerprint(options?.avoidedRoads)}|P${polylineSetFingerprint(options?.preferredRoads)}`;
+        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${riddenFingerprint}|A${polylineSetFingerprint(options?.avoidedRoads)}|P${polylineSetFingerprint(options?.preferredRoads)}|S${strengthOption(options?.avoidStrength, DEFAULT_AVOID_STRENGTH)}|F${strengthOption(options?.preferStrength, DEFAULT_PREFER_STRENGTH)}`;
     }
 
     // Panning between clicks changes the viewport-derived bbox, so an exact-key
@@ -418,7 +418,7 @@ export class StreetGraph {
         // (see lib/fetchRegions.ts). Including the source and element count keeps a
         // corridor graph from being served for a full-rect request, and vice versa.
         const dataKey = `|D${data.generator === 'StreetSweep regions' ? 'c' : 'f'}${data.elements.length}`;
-        return `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}|P${polylineSetFingerprint(options?.preferredRoads)}`;
+        return `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}|P${polylineSetFingerprint(options?.preferredRoads)}|S${strengthOption(options?.avoidStrength, DEFAULT_AVOID_STRENGTH)}|F${strengthOption(options?.preferStrength, DEFAULT_PREFER_STRENGTH)}`;
     }
 
     private static cachedGraphFor(key: string): StreetGraph | null {
@@ -661,7 +661,7 @@ export class StreetGraph {
                         // gets the heavier user penalty rather than the smaller category one.
                         const isUserAvoided = this.checkIfUserAvoided(uCoord, vCoord);
                         if (isUserAvoided) {
-                            dist *= USER_AVOIDED_PENALTY;
+                            dist *= strengthOption(options?.avoidStrength, DEFAULT_AVOID_STRENGTH);
                             isAvoided = true;
                         } else if (highway === 'trunk') {
                             dist *= options?.avoidHighways ? 12 : 2;
@@ -678,7 +678,7 @@ export class StreetGraph {
                         }
                         const isPreferred = !isAvoided && this.checkIfUserPreferred(uCoord, vCoord);
                         if (isPreferred) {
-                            dist *= USER_PREFERRED_FACTOR;
+                            dist /= strengthOption(options?.preferStrength, DEFAULT_PREFER_STRENGTH);
                         }
                         const isRidden = wayEdges[i].isRidden;
                         const edgeData: EdgeData = {

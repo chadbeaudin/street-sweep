@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_AVOID_STRENGTH, DEFAULT_PREFER_STRENGTH } from '@/lib/markedRoadStrength';
 import { joinContiguousSegments } from '@/lib/joinContiguousSegments';
 import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
@@ -98,6 +99,8 @@ export default function Home() {
         startFromHome: boolean;
         avoidedRoads: [number, number][][];
         preferredRoads: [number, number][][];
+        avoidStrength: number;
+        preferStrength: number;
     }>({
         avoidGravel: false,
         avoidHighways: false,
@@ -111,7 +114,9 @@ export default function Home() {
         // other routing options so the server can heavily penalize them.
         avoidedRoads: [],
         // User-marked preferred roads (#46): routing favours them.
-        preferredRoads: []
+        preferredRoads: [],
+        avoidStrength: DEFAULT_AVOID_STRENGTH,
+        preferStrength: DEFAULT_PREFER_STRENGTH
     });
     // Persist routing options (avoid gravel/highways/trails, penalties) across
     // reloads -- these previously silently reset to defaults on every page load
@@ -2067,6 +2072,35 @@ export default function Home() {
                                                     className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
                                                 />
                                                 <p className="text-xs text-gray-500 mt-2">How far out of your way to go for new streets when routing point-to-point (not area/lasso). Higher values detour more.</p>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Preferred Road Strength: {routingOptions.preferStrength}x
+                                                </label>
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="5"
+                                                    step="0.5"
+                                                    value={routingOptions.preferStrength}
+                                                    onChange={(e) => setRoutingOptions({ ...routingOptions, preferStrength: parseFloat(e.target.value) })}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-2">How much shorter a road you marked Prefer counts, so routes detour onto it. 1x ignores the marking.</p>
+                                            </div>
+                                            <div className="w-full px-3 py-3 border-t border-gray-200">
+                                                <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                                    Avoided Road Strength: {routingOptions.avoidStrength}x
+                                                </label>
+                                                <input
+                                                    type="range"
+                                                    min="1"
+                                                    max="100"
+                                                    value={routingOptions.avoidStrength}
+                                                    onChange={(e) => setRoutingOptions({ ...routingOptions, avoidStrength: parseInt(e.target.value) })}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-red-600"
+                                                />
+                                                <p className="text-xs text-gray-500 mt-2">How much longer a road you marked Avoid counts. At 100x it is a last resort; lower values let routes use it to save distance.</p>
                                             </div>
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
