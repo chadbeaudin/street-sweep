@@ -167,11 +167,11 @@ describe('elevation library robustness', () => {
             inFlight--;
             return echoLatitude(url);
         });
-        // 1000 distinct points over ~7mi -> 10 batches of 100.
+        // 1000 distinct points over ~7mi -> ~700 samples -> 7 batches of 100.
         const route: [number, number][] = Array.from({ length: 1000 }, (_, i) => [-105.0, 40.0 + i * 0.0001]);
         const result = await fetchElevationData(route);
 
-        expect(global.fetch).toHaveBeenCalledTimes(10);
+        expect(global.fetch).toHaveBeenCalledTimes(7);
         expect(maxInFlight).toBeGreaterThan(1);
         expect(maxInFlight).toBeLessThanOrEqual(8);
         result.sampledCoords.forEach((c, i) => expect(result.elevations[i]).toBeCloseTo(Number(c[1].toFixed(6)), 6));
