@@ -107,6 +107,18 @@ async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T
     await Promise.all(lanes);
 }
 
+// The elevation data (Copernicus) resolves ~295 ft, so one sample per ~53 ft is already
+// finer. Sparser sampling misses cell peaks and under-reports gain (about 4-5% at 50 per
+// mile, under 2% at 100). Hover positions are densified from route geometry (#104).
+const ELEVATION_POINTS_PER_MILE = 100;
+const MIN_ELEVATION_POINTS = 50;
+const MAX_ELEVATION_POINTS = 2000;
+
+export function elevationSampleCount(totalMiles: number, coordinateCount: number): number {
+    const wanted = Math.round(totalMiles * ELEVATION_POINTS_PER_MILE);
+    return Math.min(Math.max(MIN_ELEVATION_POINTS, Math.min(MAX_ELEVATION_POINTS, wanted)), coordinateCount);
+}
+
 /**
  * Fetches elevation data for a list of coordinates using multiple fallback providers.
  */
@@ -118,12 +130,7 @@ export async function fetchElevationData(coordinates: [number, number][]): Promi
         totalMiles += distance(point(coordinates[i - 1]), point(coordinates[i]), { units: 'miles' });
     }
 
-    const pointsPerMile = 200;
-    // Cap doubled to 2000 — for routes long enough to hit it, this was the actual
-    // limiter on hover granularity (not pointsPerMile), e.g. a 50mi route was
-    // capped to ~20 pts/mile (~264ft between hover samples) regardless of this rate.
-    let targetPoints = Math.max(50, Math.min(2000, Math.round(totalMiles * pointsPerMile)));
-    targetPoints = Math.min(targetPoints, coordinates.length);
+    const targetPoints = elevationSampleCount(totalMiles, coordinates.length);
 
     const sampledCoords: [number, number][] = [];
     if (coordinates.length <= targetPoints) {
