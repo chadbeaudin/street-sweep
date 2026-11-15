@@ -3,7 +3,7 @@
  */
 
 import { renderHook, waitFor } from '@testing-library/react';
-import { useAvoidedRoadsSync } from './useAvoidedRoadsSync';
+import { useMarkedRoadsSync } from './useMarkedRoadsSync';
 
 type Roads = [number, number][][];
 const local: Roads = [[[47.6, -117.4], [47.61, -117.41]]];
@@ -20,32 +20,39 @@ function mockServer(roads: Roads) {
 
 const puts = () => fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT').map(([, init]) => JSON.parse(init.body).roads);
 
-describe('useAvoidedRoadsSync', () => {
+describe('useMarkedRoadsSync', () => {
     it('does nothing for signed-out users', () => {
         mockServer(saved);
-        renderHook(() => useAvoidedRoadsSync('unauthenticated', local, jest.fn()));
+        renderHook(() => useMarkedRoadsSync('/api/avoided-roads', 'unauthenticated', local, jest.fn()));
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("loads the account's roads on sign-in, replacing this browser's", async () => {
         mockServer(saved);
         const setRoads = jest.fn();
-        renderHook(() => useAvoidedRoadsSync('authenticated', local, setRoads));
+        renderHook(() => useMarkedRoadsSync('/api/avoided-roads', 'authenticated', local, setRoads));
         await waitFor(() => expect(setRoads).toHaveBeenCalledWith(saved));
         expect(puts()).toEqual([]);
+    });
+
+    it('loads and saves through the endpoint it is given, e.g. preferred roads (#46)', async () => {
+        mockServer([]);
+        renderHook(() => useMarkedRoadsSync('/api/preferred-roads', 'authenticated', local, jest.fn()));
+        await waitFor(() => expect(puts()).toEqual([local]));
+        expect(fetchMock.mock.calls.every(([url]) => url === '/api/preferred-roads')).toBe(true);
     });
 
     it("uploads this browser's roads when the account has none yet", async () => {
         mockServer([]);
         const setRoads = jest.fn();
-        renderHook(() => useAvoidedRoadsSync('authenticated', local, setRoads));
+        renderHook(() => useMarkedRoadsSync('/api/avoided-roads', 'authenticated', local, setRoads));
         await waitFor(() => expect(puts()).toEqual([local]));
         expect(setRoads).not.toHaveBeenCalled();
     });
 
     it('saves every later change, but not the value it just loaded', async () => {
         mockServer(saved);
-        const { rerender } = renderHook(({ roads }) => useAvoidedRoadsSync('authenticated', roads, jest.fn()), { initialProps: { roads: local } });
+        const { rerender } = renderHook(({ roads }) => useMarkedRoadsSync('/api/avoided-roads', 'authenticated', roads, jest.fn()), { initialProps: { roads: local } });
         await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
         await new Promise(r => setTimeout(r, 0));
 

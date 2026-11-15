@@ -52,3 +52,11 @@ describe('road payload encoding (#181)', () => {
         expect(page).toMatch(/data\.encoding === ROAD_ENCODING \? decodeRoads\(data\.roads\) : data\.roads/);
     });
 });
+
+describe('preferred roads (#46)', () => {
+    it("marks roads with the same draft as Avoid and saves them to the account's preferred list", () => {
+        expect(page).toContain("const list = prev === 'avoid' ? 'avoidedRoads' : 'preferredRoads';");
+        expect(page).toContain("useMarkedRoadsSync('/api/preferred-roads', sessionStatus, routingOptions.preferredRoads, setPreferredRoads);");
+        expect(page).toContain("toggleMarkMode('prefer')");
+    });
+});

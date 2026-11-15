@@ -1,4 +1,5 @@
 // @ts-ignore
+import { DEFAULT_AVOID_STRENGTH, DEFAULT_PREFER_STRENGTH } from './markedRoadStrength';
 import createGraph, { Graph } from 'ngraph.graph';
 // @ts-ignore
 import path from 'ngraph.path';
@@ -25,6 +26,7 @@ interface EdgeData {
     isRidden?: boolean;
     isAvoided?: boolean;
     isUserAvoided?: boolean;
+    isPreferred?: boolean;
     highway?: string;
     hasConstruction?: boolean;
     hasBikeLane?: boolean;
@@ -40,13 +42,18 @@ export interface RoutingOptions {
     // client never receives way ids for rendered roads. Matched onto graph edges
     // the same way ridden roads are: proximity to these traces, not id equality.
     avoidedRoads?: [number, number][][];
+    // User-marked preferred roads (#46), matched the same way.
+    preferredRoads?: [number, number][][];
+    // How strongly marked roads steer routing (#45, #46): avoided roads cost this many
+    // times their length, preferred roads this many times less.
+    avoidStrength?: number;
+    preferStrength?: number;
 }
 
-// Heavy soft penalty for user-marked avoided roads: much larger than the
-// isAvoided category penalty (50x) so a manually-marked street is a last
-// resort, but still not a hard exclude -- a route that has no other way in
-// can still use it.
-const USER_AVOIDED_PENALTY = 100;
+// Options arrive from the client as untyped JSON, so anything unusable falls back.
+function strengthOption(value: unknown, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 1 ? value : fallback;
+}
 
 const ts = () => `[${new Date().toTimeString().slice(0, 8)}]`;
 
@@ -350,13 +357,14 @@ export class StreetGraph {
     private edgeIndex: Map<string, any[]> | null = null;
     private riddenIndex: Map<string, [number, number, number][]> | null = null;
     private avoidedIndex: Map<string, [number, number, number][]> | null = null;
+    private preferredIndex: Map<string, [number, number, number][]> | null = null;
 
     // Identifies everything besides the bbox that shapes a graph. riddenFingerprint
     // is the page's fingerprint of the rider's Strava activities, which stay fixed
     // while they pan; each request's riddenRoads is filtered to the viewport and
     // padded with per-tile precomputed data, so it changes with nearly every pan.
     public static reuseKey(riddenFingerprint: string, options?: RoutingOptions): string {
-        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${riddenFingerprint}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
+        return `G${options?.avoidGravel}|H${options?.avoidHighways}|T${options?.avoidTrails}|R${riddenFingerprint}|A${polylineSetFingerprint(options?.avoidedRoads)}|P${polylineSetFingerprint(options?.preferredRoads)}|S${strengthOption(options?.avoidStrength, DEFAULT_AVOID_STRENGTH)}|F${strengthOption(options?.preferStrength, DEFAULT_PREFER_STRENGTH)}`;
     }
 
     // Panning between clicks changes the viewport-derived bbox, so an exact-key
@@ -410,7 +418,7 @@ export class StreetGraph {
         // (see lib/fetchRegions.ts). Including the source and element count keeps a
         // corridor graph from being served for a full-rect request, and vice versa.
         const dataKey = `|D${data.generator === 'StreetSweep regions' ? 'c' : 'f'}${data.elements.length}`;
-        return `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}`;
+        return `${bbox.south.toFixed(4)},${bbox.west.toFixed(4)},${bbox.north.toFixed(4)},${bbox.east.toFixed(4)}${optionsKey}${dataKey}|R${polylineSetFingerprint(riddenRoads)}|A${polylineSetFingerprint(options?.avoidedRoads)}|P${polylineSetFingerprint(options?.preferredRoads)}|S${strengthOption(options?.avoidStrength, DEFAULT_AVOID_STRENGTH)}|F${strengthOption(options?.preferStrength, DEFAULT_PREFER_STRENGTH)}`;
     }
 
     private static cachedGraphFor(key: string): StreetGraph | null {
@@ -465,12 +473,14 @@ export class StreetGraph {
             avoidedRoads: options?.avoidedRoads
                 ? `${options.avoidedRoads.length} road(s), ${options.avoidedRoads.reduce((n, r) => n + r.length, 0)} pts`
                 : options?.avoidedRoads,
+            preferredRoads: options?.preferredRoads ? `${options.preferredRoads.length} road(s)` : options?.preferredRoads,
         });
         // Any prior spatial indices are stale.
         this.nodeIndex = null;
         this.edgeIndex = null;
         this.riddenIndex = null;
         this.avoidedIndex = null;
+        this.preferredIndex = null;
         const nodesMap = new Map<number, { lat: number, lon: number }>();
 
         // Debug: log first few nodes to verify coordinate parsing
@@ -482,6 +492,8 @@ export class StreetGraph {
         if (riddenRoads && riddenRoads.length > 0) this.buildRiddenIndex(riddenRoads);
         const avoidedRoads = options?.avoidedRoads;
         if (avoidedRoads && avoidedRoads.length > 0) this.avoidedIndex = this.buildProximityIndex(avoidedRoads);
+        const preferredRoads = options?.preferredRoads;
+        if (preferredRoads && preferredRoads.length > 0) this.preferredIndex = this.buildProximityIndex(preferredRoads);
 
         // 1. First pass: Collect any top-level node elements (for backward compatibility/tests)
         for (const elem of data.elements) {
@@ -649,7 +661,7 @@ export class StreetGraph {
                         // gets the heavier user penalty rather than the smaller category one.
                         const isUserAvoided = this.checkIfUserAvoided(uCoord, vCoord);
                         if (isUserAvoided) {
-                            dist *= USER_AVOIDED_PENALTY;
+                            dist *= strengthOption(options?.avoidStrength, DEFAULT_AVOID_STRENGTH);
                             isAvoided = true;
                         } else if (highway === 'trunk') {
                             dist *= options?.avoidHighways ? 12 : 2;
@@ -664,6 +676,10 @@ export class StreetGraph {
                         if (hasBikeLane) {
                             dist *= 0.9;
                         }
+                        const isPreferred = !isAvoided && this.checkIfUserPreferred(uCoord, vCoord);
+                        if (isPreferred) {
+                            dist /= strengthOption(options?.preferStrength, DEFAULT_PREFER_STRENGTH);
+                        }
                         const isRidden = wayEdges[i].isRidden;
                         const edgeData: EdgeData = {
                             id: way.id.toString(),
@@ -673,6 +689,7 @@ export class StreetGraph {
                             isRidden,
                             isAvoided,
                             isUserAvoided,
+                            isPreferred,
                             hasConstruction,
                             hasBikeLane
                         };
@@ -785,6 +802,11 @@ export class StreetGraph {
     private checkIfUserAvoided(u: { lat: number, lon: number }, v: { lat: number, lon: number }): boolean {
         if (!this.avoidedIndex) return false;
         return this.checkProximity(u, v, this.avoidedIndex);
+    }
+
+    private checkIfUserPreferred(u: { lat: number, lon: number }, v: { lat: number, lon: number }): boolean {
+        if (!this.preferredIndex) return false;
+        return this.checkProximity(u, v, this.preferredIndex);
     }
 
     private checkProximity(u: { lat: number, lon: number }, v: { lat: number, lon: number }, index: Map<string, [number, number, number][]>): boolean {
