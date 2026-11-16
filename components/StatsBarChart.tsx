@@ -43,13 +43,16 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
     const [hovered, setHovered] = useState<number | null>(null);
     const formatDist = (miles: number) => `${Math.round(distanceFromMiles(miles, units)).toLocaleString()} ${distanceUnit(units)}`;
     const totalOf = (b: StatsBar) => b.miles + (b.virtual?.miles ?? 0);
-    const maxMiles = Math.max(...bars.map(totalOf), 1);
     // Absent for stats computed before moving time was tracked.
     const showHours = bars.some(b => b.hours !== undefined);
     const hoursOf = (b: StatsBar) => (b.hours ?? 0) + (b.virtual?.hours ?? 0);
-    const maxHours = Math.max(...bars.map(hoursOf), 1);
+    // Hours are drawn at the miles they would cover at the chart's average speed, so a
+    // point above its bar means more time than those miles usually take, and below, less.
+    const totalHours = bars.reduce((sum, b) => sum + hoursOf(b), 0);
+    const averageSpeed = totalHours > 0 ? bars.reduce((sum, b) => sum + totalOf(b), 0) / totalHours : 0;
+    const maxMiles = Math.max(...bars.map(b => Math.max(totalOf(b), hoursOf(b) * averageSpeed)), 1);
     // Bars are equal-width columns, so bar i is centred at (i + 0.5) / n of the width.
-    const hourPoints = bars.map((b, i) => ({ key: b.key, x: ((i + 0.5) / bars.length) * 100, y: (hoursOf(b) / maxHours) * 100 }));
+    const hourPoints = bars.map((b, i) => ({ key: b.key, x: ((i + 0.5) / bars.length) * 100, y: ((hoursOf(b) * averageSpeed) / maxMiles) * 100 }));
     const seriesLegend = bars.some(b => b.virtual?.miles) ? [SERIES.virtual, ...(bars.some(b => b.type) ? [SERIES.mountain, SERIES.roadGravel] : [SERIES.outdoor])] : [];
 
     return (
@@ -59,7 +62,7 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
                 {(seriesLegend.length > 0 || showHours) && (
                     <div className="flex items-center gap-2.5 text-[10px] text-gray-500">
                         {seriesLegend.map(s => <span key={s.label} className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-sm ${s.color}`} />{s.label}</span>)}
-                        {showHours && <span className="inline-flex items-center gap-1"><span className="w-3 h-0.5 bg-gray-800" />Hours</span>}
+                        {showHours && <span className="inline-flex items-center gap-1" title="Above a bar: more time than those miles usually take you. Below: less."><span className="w-3 h-0.5 bg-gray-800" />Hours</span>}
                     </div>
                 )}
             </div>
@@ -105,7 +108,7 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
                         </div>
                     );
                 })}
-                {/* Hours on their own scale: the tallest point lines up with the tallest bar. Sits above the labels (h-3 + gap-1). */}
+                {/* Sits above the labels (h-3 + gap-1). */}
                 {showHours && (
                     <div className="absolute inset-x-0 top-0 bottom-4 pointer-events-none" aria-hidden="true">
                         <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">

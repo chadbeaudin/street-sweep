@@ -192,13 +192,14 @@ describe('StatsDialog time in the saddle (#230)', () => {
         expect(screen.getByText('10 h')).toBeInTheDocument();
     });
 
-    it('draws hours as a line over the yearly miles bars, on its own scale', async () => {
+    it('draws hours as a line over the yearly miles bars, at the miles they cover at the average speed', async () => {
         renderStats('imperial', withHours);
         expect(await screen.findByText('Miles and Hours per Year')).toBeInTheDocument();
         expect(screen.getByText('Hours')).toBeInTheDocument();
-        // 2016 has the most hours (22 outdoor + 6 virtual), so its point is at the top; 2017 has 2 of 28.
-        expect(screen.getByTestId('hours-point-2016')).toHaveStyle({ bottom: '100%', left: '25%' });
-        expect(screen.getByTestId('hours-point-2017')).toHaveStyle({ bottom: `${(2 / 28) * 100}%`, left: '75%' });
+        // 210 miles in 30 hours is 7 mph. 2016's 28 hours sit at 196 of its 200 miles: just below its bar,
+        // because that year was a little faster than average. 2017's 2 hours sit at 14, above its 10 miles.
+        expect(screen.getByTestId('hours-point-2016')).toHaveStyle({ bottom: '98%', left: '25%' });
+        expect(screen.getByTestId('hours-point-2017')).toHaveStyle({ bottom: `${((2 * 7) / 200) * 100}%`, left: '75%' });
         // The bars still show miles.
         expect(screen.getByTestId('virtual-bar-2016')).toHaveStyle({ height: '50%' });
     });
@@ -227,8 +228,9 @@ describe('StatsDialog time in the saddle (#230)', () => {
         expect(await screen.findByText('Miles and Hours per Month')).toBeInTheDocument();
         expect(screen.getByText('Time')).toBeInTheDocument();
         expect(screen.getByText('10')).toBeInTheDocument(); // 1 + 5 + 1.5 + 2.5 hours
-        expect(screen.getByTestId('hours-point-6')).toHaveStyle({ bottom: '100%' }); // June: 9 hours, the most
-        expect(screen.getByTestId('hours-point-7')).toHaveStyle({ bottom: `${(1 / 9) * 100}%` });
+        // 100 miles in 10 hours. June's 9 hours for 75 miles sit above its bar; July's 1 hour for 25 miles, below.
+        expect(screen.getByTestId('hours-point-6')).toHaveStyle({ bottom: '100%' });
+        expect(screen.getByTestId('hours-point-7')).toHaveStyle({ bottom: `${(10 / 90) * 100}%` });
         expect(screen.getAllByText(/1,000 ft · 5h 00m/).length).toBeGreaterThan(0);
     });
 });
