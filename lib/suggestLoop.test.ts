@@ -1,7 +1,7 @@
 import { StreetGraph } from './graph';
 import { OverpassResponse } from './types';
 import { haversineM } from './geometry';
-import { offsetPoint, scoreLoop, planLoop, loopReachM, measureGainM } from './suggestLoop';
+import { offsetPoint, scoreLoop, planLoop, loopReachM, measureGainM, cachedRideGainM, activeAvoidPreferences, hamperedNote } from './suggestLoop';
 
 // 41×41 street grid at ~200 m spacing (8 km square) with the start in the middle.
 const N = 41, STEP = 0.0018, LAT0 = 47.6, LON0 = -117.4;
@@ -9,14 +9,14 @@ const START = { lat: LAT0 + STEP * 20, lon: LON0 + STEP * 20 * 1.48 };
 const coord = (i: number, j: number) => ({ lat: LAT0 + STEP * i, lon: LON0 + STEP * j * 1.48 });
 const id = (i: number, j: number) => 1 + i * N + j;
 
-function buildGrid(): StreetGraph {
+function buildGrid(surface?: string, options?: object): StreetGraph {
     const ways: unknown[] = [];
     let w = 1;
-    const way = (cells: [number, number][]) => ({ type: 'way', id: w++, nodes: cells.map(([i, j]) => id(i, j)), geometry: cells.map(([i, j]) => coord(i, j)), tags: { highway: 'residential' } });
+    const way = (cells: [number, number][]) => ({ type: 'way', id: w++, nodes: cells.map(([i, j]) => id(i, j)), geometry: cells.map(([i, j]) => coord(i, j)), tags: { highway: 'residential', ...(surface ? { surface } : {}) } });
     for (let i = 0; i < N; i++) ways.push(way(Array.from({ length: N }, (_, j) => [i, j] as [number, number])));
     for (let j = 0; j < N; j++) ways.push(way(Array.from({ length: N }, (_, i) => [i, j] as [number, number])));
     const g = new StreetGraph();
-    g.buildFromOSM({ version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' }, elements: ways } as OverpassResponse);
+    g.buildFromOSM({ version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' }, elements: ways } as OverpassResponse, null, options);
     return g;
 }
 
@@ -76,6 +76,33 @@ describe('planLoop (#80)', () => {
         expect(loop.unriddenFraction).toBeGreaterThan(0.8);
     });
 
+    it('skips measuring climbing for loops too far off on distance to win (#223)', async () => {
+        // From near the grid's corner, loops heading off the grid come out far too short.
+        const corner = coord(3, 3);
+        const counting = jest.fn(elevationsFor);
+        const loop = (await planLoop(buildGrid(), corner, { distanceM: 8_000, gainM: 0 }, new Map(), counting))!;
+        expect(counting.mock.calls.length).toBeGreaterThanOrEqual(3);
+        expect(counting.mock.calls.length).toBeLessThan(8);
+        expect(Math.abs(loop.distanceM - 8_000) / 8_000).toBeLessThan(0.15);
+    });
+
+    it('measures every loop when none is ruled out on distance (#223)', async () => {
+        // Every loop but the worst-fitting ones climbs far more than the flat usual ride.
+        const steepNearStart = async (pts: [number, number][]) => pts.map(([lon, lat], k) => (haversineM(lat, lon, START.lat, START.lon) < 3000 ? (k % 2) * 40 : 0));
+        const counting = jest.fn(steepNearStart);
+        await planLoop(buildGrid(), START, { distanceM: 8_000, gainM: 0 }, new Map(), counting);
+        expect(counting.mock.calls.length).toBe(8);
+    });
+
+    it('sizes a loop by real distance where every road is gravel and gravel is avoided', async () => {
+        const gravel = buildGrid('gravel', { avoidGravel: true });
+        const loop = (await planLoop(gravel, START, { distanceM: 8_000, gainM: 0 }, new Map(), async pts => pts.map(() => 0)))!;
+        let ridden = 0;
+        for (let i = 1; i < loop.path.length; i++) ridden += haversineM(loop.path[i - 1][0], loop.path[i - 1][1], loop.path[i][0], loop.path[i][1]);
+        expect(loop.distanceM).toBeCloseTo(ridden, 0);
+        expect(Math.abs(ridden - 8_000) / 8_000).toBeLessThan(0.15);
+    });
+
     it('sizes the street graph to cover the farthest corner it might try', () => {
         expect(loopReachM({ distanceM: 39_000, gainM: 0 })).toBeCloseTo(16_000, -2);
     });
@@ -85,5 +112,42 @@ describe('measureGainM (#80)', () => {
     it("measures a ride's climbing from map elevations along it", async () => {
         const overHill: [number, number][] = [[START.lat, START.lon], [HILL.lat, HILL.lon], [START.lat, START.lon]];
         expect(await measureGainM(overHill, elevationsFor)).toBeGreaterThan(140);
+    });
+});
+
+describe('cachedRideGainM (#223)', () => {
+    it("measures a ride's climbing once and reuses it", async () => {
+        const overHill: [number, number][] = [[START.lat, START.lon], [HILL.lat, HILL.lon], [START.lat, START.lon]];
+        const counting = jest.fn(elevationsFor);
+        const first = await cachedRideGainM(7, overHill, counting);
+        expect(await cachedRideGainM(7, overHill, counting)).toBe(first);
+        expect(counting).toHaveBeenCalledTimes(1);
+        await cachedRideGainM(8, overHill, counting);
+        expect(counting).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('hamperedNote', () => {
+    const target = { distanceM: 40_000, gainM: 300 };
+
+    it('lists the avoid preferences that are switched on', () => {
+        expect(activeAvoidPreferences({ avoidGravel: true, avoidHighways: false, avoidedRoads: [[]] })).toEqual(['Avoid Gravel', 'roads you marked Avoid']);
+        expect(activeAvoidPreferences({ avoidedRoads: [] })).toEqual([]);
+    });
+
+    it('says nothing for a good loop, or when no preference could be to blame', () => {
+        expect(hamperedNote({ distanceM: 41_000, avoidedFraction: 0.05 }, target, ['Avoid Gravel'])).toBeNull();
+        expect(hamperedNote({ distanceM: 10_000, avoidedFraction: 0 }, target, [])).toBeNull();
+    });
+
+    it('names the preferences when much of the loop is on avoided roads or its distance is far off', () => {
+        expect(hamperedNote({ distanceM: 41_000, avoidedFraction: 0.62 }, target, ['Avoid Gravel'])).toMatch(/62%.*Routing Options: Avoid Gravel/);
+        expect(hamperedNote({ distanceM: 10_000, avoidedFraction: 0 }, target, ['Avoid Trails'])).toMatch(/usual distance.*Avoid Trails/);
+    });
+
+    it('reports how much of a planned loop is on avoided roads', async () => {
+        const gravel = buildGrid('gravel', { avoidGravel: true });
+        const loop = (await planLoop(gravel, START, { distanceM: 8_000, gainM: 0 }, new Map(), async pts => pts.map(() => 0)))!;
+        expect(loop.avoidedFraction).toBeCloseTo(1, 2);
     });
 });

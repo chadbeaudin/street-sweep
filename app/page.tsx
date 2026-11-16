@@ -236,6 +236,7 @@ export default function Home() {
     const [isImporting, setIsImporting] = useState(false);
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
+    const [suggestNote, setSuggestNote] = useState<string | null>(null);
     const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -1668,6 +1669,7 @@ export default function Home() {
         setPickingSuggestStart(false);
         setSuggestStart(start);
         setIsSuggesting(true);
+        setSuggestNote(null);
         setError(null);
         try {
             const res = await fetch('/api/suggest', {
@@ -1682,6 +1684,7 @@ export default function Home() {
             setFitBoundsRequest(bounds);
             clearPoints();
             for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
+            setSuggestNote(data.note ?? null);
         } catch (err: any) {
             setError({ message: err.message });
         } finally {
@@ -2543,6 +2546,12 @@ export default function Home() {
                         <span className="text-sm font-medium text-amber-800">
                             This route may have construction happening
                         </span>
+                    </div>
+                )}
+                {suggestNote && (
+                    <div className="relative z-[1200] bg-amber-50 border-l-4 border-amber-400 px-6 py-3 flex items-center gap-3 shadow-sm">
+                        <span className="text-sm font-medium text-amber-800 flex-1">{suggestNote}</span>
+                        <button onClick={() => setSuggestNote(null)} className="text-amber-600 hover:text-amber-800" title="Dismiss"><X className="w-4 h-4" /></button>
                     </div>
                 )}
                 {pickingSuggestStart && (

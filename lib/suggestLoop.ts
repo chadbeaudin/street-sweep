@@ -7,7 +7,7 @@ import { haversineM } from './geometry';
 // than coming in under), preferring unridden streets. Shape doesn't matter.
 
 export interface LoopTarget { distanceM: number; gainM: number }
-export interface LoopResult { path: [number, number][]; distanceM: number; gainM: number; unriddenFraction: number; score: number }
+export interface LoopResult { path: [number, number][]; distanceM: number; gainM: number; unriddenFraction: number; avoidedFraction: number; score: number }
 
 const M_PER_DEG = 111_320;
 // Roads wander: a triangle of straight sides r long rides about 1.3 × 3r.
@@ -53,6 +53,7 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
     const path: [number, number][] = [];
     let distanceM = 0;
     let unriddenM = 0;
+    let avoidedM = 0;
     for (let i = 1; i < nodes.length; i++) {
         if (nodes[i - 1] === nodes[i]) continue;
         const leg = graph.findClosestTargetCapped(nodes[i - 1]!, new Set([nodes[i]!]), penalties);
@@ -60,8 +61,6 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
         for (const step of leg.path) {
             const link = graph.graph.getLink(step.id, step.idNext);
             if (!link) continue;
-            distanceM += link.data.weight;
-            if (!link.data.isRidden) unriddenM += link.data.weight;
             penalties.set(link.id, (penalties.get(link.id) ?? 1) * REUSE_PENALTY);
             const back = graph.graph.getLink(step.idNext, step.id);
             if (back) penalties.set(back.id, (penalties.get(back.id) ?? 1) * REUSE_PENALTY);
@@ -69,20 +68,29 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
             if (path.length === 0) path.push([from.lat, from.lon]);
             const to = graph.graph.getNode(step.idNext)!.data;
             path.push([to.lat, to.lon]);
+            // The link's weight is a routing cost (gravel, avoided and preferred roads scale it), not its length.
+            const lengthM = haversineM(from.lat, from.lon, to.lat, to.lon);
+            distanceM += lengthM;
+            if (!link.data.isRidden) unriddenM += lengthM;
+            if (link.data.isAvoided) avoidedM += lengthM;
         }
     }
     if (path.length < 2) return null;
-    return { path, distanceM, unriddenFraction: distanceM > 0 ? unriddenM / distanceM : 0 };
+    return { path, distanceM, unriddenFraction: distanceM > 0 ? unriddenM / distanceM : 0, avoidedFraction: distanceM > 0 ? avoidedM / distanceM : 0 };
 }
 
-// About every 100 m, enough to measure climbing without fetching every node.
+// Coarse enough to keep elevation lookups few, fine enough to compare whole loops' climbing (#223).
+const SAMPLE_SPACING_M = 200;
+// Climbing is only measured for this many loops before the rest must show they could still win.
+const ALWAYS_MEASURED = 3;
+
 // Takes [lat, lon] points; returns [lon, lat] for the elevation fetch.
 function sampleForElevation(path: [number, number][]): [number, number][] {
     const out: [number, number][] = [[path[0][1], path[0][0]]];
     let since = 0;
     for (let i = 1; i < path.length; i++) {
         since += haversineM(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
-        if (since >= 100 || i === path.length - 1) { out.push([path[i][1], path[i][0]]); since = 0; }
+        if (since >= SAMPLE_SPACING_M || i === path.length - 1) { out.push([path[i][1], path[i][0]]); since = 0; }
     }
     return out;
 }
@@ -93,8 +101,23 @@ export async function measureGainM(path: [number, number][], elevationsFor: (lon
     return calculateElevationGainLoss(await elevationsFor(sampleForElevation(path)), GAIN_THRESHOLD_M).gain;
 }
 
+// A ride's track never changes, and the same usual ride is the target of every suggestion nearby.
+const rideGainCache = new Map<number, number>();
+export async function cachedRideGainM(rideId: number, path: [number, number][], elevationsFor: (lonLats: [number, number][]) => Promise<number[]>): Promise<number> {
+    const cached = rideGainCache.get(rideId);
+    if (cached !== undefined) return cached;
+    const gainM = await measureGainM(path, elevationsFor);
+    rideGainCache.set(rideId, gainM);
+    return gainM;
+}
+
+// The best score a loop could get if its climbing matched the target exactly.
+function bestPossibleScore(loop: { distanceM: number; unriddenFraction: number }, target: LoopTarget): number {
+    return scoreLoop({ ...loop, gainM: target.gainM }, target);
+}
+
 // Tries a loop in each direction, resizing it once so its routed length lands on
-// the target, then scores every sized loop with its elevation gain.
+// the target, then scores the sized loops with their elevation gain.
 export async function planLoop(
     graph: StreetGraph,
     start: { lat: number; lon: number },
@@ -106,7 +129,7 @@ export async function planLoop(
     const maxR = loopReachM(target);
     // Snapping onto a stray path fragment would leave no way to reach the other corners.
     const network = graph.largestConnectedComponent();
-    const candidates: { path: [number, number][]; distanceM: number; unriddenFraction: number }[] = [];
+    const candidates: { path: [number, number][]; distanceM: number; unriddenFraction: number; avoidedFraction: number }[] = [];
     for (let k = 0; k < DIRECTIONS; k++) {
         const bearing = (360 / DIRECTIONS) * k;
         // Each direction is a few searches over a large graph; let other requests in between them (#216).
@@ -121,14 +144,57 @@ export async function planLoop(
     }
     if (candidates.length === 0) return null;
 
-    const gains = await Promise.all(candidates.map(c => measureGainM(c.path, elevationsFor)));
+    // Elevation lookups are the slow part (#223), so measure the loops closest on distance
+    // first, then only those whose perfect-climbing score could still beat the best of them.
+    const byDistanceFit = candidates.map((_, i) => i)
+        .sort((a, b) => Math.abs(candidates[a].distanceM - target.distanceM) - Math.abs(candidates[b].distanceM - target.distanceM));
+    const scored = new Map<number, LoopResult>();
+    const measure = async (indexes: number[]) => {
+        const gains = await Promise.all(indexes.map(i => measureGainM(candidates[i].path, elevationsFor)));
+        indexes.forEach((i, k) => {
+            const loop = { ...candidates[i], gainM: gains[k] };
+            scored.set(i, { ...loop, score: scoreLoop(loop, target) });
+        });
+    };
+    await measure(byDistanceFit.slice(0, ALWAYS_MEASURED));
+    const scoreToBeat = Math.min(...[...scored.values()].map(l => l.score));
+    await measure(byDistanceFit.slice(ALWAYS_MEASURED).filter(i => bestPossibleScore(candidates[i], target) <= scoreToBeat));
+
     let best: LoopResult | null = null;
     for (let i = 0; i < candidates.length; i++) {
-        const gainM = gains[i];
-        const loop = { ...candidates[i], gainM };
-        const score = scoreLoop(loop, target);
-        console.log(`[Suggest] candidate ${i}: ${(loop.distanceM / 1000).toFixed(1)} km, ${Math.round(gainM)} m gain, ${Math.round(loop.unriddenFraction * 100)}% unridden, score ${score.toFixed(2)}`);
-        if (!best || score < best.score) best = { ...loop, score };
+        const loop = scored.get(i);
+        if (!loop) {
+            console.log(`[Suggest] candidate ${i}: ${(candidates[i].distanceM / 1000).toFixed(1)} km, cannot beat the best, climbing not measured`);
+            continue;
+        }
+        console.log(`[Suggest] candidate ${i}: ${(loop.distanceM / 1000).toFixed(1)} km, ${Math.round(loop.gainM)} m gain, ${Math.round(loop.unriddenFraction * 100)}% unridden, score ${loop.score.toFixed(2)}`);
+        if (!best || loop.score < best.score) best = loop;
     }
     return best;
+}
+
+// A loop this far off the usual distance, or with this much of it on roads the rider
+// asked to avoid, means their routing preferences left too few roads to work with.
+const HAMPERED_DISTANCE_ERROR = 0.2;
+const HAMPERED_AVOIDED_FRACTION = 0.2;
+
+export function activeAvoidPreferences(options?: { avoidGravel?: boolean; avoidHighways?: boolean; avoidTrails?: boolean; avoidedRoads?: unknown[] }): string[] {
+    return [
+        options?.avoidGravel && 'Avoid Gravel',
+        options?.avoidHighways && 'Avoid Highways',
+        options?.avoidTrails && 'Avoid Trails',
+        options?.avoidedRoads?.length && 'roads you marked Avoid',
+    ].filter((name): name is string => typeof name === 'string');
+}
+
+// Tells the rider which of their preferences to look at when a suggestion came out poorly because of them.
+export function hamperedNote(loop: { distanceM: number; avoidedFraction: number }, target: LoopTarget, preferences: string[]): string | null {
+    if (preferences.length === 0) return null;
+    const offDistance = Math.abs(loop.distanceM - target.distanceM) / target.distanceM > HAMPERED_DISTANCE_ERROR;
+    const onAvoided = loop.avoidedFraction > HAMPERED_AVOIDED_FRACTION;
+    if (!offDistance && !onAvoided) return null;
+    const problem = onAvoided
+        ? `About ${Math.round(loop.avoidedFraction * 100)}% of this route is on roads your routing preferences avoid, because there are few other roads here.`
+        : "This route doesn't match your usual distance well, because your routing preferences rule out many roads here.";
+    return `${problem} Check Routing Options: ${preferences.join(', ')}.`;
 }
