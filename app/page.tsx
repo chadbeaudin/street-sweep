@@ -9,7 +9,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, ThumbsUp, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
-import { boundsOf, placeSuggestedRoute } from '@/lib/suggestRoute';
+import { boundsOf, placeSuggestedRoute, suggestTargetMessage } from '@/lib/suggestRoute';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
@@ -30,7 +30,7 @@ import { useUnits } from '@/components/UnitsContext';
 import { elevationFromFeet, elevationUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint } from '@/lib/pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint, loopTwinIndex } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
 import { NO_ANCHORS, firstAnchor, lastAnchor, segmentCrossesArea, shiftAnchorsForDelete, shiftAnchorsForInsert, type AreaAnchors } from '@/lib/areaLegs';
 import { filterRiddenRoadsToBbox, polylineSetFingerprint } from '@/lib/riddenRoads';
@@ -237,6 +237,7 @@ export default function Home() {
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
     const [suggestNote, setSuggestNote] = useState<string | null>(null);
+    const [suggestTarget, setSuggestTarget] = useState<{ distanceM: number; elevationGainM: number } | null>(null);
     const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -245,6 +246,10 @@ export default function Home() {
     const [activeSteps, setActiveSteps] = useState(0);
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
+    // True while the route is a suggestion as placed: moving its start/finish then plans a
+    // new loop from there (#236). Any other edit makes it an ordinary route again.
+    const suggestionActiveRef = useRef(false);
+    const suggestRouteRef = useRef<(start: { lat: number; lon: number }) => void>(() => {});
     const generateAbortControllerRef = useRef<AbortController | null>(null);
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const fetchedRoadTilesRef = useRef<Set<string>>(new Set());
@@ -1250,6 +1255,7 @@ export default function Home() {
 
     const addPoint = useCallback((point: { lat: number; lon: number }, routingBbox?: { south: number; west: number; north: number; east: number }) => {
         if (isDraggingRef.current) return;
+        suggestionActiveRef.current = false;
         isImportedRouteRef.current = false;
         setIsImportedRoute(false);
 
@@ -1365,10 +1371,19 @@ export default function Home() {
         const currentBbox = bboxRef.current;
         if (!currentBbox) return;
 
+        const twinIdx = loopTwinIndex(pointsRef.current, idx);
+        if (twinIdx !== null && suggestionActiveRef.current) {
+            suggestRouteRef.current(newLatLng);
+            return;
+        }
+        suggestionActiveRef.current = false;
+
         // 1. Optimistic Update: Update the waypoint immediately
         const newPoints = [...pointsRef.current];
         const pointId = newPoints[idx].id;
+        const twinId = twinIdx === null ? null : newPoints[twinIdx].id;
         newPoints[idx] = { ...newLatLng, id: pointId, status: 'pending' };
+        if (twinIdx !== null) newPoints[twinIdx] = { ...newLatLng, id: twinId!, status: 'pending' };
         pointsRef.current = newPoints;
         setSelectedPoints([...newPoints]);
         setActiveSteps(prev => prev + 1);
@@ -1376,7 +1391,10 @@ export default function Home() {
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
                 // Determine affected segments based on the current state of points
-                const affectedIndices = getAffectedSegmentIndices(idx, pointsRef.current.length);
+                const affectedIndices = [...new Set([
+                    ...getAffectedSegmentIndices(idx, pointsRef.current.length),
+                    ...(twinIdx === null ? [] : getAffectedSegmentIndices(twinIdx, pointsRef.current.length)),
+                ])];
 
                 const updatedSegments = [...manualRouteRef.current];
 
@@ -1398,7 +1416,8 @@ export default function Home() {
                 const snappedMovedPoint = { ...moveData.snappedPoint, id: pointId, status: 'snapped' as const };
 
                 // Use the latest points from the ref to avoid race conditions with point additions
-                const newestPoints = applyMovedPoint(pointsRef.current, pointId, snappedMovedPoint);
+                const movedPoints = applyMovedPoint(pointsRef.current, pointId, snappedMovedPoint);
+                const newestPoints = movedPoints && twinId ? applyMovedPoint(movedPoints, twinId, { ...snappedMovedPoint, id: twinId }) ?? movedPoints : movedPoints;
                 if (!newestPoints) return; // Point was removed while waiting
                 pointsRef.current = newestPoints;
                 setSelectedPoints([...newestPoints]);
@@ -1466,6 +1485,7 @@ export default function Home() {
         const currentBbox = bboxRef.current;
         if (!currentBbox) return;
         if (idx < 0 || idx >= pointsRef.current.length) return;
+        suggestionActiveRef.current = false;
 
         const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pointsRef.current, manualRouteRef.current, idx);
         pointsRef.current = newPoints;
@@ -1637,6 +1657,7 @@ export default function Home() {
 
     const clearPoints = useCallback(() => {
         // Reset refs
+        suggestionActiveRef.current = false;
         pointsRef.current = [];
         manualRouteRef.current = [];
         historyRef.current = [];
@@ -1670,8 +1691,16 @@ export default function Home() {
         setSuggestStart(start);
         setIsSuggesting(true);
         setSuggestNote(null);
+        setSuggestTarget(null);
         setError(null);
         try {
+            // Quick, so the progress message can say what's being planned; the plan itself doesn't need it.
+            fetch('/api/suggest/target', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activityMode }),
+            }).then(r => (r.ok ? r.json() : null)).then(target => { if (target) setSuggestTarget(target); }).catch(() => { /* keep the generic message */ });
+
             const res = await fetch('/api/suggest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1693,14 +1722,21 @@ export default function Home() {
             setManualRoute(legs);
             setHistory(historyRef.current);
             setHistoryIndex(0);
+            suggestionActiveRef.current = true;
             setSuggestNote(data.note ?? null);
         } catch (err: any) {
             setError({ message: err.message });
         } finally {
             setIsSuggesting(false);
             setSuggestStart(null);
+            setSuggestTarget(null);
         }
     }, [activityMode, clearPoints]);
+    useEffect(() => { suggestRouteRef.current = handleSuggestRoute; }, [handleSuggestRoute]);
+    // Drawing an area on a suggestion makes it an ordinary route too.
+    useEffect(() => {
+        if (selectionBoxes.length > 0 || selectionPolygons.length > 0) suggestionActiveRef.current = false;
+    }, [selectionBoxes.length, selectionPolygons.length]);
 
     // A new area supersedes the auto-added end of the previous sweep (see
     // dropStaleComputedEndpoint); its empty incoming segment goes with it.
@@ -2456,7 +2492,7 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 max-w-[calc(100%-32px)]">
                         <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
                         <span className="text-sm font-bold text-indigo-900 tracking-tight">
-                            Creating a route similar to your most common rides&hellip;
+                            {suggestTarget ? suggestTargetMessage(suggestTarget, units) : 'Finding your typical ride'}&hellip;
                         </span>
                     </div>
                 )}
@@ -2558,9 +2594,9 @@ export default function Home() {
                     </div>
                 )}
                 {suggestNote && (
-                    <div className="relative z-[1200] bg-amber-50 border-l-4 border-amber-400 px-6 py-3 flex items-center gap-3 shadow-sm">
+                    <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] w-[min(28rem,calc(100%-32px))] bg-amber-50 border border-amber-200 rounded-xl shadow-lg px-4 py-3 flex items-start gap-2">
                         <span className="text-sm font-medium text-amber-800 flex-1">{suggestNote}</span>
-                        <button onClick={() => setSuggestNote(null)} className="text-amber-600 hover:text-amber-800" title="Dismiss"><X className="w-4 h-4" /></button>
+                        <button onClick={() => setSuggestNote(null)} className="text-amber-600 hover:text-amber-800 shrink-0 mt-0.5" title="Dismiss"><X className="w-4 h-4" /></button>
                     </div>
                 )}
                 {pickingSuggestStart && (

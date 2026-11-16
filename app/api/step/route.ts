@@ -6,7 +6,7 @@ import { fetchOSMData } from '@/lib/overpass';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { z } from 'zod';
 import { LatLon, BBox, PolylineList, RoutingOptions, parseBody } from '@/lib/validation';
-import { buildStepPathCoords, legalSnapEnds, sameOnewayEdgePath } from '@/lib/stepPath';
+import { buildStepPathCoords, legalSnapEnds, sameOnewayEdgePath, stepFetchBbox } from '@/lib/stepPath';
 import { polylineSetFingerprint } from '@/lib/riddenRoads';
 
 const Body = z.object({
@@ -25,41 +25,8 @@ async function handlePOST(req: NextRequest) {
         if ('error' in parsed) return parsed.error;
         const { point, lastPoint, bbox, manualRoute, riddenRoads, riddenFingerprint, routingOptions } = parsed.data;
 
-        const BUFFER = 0.01; // small buffer beyond the union area for edge connectivity
-        const GRID = 0.01;   // Snap to 1km grid for caching
-
-        // Expand to include both click points and the full viewport bbox.
-        // This ensures highway crossings visible on screen are always in the graph,
-        // even when the two waypoints are on opposite sides of a divided highway.
-        let minLat = point.lat;
-        let maxLat = point.lat;
-        let minLon = point.lon;
-        let maxLon = point.lon;
-
-        if (lastPoint) {
-            minLat = Math.min(minLat, lastPoint.lat);
-            maxLat = Math.max(maxLat, lastPoint.lat);
-            minLon = Math.min(minLon, lastPoint.lon);
-            maxLon = Math.max(maxLon, lastPoint.lon);
-        }
-
-        // Union with the viewport bbox so the graph covers the same area the user sees
-        minLat = Math.min(minLat, bbox.south);
-        maxLat = Math.max(maxLat, bbox.north);
-        minLon = Math.min(minLon, bbox.west);
-        maxLon = Math.max(maxLon, bbox.east);
-
-        const roundToGrid = (n: number, down: boolean) => {
-            const val = down ? Math.floor(n / GRID) * GRID : Math.ceil(n / GRID) * GRID;
-            return Number(val.toFixed(4));
-        };
-
-        const bufferedBbox = {
-            south: roundToGrid(minLat - BUFFER, true),
-            west: roundToGrid(minLon - BUFFER, true),
-            north: roundToGrid(maxLat + BUFFER, false),
-            east: roundToGrid(maxLon + BUFFER, false)
-        };
+        const BUFFER = 0.01; // around the clicks when looking for an already-built graph
+        const bufferedBbox = stepFetchBbox(point, lastPoint, bbox);
 
         // Use the cached graph for speed. We now apply penalties dynamically
         // during pathfinding instead of mutating the graph weights. A graph cached

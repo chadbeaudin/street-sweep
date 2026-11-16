@@ -8,7 +8,7 @@ import { fetchElevationData } from '@/lib/elevationFetch';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { polylineSetFingerprint } from '@/lib/riddenRoads';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
-import { findMostCommonRide, legsAlong, waypointSpacingM } from '@/lib/suggestRoute';
+import { findTypicalRide, legsAlong, waypointSpacingM } from '@/lib/suggestRoute';
 import { planLoop, loopReachM, cachedRideGainM, activeAvoidPreferences, hamperedNote } from '@/lib/suggestLoop';
 import { LatLon, RoutingOptions, parseBody } from '@/lib/validation';
 
@@ -23,7 +23,7 @@ const Body = z.object({
 });
 
 // "Suggest a Route" (#80): a loop from the chosen start matching the distance and
-// climbing of the rider's most common ride (from near there, else anywhere), on
+// climbing of the rider's typical ride, wherever they usually ride (#237), on
 // unridden streets where it can. Returned as waypoints with the routed path between them.
 async function handlePOST(request: Request) {
     try {
@@ -35,11 +35,10 @@ async function handlePOST(request: Request) {
         const { start, activityMode, routingOptions } = parsed.data;
 
         const rides = await fetchRideTracks(creds, activityMode ?? 'cycling');
-        const common = findMostCommonRide(rides, start) ?? findMostCommonRide(rides, start, Infinity);
-        if (!common) {
+        const ride = findTypicalRide(rides);
+        if (!ride) {
             return NextResponse.json({ error: 'No rides to base a suggestion on yet. Sync some rides from Strava first.' }, { status: 404 });
         }
-        const { ride } = common;
         const elevationsFor = async (lonLats: [number, number][]) => (await fetchElevationData(lonLats)).elevations;
         const target = { distanceM: ride.distanceM, gainM: await cachedRideGainM(ride.id, ride.poly, elevationsFor) };
 

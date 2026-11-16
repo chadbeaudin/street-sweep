@@ -1,8 +1,9 @@
 import { haversineM } from './geometry';
+import { distanceFromMeters, elevationFromFeet, elevationUnit, type UnitSystem } from './units';
 
-// "Suggest a Route" (#80): find the ride the rider repeats most -- its distance and
-// climbing are what a suggestion aims for (lib/suggestLoop.ts) -- and lay the chosen
-// loop out as waypoints the client routes like clicked points.
+// "Suggest a Route" (#80): find the rider's typical ride -- its distance and climbing
+// are what a suggestion aims for (lib/suggestLoop.ts) -- and lay the chosen loop out
+// as waypoints with the routed legs between them.
 
 export interface RideTrack {
     id: number;
@@ -13,102 +14,46 @@ export interface RideTrack {
     poly: [number, number][]; // [lat, lon]
 }
 
-export interface CommonRide {
-    ride: RideTrack;
-    timesRidden: number; // the ride itself plus the rides similar to it
+const FEET_PER_METER = 3.28084;
+
+// Shown while a suggestion is planned, e.g. "Planning a 21-mile loop with about
+// 1,270 ft of climbing, like your typical ride".
+export function suggestTargetMessage(target: { distanceM: number; elevationGainM: number }, units: UnitSystem): string {
+    const distance = Math.round(distanceFromMeters(target.distanceM, units));
+    const climb = Math.round(elevationFromFeet(target.elevationGainM * FEET_PER_METER, units) / 10) * 10;
+    const length = units === 'metric' ? `${distance} km` : `${distance}-mile`;
+    return `Planning a ${length} loop with about ${climb.toLocaleString()} ${elevationUnit(units)} of climbing, like your typical ride`;
 }
 
-// Coarse enough that GPS noise, lane changes and a decimated summary polyline
-// of the same street still land in the same cells.
-const SIMILARITY_CELL_M = 100;
-// Two rides count as "the same route" at this overlap of their cells.
-export const SAME_ROUTE_SIMILARITY = 0.6;
-// Pairwise comparison is quadratic; the most recent rides best reflect current habits.
-const MAX_RIDES_COMPARED = 400;
-// Rides starting within this of the chosen start set the target; otherwise all rides do.
-export const LOCAL_RADIUS_M = 15_000;
+// What the rider usually rides is judged from the past year; older habits may not hold.
+const TYPICAL_WINDOW_MS = 365 * 24 * 60 * 60 * 1000;
+// Fewer recent rides than this say too little, so the whole history is used instead.
+const MIN_RECENT_RIDES = 5;
+// Climbing differences below this don't count for much, so a flat rider's medians stay comparable.
+const MIN_GAIN_SCALE_M = 60;
 
-// Cell (y, x) packed into one number; |x| stays far below ROW for any longitude.
-const ROW = 1_000_000;
+const median = (values: number[]) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+};
 
-export function routeCells(poly: [number, number][]): Set<number> {
-    const cellDeg = SIMILARITY_CELL_M / 111_320;
-    const key = (lat: number, lon: number) =>
-        Math.floor(lat / cellDeg) * ROW + Math.floor(lon * Math.cos(lat * Math.PI / 180) / cellDeg);
-    const cells = new Set<number>();
-    for (let i = 0; i < poly.length; i++) {
-        const [lat, lon] = poly[i];
-        cells.add(key(lat, lon));
-        if (i === 0) continue;
-        const [pLat, pLon] = poly[i - 1];
-        const steps = Math.ceil(haversineM(pLat, pLon, lat, lon) / (SIMILARITY_CELL_M / 2));
-        for (let s = 1; s < steps; s++) {
-            const t = s / steps;
-            cells.add(key(pLat + (lat - pLat) * t, pLon + (lon - pLon) * t));
-        }
-    }
-    return cells;
-}
+// The rider's typical ride, wherever it was (#237): the ride closest to the median
+// distance and climbing of their past year of rides. A real ride stands in for the medians
+// so its climbing can be measured from map elevation, the same way as the candidate loops'.
+export function findTypicalRide(rides: RideTrack[], now = Date.now()): RideTrack | null {
+    const usable = rides.filter(r => r.poly.length >= 2 && r.distanceM > 0);
+    if (usable.length === 0) return null;
+    const cutoff = new Date(now - TYPICAL_WINDOW_MS).toISOString();
+    const recent = usable.filter(r => r.startDate >= cutoff);
+    const pool = recent.length >= MIN_RECENT_RIDES ? recent : usable;
 
-// The cells plus all their neighbours, so a street lying on a cell boundary
-// still matches the same street on another ride.
-function withNeighbours(cells: Set<number>): Set<number> {
-    const out = new Set<number>();
-    for (const c of cells) for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) out.add(c + dy * ROW + dx);
-    return out;
-}
-
-function countIn(cells: Set<number>, other: Set<number>): number {
-    let n = 0;
-    for (const c of cells) if (other.has(c)) n++;
-    return n;
-}
-
-// Share of both rides' cells that the other ride passes through or next to. Symmetric.
-export function routeSimilarity(a: Set<number>, b: Set<number>): number {
-    const total = a.size + b.size;
-    return total === 0 ? 0 : (countIn(a, withNeighbours(b)) + countIn(b, withNeighbours(a))) / total;
-}
-
-function pathLengthM(poly: [number, number][]): number {
-    let m = 0;
-    for (let i = 1; i < poly.length; i++) m += haversineM(poly[i - 1][0], poly[i - 1][1], poly[i][0], poly[i][1]);
-    return m;
-}
-
-// Rides whose lengths differ more than this can't be the same route; skipping them keeps
-// the pairwise comparison fast on a long ride history.
-const MAX_LENGTH_RATIO = 2;
-
-// The rider's most common ride starting within `radiusM` of `anchor`: the ride
-// that the most other rides closely match. Similarity is symmetric, so a short
-// ride that merely sits inside longer loops doesn't count as repeating them.
-export function findMostCommonRide(rides: RideTrack[], anchor: { lat: number; lon: number }, radiusM = LOCAL_RADIUS_M): CommonRide | null {
-    const local = rides
-        .filter(r => r.poly.length >= 2 && haversineM(anchor.lat, anchor.lon, r.poly[0][0], r.poly[0][1]) <= radiusM)
-        .sort((a, b) => b.startDate.localeCompare(a.startDate))
-        .slice(0, MAX_RIDES_COMPARED);
-    if (local.length === 0) return null;
-
-    const cells = local.map(r => routeCells(r.poly));
-    const near = cells.map(withNeighbours);
-    const lengths = local.map(r => pathLengthM(r.poly));
-    const matches = new Array(local.length).fill(0);
-    for (let i = 0; i < local.length; i++) {
-        for (let j = i + 1; j < local.length; j++) {
-            if (Math.max(lengths[i], lengths[j]) > MAX_LENGTH_RATIO * Math.min(lengths[i], lengths[j])) continue;
-            const similarity = (countIn(cells[i], near[j]) + countIn(cells[j], near[i])) / (cells[i].size + cells[j].size);
-            if (similarity >= SAME_ROUTE_SIMILARITY) {
-                matches[i]++;
-                matches[j]++;
-            }
-        }
-    }
-
-    // Ties go to the more recent ride (local is newest first).
-    let best = 0;
-    for (let i = 1; i < local.length; i++) if (matches[i] > matches[best]) best = i;
-    return { ride: local[best], timesRidden: matches[best] + 1 };
+    const distanceM = median(pool.map(r => r.distanceM));
+    const gainM = median(pool.map(r => r.elevationGainM));
+    const gainScale = Math.max(gainM, MIN_GAIN_SCALE_M);
+    const offBy = (r: RideTrack) => Math.abs(r.distanceM - distanceM) / distanceM + Math.abs(r.elevationGainM - gainM) / gainScale;
+    // Ties go to the most recent ride.
+    return [...pool].sort((a, b) => offBy(a) - offBy(b) || b.startDate.localeCompare(a.startDate))[0];
 }
 
 // Rides that end where they started get the start repeated as the last point.

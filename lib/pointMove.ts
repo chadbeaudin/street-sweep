@@ -85,6 +85,17 @@ export function removeWaypoint(
  * `newPoint`, preserving the position of every other waypoint.  Returns null if
  * the point no longer exists (was removed while the async snap was in flight).
  */
+// A loop's start and end share one spot, so the end's marker covers the start's. Dragging
+// either moves both, or the start couldn't be moved at all. Returns the other end, if any.
+const SAME_SPOT_DEG = 0.0001; // ~10 m
+export function loopTwinIndex(points: { lat: number; lon: number }[], idx: number): number | null {
+    const last = points.length - 1;
+    if (points.length < 3 || (idx !== 0 && idx !== last)) return null;
+    const [a, b] = [points[0], points[last]];
+    const sameSpot = Math.abs(a.lat - b.lat) < SAME_SPOT_DEG && Math.abs(a.lon - b.lon) < SAME_SPOT_DEG;
+    return sameSpot ? (idx === 0 ? last : 0) : null;
+}
+
 export function applyMovedPoint(
     points: Waypoint[],
     pointId: string,

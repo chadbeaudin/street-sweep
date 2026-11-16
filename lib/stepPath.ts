@@ -71,3 +71,36 @@ export function sameOnewayEdgePath(prevSnap: EdgeSnap, snap: EdgeSnap, getNode: 
     if (headingToV !== forward) return null;
     return [[prevSnap.lon, prevSnap.lat], [snap.lon, snap.lat]];
 }
+
+type LatLon = { lat: number; lon: number };
+type Box = { south: number; west: number; north: number; east: number };
+
+const STEP_BUFFER_DEG = 0.01; // beyond the points, for edge connectivity
+const STEP_GRID_DEG = 0.01;   // snapped so nearby requests share a cached graph
+// Overpass refuses boxes over 0.5° a side (lib/overpass.ts), leaving the router with no streets.
+const MAX_STEP_SPAN_DEG = 0.45;
+// Around the points when the viewport is too big to fetch: enough for nearby crossings.
+const STEP_FALLBACK_PAD_DEG = 0.02;
+
+// The area a step fetches streets for. Normally the points plus the whole viewport, so
+// highway crossings on screen are in the graph. Zoomed out past what Overpass will return
+// (as after a suggested route fits the map to it), moving or adding a point found no streets
+// and silently failed, so it falls back to the area around the points.
+export function stepFetchBbox(point: LatLon, lastPoint: LatLon | null | undefined, viewport: Box): Box {
+    const points = lastPoint ? [point, lastPoint] : [point];
+    const around = {
+        south: Math.min(...points.map(p => p.lat)), north: Math.max(...points.map(p => p.lat)),
+        west: Math.min(...points.map(p => p.lon)), east: Math.max(...points.map(p => p.lon)),
+    };
+    const withViewport = {
+        south: Math.min(around.south, viewport.south) - STEP_BUFFER_DEG, north: Math.max(around.north, viewport.north) + STEP_BUFFER_DEG,
+        west: Math.min(around.west, viewport.west) - STEP_BUFFER_DEG, east: Math.max(around.east, viewport.east) + STEP_BUFFER_DEG,
+    };
+    const fitsFetch = withViewport.north - withViewport.south <= MAX_STEP_SPAN_DEG && withViewport.east - withViewport.west <= MAX_STEP_SPAN_DEG;
+    const box = fitsFetch ? withViewport : {
+        south: around.south - STEP_FALLBACK_PAD_DEG, north: around.north + STEP_FALLBACK_PAD_DEG,
+        west: around.west - STEP_FALLBACK_PAD_DEG, east: around.east + STEP_FALLBACK_PAD_DEG,
+    };
+    const snap = (n: number, down: boolean) => Number(((down ? Math.floor(n / STEP_GRID_DEG) : Math.ceil(n / STEP_GRID_DEG)) * STEP_GRID_DEG).toFixed(4));
+    return { south: snap(box.south, true), west: snap(box.west, true), north: snap(box.north, false), east: snap(box.east, false) };
+}

@@ -37,7 +37,35 @@ describe('suggest a route preference note (#227)', () => {
     it('shows the note a hampered suggestion comes back with, and lets the rider dismiss it', () => {
         expect(page).toContain('setSuggestNote(data.note ?? null)');
         expect(page).toMatch(/\{suggestNote && \(/);
+        // A floating card over the map, not a bar across the whole screen.
+        expect(page).toMatch(/\{suggestNote && \(\s+<div className="absolute top-20 left-1\/2[^"]*w-\[min\(28rem/);
         expect(page).toContain('onClick={() => setSuggestNote(null)}');
+    });
+});
+
+describe('moving a suggestion start (#236)', () => {
+    it('plans a new suggestion from where the start/finish of a suggested loop is dropped', () => {
+        const handler = page.slice(page.indexOf('const handlePointMove = useCallback'), page.indexOf('const handlePointMoveStart'));
+        expect(handler).toMatch(/if \(twinIdx !== null && suggestionActiveRef\.current\) \{\s+suggestRouteRef\.current\(newLatLng\);\s+return;/);
+        expect(page).toContain('suggestionActiveRef.current = true;');
+        expect(page).toContain('useEffect(() => { suggestRouteRef.current = handleSuggestRoute; }, [handleSuggestRoute]);');
+    });
+
+    it('treats the route as ordinary once it is edited any other way', () => {
+        for (const handler of ['const addPoint = useCallback', 'const handlePointDelete = useCallback', 'const clearPoints = useCallback']) {
+            const body = page.slice(page.indexOf(handler), page.indexOf(handler) + 400);
+            expect(body).toContain('suggestionActiveRef.current = false;');
+        }
+        expect(page).toMatch(/if \(selectionBoxes\.length > 0 \|\| selectionPolygons\.length > 0\) suggestionActiveRef\.current = false;/);
+    });
+});
+
+describe('moving a loop start (#236)', () => {
+    it("moves a loop's start and end together, re-routing the legs at both ends", () => {
+        const handler = page.slice(page.indexOf('const handlePointMove = useCallback'), page.indexOf('const handlePointMoveStart'));
+        expect(handler).toContain('loopTwinIndex(pointsRef.current, idx)');
+        expect(handler).toContain('getAffectedSegmentIndices(twinIdx, pointsRef.current.length)');
+        expect(handler).toMatch(/applyMovedPoint\(movedPoints, twinId/);
     });
 });
 
@@ -59,7 +87,8 @@ describe('suggest a route progress (#80)', () => {
     });
 
     it('names what it is doing, and leaves the result to the route preview', () => {
-        expect(page).toContain('Creating a route similar to your most common rides&hellip;');
+        expect(page).toContain("{suggestTarget ? suggestTargetMessage(suggestTarget, units) : 'Finding your typical ride'}&hellip;");
+        expect(page).toContain("fetch('/api/suggest/target'");
         expect(page).not.toMatch(/setSuggestion\(/);
     });
 });

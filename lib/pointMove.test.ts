@@ -1,4 +1,4 @@
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint, setSegment } from './pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, Waypoint, setSegment, loopTwinIndex } from './pointMove';
 
 function makePoints(count: number): Waypoint[] {
     return Array.from({ length: count }, (_, i) => ({
@@ -347,5 +347,23 @@ describe('setSegment (#52)', () => {
 
     it('pads skipped segments with empty ones so indexes stay in step with the points', () => {
         expect(setSegment([[[0, 0]]], 3, path)).toEqual([[[0, 0]], [], [], path]);
+    });
+});
+
+describe('loopTwinIndex', () => {
+    const loop = [{ lat: 47.6, lon: -117.4 }, { lat: 47.61, lon: -117.41 }, { lat: 47.62, lon: -117.39 }, { lat: 47.60001, lon: -117.40001 }];
+
+    it("pairs a loop's start and end, which share one spot", () => {
+        expect(loopTwinIndex(loop, 0)).toBe(3);
+        expect(loopTwinIndex(loop, 3)).toBe(0);
+    });
+
+    it('leaves middle points, and routes whose ends are apart, alone', () => {
+        expect(loopTwinIndex(loop, 1)).toBeNull();
+        expect(loopTwinIndex([...loop.slice(0, 3), { lat: 47.7, lon: -117.4 }], 0)).toBeNull();
+    });
+
+    it('needs at least three points, so a two-point route is never one spot', () => {
+        expect(loopTwinIndex([loop[0], loop[3]], 0)).toBeNull();
     });
 });
