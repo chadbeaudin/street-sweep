@@ -30,7 +30,7 @@ import { useUnits } from '@/components/UnitsContext';
 import { elevationFromFeet, elevationUnit } from '@/lib/units';
 import { homeToPrepend, isCoordinateLabel } from '@/lib/startFromHome';
 import { getCachedRoads, setCachedRoads, clearCachedRoads, getCachedPrecomputedRoads, setCachedPrecomputedRoads, clearCachedPrecomputedRoads } from '@/lib/stravaCache';
-import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint } from '@/lib/pointMove';
+import { getAffectedSegmentIndices, applyMovedPoint, insertWaypointAtSegment, removeWaypoint, setSegment, Waypoint, loopTwinIndex } from '@/lib/pointMove';
 import { RouteSnapshot, undo, redo, shouldAddComputedEndpoint, dropStaleComputedEndpoint } from '@/lib/routeHistory';
 import { NO_ANCHORS, firstAnchor, lastAnchor, segmentCrossesArea, shiftAnchorsForDelete, shiftAnchorsForInsert, type AreaAnchors } from '@/lib/areaLegs';
 import { filterRiddenRoadsToBbox, polylineSetFingerprint } from '@/lib/riddenRoads';
@@ -1368,7 +1368,10 @@ export default function Home() {
         // 1. Optimistic Update: Update the waypoint immediately
         const newPoints = [...pointsRef.current];
         const pointId = newPoints[idx].id;
+        const twinIdx = loopTwinIndex(newPoints, idx);
+        const twinId = twinIdx === null ? null : newPoints[twinIdx].id;
         newPoints[idx] = { ...newLatLng, id: pointId, status: 'pending' };
+        if (twinIdx !== null) newPoints[twinIdx] = { ...newLatLng, id: twinId!, status: 'pending' };
         pointsRef.current = newPoints;
         setSelectedPoints([...newPoints]);
         setActiveSteps(prev => prev + 1);
@@ -1376,7 +1379,10 @@ export default function Home() {
         clickChainRef.current = clickChainRef.current.then(async () => {
             try {
                 // Determine affected segments based on the current state of points
-                const affectedIndices = getAffectedSegmentIndices(idx, pointsRef.current.length);
+                const affectedIndices = [...new Set([
+                    ...getAffectedSegmentIndices(idx, pointsRef.current.length),
+                    ...(twinIdx === null ? [] : getAffectedSegmentIndices(twinIdx, pointsRef.current.length)),
+                ])];
 
                 const updatedSegments = [...manualRouteRef.current];
 
@@ -1398,7 +1404,8 @@ export default function Home() {
                 const snappedMovedPoint = { ...moveData.snappedPoint, id: pointId, status: 'snapped' as const };
 
                 // Use the latest points from the ref to avoid race conditions with point additions
-                const newestPoints = applyMovedPoint(pointsRef.current, pointId, snappedMovedPoint);
+                const movedPoints = applyMovedPoint(pointsRef.current, pointId, snappedMovedPoint);
+                const newestPoints = movedPoints && twinId ? applyMovedPoint(movedPoints, twinId, { ...snappedMovedPoint, id: twinId }) ?? movedPoints : movedPoints;
                 if (!newestPoints) return; // Point was removed while waiting
                 pointsRef.current = newestPoints;
                 setSelectedPoints([...newestPoints]);
@@ -2558,9 +2565,9 @@ export default function Home() {
                     </div>
                 )}
                 {suggestNote && (
-                    <div className="relative z-[1200] bg-amber-50 border-l-4 border-amber-400 px-6 py-3 flex items-center gap-3 shadow-sm">
+                    <div className="absolute top-20 left-1/2 -translate-x-1/2 z-[1000] w-[min(28rem,calc(100%-32px))] bg-amber-50 border border-amber-200 rounded-xl shadow-lg px-4 py-3 flex items-start gap-2">
                         <span className="text-sm font-medium text-amber-800 flex-1">{suggestNote}</span>
-                        <button onClick={() => setSuggestNote(null)} className="text-amber-600 hover:text-amber-800" title="Dismiss"><X className="w-4 h-4" /></button>
+                        <button onClick={() => setSuggestNote(null)} className="text-amber-600 hover:text-amber-800 shrink-0 mt-0.5" title="Dismiss"><X className="w-4 h-4" /></button>
                     </div>
                 )}
                 {pickingSuggestStart && (

@@ -37,7 +37,18 @@ describe('suggest a route preference note (#227)', () => {
     it('shows the note a hampered suggestion comes back with, and lets the rider dismiss it', () => {
         expect(page).toContain('setSuggestNote(data.note ?? null)');
         expect(page).toMatch(/\{suggestNote && \(/);
+        // A floating card over the map, not a bar across the whole screen.
+        expect(page).toMatch(/\{suggestNote && \(\s+<div className="absolute top-20 left-1\/2[^"]*w-\[min\(28rem/);
         expect(page).toContain('onClick={() => setSuggestNote(null)}');
+    });
+});
+
+describe('moving a loop start (#236)', () => {
+    it("moves a loop's start and end together, re-routing the legs at both ends", () => {
+        const handler = page.slice(page.indexOf('const handlePointMove = useCallback'), page.indexOf('const handlePointMoveStart'));
+        expect(handler).toContain('loopTwinIndex(newPoints, idx)');
+        expect(handler).toContain('getAffectedSegmentIndices(twinIdx, pointsRef.current.length)');
+        expect(handler).toMatch(/applyMovedPoint\(movedPoints, twinId/);
     });
 });
 
