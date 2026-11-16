@@ -39,7 +39,7 @@ beforeEach(() => {
 const emptyRides = {
     riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
     activityDistances: [], activityStartDates: [],
-    virtualDistances: [], virtualElevations: [], virtualStartDates: [],
+    virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
     totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
 };
 
@@ -59,7 +59,7 @@ describe('POST /api/strava/activities', () => {
             activityTypes: ['Ride'], activityGearIds: [],
             activityDistances: [1000],
             activityStartDates: ['2024-01-01T00:00:00Z'],
-            virtualDistances: [], virtualElevations: [], virtualStartDates: [],
+            virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
             totalCyclingActivities: 1,
             totalCyclingElevationGainMeters: 0,
         });
@@ -98,7 +98,7 @@ describe('POST /api/strava/activities', () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
-            virtualDistances: [], virtualElevations: [], virtualStartDates: [],
+            virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
         await POST(makeRequest({}));
@@ -109,7 +109,7 @@ describe('POST /api/strava/activities', () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
-            virtualDistances: [], virtualElevations: [], virtualStartDates: [],
+            virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
         await POST(makeRequest({ activityMode: 'running' }));
@@ -120,7 +120,7 @@ describe('POST /api/strava/activities', () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
-            virtualDistances: [], virtualElevations: [], virtualStartDates: [],
+            virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
         await POST(makeRequest({ forceSync: true, activityMode: 'running' }));
@@ -131,7 +131,7 @@ describe('POST /api/strava/activities', () => {
         mockedFetch.mockResolvedValueOnce({
             riddenRoads: [], activityElevations: [], activityTypes: [], activityGearIds: [],
             activityDistances: [], activityStartDates: [],
-            virtualDistances: [], virtualElevations: [], virtualStartDates: [],
+            virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
             totalCyclingActivities: 0, totalCyclingElevationGainMeters: 0,
         });
         await POST(makeRequest({ stravaCredentials: { refreshToken: 'tok' } }));

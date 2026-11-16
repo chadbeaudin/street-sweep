@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, computeYearDetail, isMountainBikeRide, ridesInMonth, summarizeRides } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, computeYearDetail, isMountainBikeRide, ridesInMonth, summarizeRides, formatHours, formatDuration } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -170,16 +170,24 @@ describe('stats.computeRideRecords', () => {
         const r = computeRideRecords(
             [10 * MI, 25 * MI, 25 * MI],
             [100, 500, 300],           // meters climbed
-            ['2024-05-01T10:00:00Z', '2024-05-01T15:00:00Z', '2025-06-02T08:00:00Z']
+            ['2024-05-01T10:00:00Z', '2024-05-01T15:00:00Z', '2025-06-02T08:00:00Z'],
+            [3600, 5400, 9000]         // seconds moving
         );
+        expect(r.totalHours).toBeCloseTo(5, 5);
         expect(r.totalDistanceMiles).toBeCloseTo(60, 5);
         expect(r.longestRideMiles).toBeCloseTo(25, 5);
         expect(r.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
         expect(r.activeDays).toBe(2); // two rides same day count once
         expect(r.ridesPerYear).toEqual([
-            { year: 2024, rides: 2, miles: 35 },
-            { year: 2025, rides: 1, miles: 25 },
+            { year: 2024, rides: 2, miles: 35, hours: 2.5 },
+            { year: 2025, rides: 1, miles: 25, hours: 2.5 },
         ]);
+    });
+
+    it('counts rides without a moving time as zero hours (#230)', () => {
+        const r = computeRideRecords([10 * MI, 10 * MI], [0, 0], ['2024-05-01T10:00:00Z', '2024-05-02T10:00:00Z'], [7200]);
+        expect(r.totalHours).toBeCloseTo(2, 5);
+        expect(r.ridesPerYear[0].hours).toBeCloseTo(2, 5);
     });
 
     it('handles empty input', () => {
@@ -222,10 +230,21 @@ describe('stats.computeRideTypeBreakdown', () => {
 
     it('handles empty input', () => {
         expect(computeRideTypeBreakdown([], [], [])).toEqual({
-            mountain: { rides: 0, miles: 0, elevationFeet: 0 },
-            roadGravel: { rides: 0, miles: 0, elevationFeet: 0 },
+            mountain: { rides: 0, miles: 0, elevationFeet: 0, hours: 0 },
+            roadGravel: { rides: 0, miles: 0, elevationFeet: 0, hours: 0 },
             perYear: [],
         });
+    });
+
+    it('totals moving time per ride type and year (#230)', () => {
+        // The issue's example: fewer mountain bike miles, but more hours.
+        const b = computeRideTypeBreakdown(
+            ['MountainBikeRide', 'Ride'], [120 * MI, 150 * MI], [0, 0],
+            ['2025-06-01T00:00:00Z', '2025-07-01T00:00:00Z'], [], new Map(), [12 * 3600, 10 * 3600]
+        );
+        expect(b.mountain.hours).toBeCloseTo(12, 5);
+        expect(b.roadGravel.hours).toBeCloseTo(10, 5);
+        expect(b.perYear[0]).toMatchObject({ year: 2025, mountainHours: expect.closeTo(12, 5), roadGravelHours: expect.closeTo(10, 5) });
     });
 
     it('lets the bike frame type decide over the activity type (#136)', () => {
@@ -274,7 +293,24 @@ describe('stats.isMountainBikeRide (#136)', () => {
     });
 });
 
+describe('stats time formatting (#230)', () => {
+    it('rounds totals to whole hours and shows a ride as hours and minutes', () => {
+        expect(formatHours(1234.4)).toBe('1,234 h');
+        expect(formatDuration(5.2)).toBe('5h 12m');
+        expect(formatDuration(2)).toBe('2h 00m');
+        expect(formatDuration(0.75)).toBe('45m');
+    });
+});
+
 describe('stats.computeYearDetail', () => {
+    it("carries each ride's moving time into the ride, its month and the summary (#230)", () => {
+        const at = (id: number, start_date: string, moving_time: number, extra = {}) => ({ id, name: `Ride ${id}`, start_date, distance: 16093.44, moving_time, type: 'Ride', ...extra });
+        const detail = computeYearDetail(2025, [at(1, '2025-03-01T10:00:00Z', 5400, { sport_type: 'MountainBikeRide' }), at(2, '2025-03-02T10:00:00Z', 3600)]);
+        expect(detail.rides.find(r => r.id === 1)!.hours).toBeCloseTo(1.5, 5);
+        expect(detail.months[2]).toMatchObject({ mountainHours: expect.closeTo(1.5, 5), roadGravelHours: expect.closeTo(1, 5) });
+        expect(summarizeRides(detail.rides).hours).toBeCloseTo(2.5, 5);
+    });
+
     const ride = (id: number, start_date: string, miles: number, extra: Record<string, unknown> = {}) => ({
         id, name: `Ride ${id}`, start_date, distance: miles * 1609.344, total_elevation_gain: 100, type: 'Ride', ...extra,
     });
@@ -294,7 +330,7 @@ describe('stats.computeYearDetail', () => {
             ride(3, '2025-12-31T10:00:00Z', 5, { sport_type: 'MountainBikeRide' }),
         ], frames);
         expect(months).toHaveLength(12);
-        expect(months[0]).toEqual({ month: 1, rides: 0, mountainMiles: 0, roadGravelMiles: 0 });
+        expect(months[0]).toEqual({ month: 1, rides: 0, mountainMiles: 0, roadGravelMiles: 0, mountainHours: 0, roadGravelHours: 0 });
         expect(months[2].rides).toBe(2);
         expect(months[2].mountainMiles).toBeCloseTo(10);
         expect(months[2].roadGravelMiles).toBeCloseTo(20);

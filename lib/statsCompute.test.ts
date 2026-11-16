@@ -71,8 +71,8 @@ describe('recomputeStats ride type breakdown', () => {
         const { rideTypeBreakdown } = persisted();
         expect(rideTypeBreakdown.mountain.rides).toBe(1);
         expect(rideTypeBreakdown.perYear).toEqual([
-            { year: 2015, mountainMiles: expect.closeTo(10, 5), roadGravelMiles: 0 },
-            { year: 2026, mountainMiles: 0, roadGravelMiles: expect.closeTo(30, 5) },
+            { year: 2015, mountainMiles: expect.closeTo(10, 5), roadGravelMiles: 0, mountainHours: 0, roadGravelHours: 0 },
+            { year: 2026, mountainMiles: 0, roadGravelMiles: expect.closeTo(30, 5), mountainHours: 0, roadGravelHours: 0 },
         ]);
     });
 });
@@ -91,6 +91,8 @@ describe('recomputeStats IRL vs virtual split', () => {
             virtualDistances: [40 * MI],
             virtualElevations: [500],
             virtualStartDates: ['2026-01-02T18:00:00Z'],
+            activityMovingTimes: [2 * 3600, 3 * 3600],
+            virtualMovingTimes: [3600],
         });
         await recomputeStats('42', undefined, 'cycling');
         const stats = persisted();
@@ -102,7 +104,11 @@ describe('recomputeStats IRL vs virtual split', () => {
         expect(stats.longestRideMiles).toBeCloseTo(40, 5);
         expect(stats.biggestClimbFeet).toBeCloseTo(500 * 3.28084, 3);
         expect(stats.activeDays).toBe(2); // the virtual ride shares a day with an IRL ride
-        expect(stats.ridesPerYear).toEqual([{ year: 2026, rides: 2, miles: expect.closeTo(50, 5) }]);
-        expect(stats.virtualPerYear).toEqual([{ year: 2026, rides: 1, miles: expect.closeTo(40, 5) }]);
+        expect(stats.ridesPerYear).toEqual([{ year: 2026, rides: 2, miles: expect.closeTo(50, 5), hours: expect.closeTo(5, 5) }]);
+        expect(stats.virtualPerYear).toEqual([{ year: 2026, rides: 1, miles: expect.closeTo(40, 5), hours: expect.closeTo(1, 5) }]);
+        // Moving time (#230): outdoor and virtual add up to the headline total.
+        expect(stats.totalHours).toBeCloseTo(6, 5);
+        expect(stats.split.irl.hours).toBeCloseTo(5, 5);
+        expect(stats.split.virtual.hours).toBeCloseTo(1, 5);
     });
 });

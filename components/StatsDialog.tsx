@@ -7,7 +7,7 @@ import { useUnits } from './UnitsContext';
 import { StatsBarChart } from './StatsBarChart';
 import { StatsYearDetail } from './StatsYearDetail';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
-import { STATS_REFRESH_COOLDOWN_MS } from '@/lib/stats';
+import { STATS_REFRESH_COOLDOWN_MS, formatHours } from '@/lib/stats';
 import { reportClientError } from '@/lib/clientErrors';
 
 interface CityStats {
@@ -19,8 +19,8 @@ interface CityStats {
     percent: number;
 }
 
-interface RideTypeTotals { rides: number; miles: number; elevationFeet: number }
-interface ActivityTotals { activities: number; distanceMiles: number; elevationFeet: number; longestRideMiles: number; biggestClimbFeet: number; activeDays: number }
+interface RideTypeTotals { rides: number; miles: number; elevationFeet: number; hours?: number }
+interface ActivityTotals { activities: number; distanceMiles: number; elevationFeet: number; longestRideMiles: number; biggestClimbFeet: number; activeDays: number; hours?: number }
 
 interface StatsResponse {
     totalActivities?: number;
@@ -31,9 +31,10 @@ interface StatsResponse {
     longestRideMiles?: number;
     biggestClimbFeet?: number;
     activeDays?: number;
-    ridesPerYear?: { year: number; rides: number; miles: number }[];
-    virtualPerYear?: { year: number; rides: number; miles: number }[];
-    rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals> & { perYear?: { year: number; mountainMiles: number; roadGravelMiles: number }[] };
+    totalHours?: number;
+    ridesPerYear?: { year: number; rides: number; miles: number; hours?: number }[];
+    virtualPerYear?: { year: number; rides: number; miles: number; hours?: number }[];
+    rideTypeBreakdown?: Record<'mountain' | 'roadGravel', RideTypeTotals> & { perYear?: { year: number; mountainMiles: number; roadGravelMiles: number; mountainHours?: number; roadGravelHours?: number }[] };
     split?: { irl: ActivityTotals; virtual: ActivityTotals };
     cities?: CityStats[];
     bikingStats?: BikingGeographies;
@@ -463,6 +464,8 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                             { label: activityMode === 'running' ? 'Longest Run' : 'Longest Ride', value: `${Math.round(dist(stats.longestRideMiles ?? 0))}`, unit: distanceUnit(units), split: splitOf(t => dist(t.longestRideMiles)) },
                                             { label: 'Biggest Climb', value: `${Math.round(elev(stats.biggestClimbFeet ?? 0)).toLocaleString()}`, unit: elevationUnit(units), split: splitOf(t => elev(t.biggestClimbFeet)) },
                                             { label: 'Active Days', value: `${(stats.activeDays ?? 0).toLocaleString()}`, unit: 'days', split: splitOf(t => t.activeDays) },
+                                            // Absent until stats computed before moving time was tracked are refreshed (#230).
+                                            ...(stats.totalHours !== undefined ? [{ label: activityMode === 'running' ? 'Time Moving' : 'Time in the Saddle', value: Math.round(stats.totalHours).toLocaleString(), unit: 'hours', split: splitOf(t => t.hours ?? 0) }] : []),
                                         ].map(r => (
                                             <div key={r.label} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                                                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{r.label}</div>
@@ -482,7 +485,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                         return (
                                             <div className="mt-3">
                                                 <StatsBarChart
-                                                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'} per Year`}
+                                                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'}${stats.totalHours !== undefined ? ' and Hours' : ''} per Year`}
                                                     activityNounPlural={activityNounPlural}
                                                     onSelect={year => drillInto(() => setSelectedYear(year))}
                                                     bars={years.map(year => ({
@@ -491,6 +494,8 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                         tooltipTitle: String(year),
                                                         miles: outdoorByYear.get(year)?.miles ?? 0,
                                                         rides: outdoorByYear.get(year)?.rides ?? 0,
+                                                        // Absent until stats computed before moving time was tracked are refreshed (#230).
+                                                        hours: stats.totalHours !== undefined ? outdoorByYear.get(year)?.hours ?? 0 : undefined,
                                                         type: typeByYear.get(year),
                                                         virtual: virtualByYear.get(year),
                                                     }))}
@@ -518,10 +523,11 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                     {rows.map(r => (
                                                         <div key={r.label} className="flex items-center gap-2 text-sm">
                                                             <span className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${r.swatch}`} />
-                                                            <span className="font-medium text-gray-700 flex-1">{r.label}</span>
+                                                            <span className="font-medium text-gray-700 flex-1 whitespace-nowrap">{r.label}</span>
                                                             <span className="text-gray-500 tabular-nums">{r.totals.rides.toLocaleString()} rides</span>
                                                             <span className="text-gray-900 font-semibold tabular-nums w-20 text-right">{Math.round(dist(r.totals.miles)).toLocaleString()} {distanceUnit(units)}</span>
-                                                            <span className="text-gray-500 tabular-nums w-24 text-right">{Math.round(elev(r.totals.elevationFeet)).toLocaleString()} {elevationUnit(units)}</span>
+                                                            {r.totals.hours !== undefined && <span className="text-gray-900 font-semibold tabular-nums w-14 text-right">{formatHours(r.totals.hours)}</span>}
+                                                            <span className="text-gray-500 tabular-nums w-20 text-right">{Math.round(elev(r.totals.elevationFeet)).toLocaleString()} {elevationUnit(units)}</span>
                                                             <span className="text-gray-400 tabular-nums w-10 text-right">{Math.round(r.pct)}%</span>
                                                         </div>
                                                     ))}

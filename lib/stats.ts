@@ -6,21 +6,24 @@ const METERS_PER_MILE = 1609.344;
 // rate limit, so it's allowed at most this often per athlete.
 export const STATS_REFRESH_COOLDOWN_MS = 15 * 60 * 1000;
 const METERS_TO_FEET = 3.28084;
+const SECONDS_PER_HOUR = 3600;
 
 export interface RideRecords {
     totalDistanceMiles: number;
     longestRideMiles: number;
     biggestClimbFeet: number;
     activeDays: number;
-    ridesPerYear: { year: number; rides: number; miles: number }[];
+    // Moving time (#230): time actually riding, which says more about effort than distance.
+    totalHours: number;
+    ridesPerYear: { year: number; rides: number; miles: number; hours: number }[];
 }
 
 // Records/totals derived from per-activity summary data (no geocoding needed).
 // Arrays are parallel: distances/elevations in meters, startDates ISO strings.
-export function computeRideRecords(distancesM: number[], elevationsM: number[], startDates: string[]): RideRecords {
-    let totalM = 0, longestM = 0, biggestClimbM = 0;
+export function computeRideRecords(distancesM: number[], elevationsM: number[], startDates: string[], movingTimesS: number[] = []): RideRecords {
+    let totalM = 0, longestM = 0, biggestClimbM = 0, totalS = 0;
     const days = new Set<string>();
-    const perYear = new Map<number, { rides: number; miles: number }>();
+    const perYear = new Map<number, { rides: number; miles: number; hours: number }>();
 
     for (let i = 0; i < distancesM.length; i++) {
         const d = distancesM[i] || 0;
@@ -28,15 +31,18 @@ export function computeRideRecords(distancesM: number[], elevationsM: number[], 
         if (d > longestM) longestM = d;
         const e = elevationsM[i] || 0;
         if (e > biggestClimbM) biggestClimbM = e;
+        const seconds = movingTimesS[i] || 0;
+        totalS += seconds;
 
         const iso = startDates[i];
         if (iso) {
             days.add(iso.slice(0, 10)); // YYYY-MM-DD
             const year = Number(iso.slice(0, 4));
             if (year) {
-                const y = perYear.get(year) ?? { rides: 0, miles: 0 };
+                const y = perYear.get(year) ?? { rides: 0, miles: 0, hours: 0 };
                 y.rides += 1;
                 y.miles += d / METERS_PER_MILE;
+                y.hours += seconds / SECONDS_PER_HOUR;
                 perYear.set(year, y);
             }
         }
@@ -47,8 +53,9 @@ export function computeRideRecords(distancesM: number[], elevationsM: number[], 
         longestRideMiles: longestM / METERS_PER_MILE,
         biggestClimbFeet: biggestClimbM * METERS_TO_FEET,
         activeDays: days.size,
+        totalHours: totalS / SECONDS_PER_HOUR,
         ridesPerYear: Array.from(perYear.entries())
-            .map(([year, v]) => ({ year, rides: v.rides, miles: v.miles }))
+            .map(([year, v]) => ({ year, ...v }))
             .sort((a, b) => a.year - b.year),
     };
 }
@@ -60,10 +67,11 @@ export interface ActivityTotals {
     longestRideMiles: number;
     biggestClimbFeet: number;
     activeDays: number;
+    hours: number;
 }
 
-export function computeActivityTotals(distancesM: number[], elevationsM: number[], startDates: string[]): ActivityTotals {
-    const records = computeRideRecords(distancesM, elevationsM, startDates);
+export function computeActivityTotals(distancesM: number[], elevationsM: number[], startDates: string[], movingTimesS: number[] = []): ActivityTotals {
+    const records = computeRideRecords(distancesM, elevationsM, startDates, movingTimesS);
     return {
         activities: distancesM.length,
         distanceMiles: records.totalDistanceMiles,
@@ -71,6 +79,7 @@ export function computeActivityTotals(distancesM: number[], elevationsM: number[
         longestRideMiles: records.longestRideMiles,
         biggestClimbFeet: records.biggestClimbFeet,
         activeDays: records.activeDays,
+        hours: records.totalHours,
     };
 }
 
@@ -78,12 +87,13 @@ export interface RideTypeTotals {
     rides: number;
     miles: number;
     elevationFeet: number;
+    hours: number;
 }
 
 export interface RideTypeBreakdown {
     mountain: RideTypeTotals;
     roadGravel: RideTypeTotals;
-    perYear: { year: number; mountainMiles: number; roadGravelMiles: number }[];
+    perYear: { year: number; mountainMiles: number; roadGravelMiles: number; mountainHours: number; roadGravelHours: number }[];
 }
 
 const MOUNTAIN_BIKE_FRAME_TYPE = 1;
@@ -99,22 +109,24 @@ export function isMountainBikeRide(type: string, gearId: string, gearFrameTypes:
 
 // Splits real-world rides into mountain bike vs everything else (road and
 // gravel combined). Arrays are parallel, distances/elevations in meters.
-export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[], startDates: string[] = [], gearIds: string[] = [], gearFrameTypes: Map<string, number> = new Map()): RideTypeBreakdown {
-    const empty = (): RideTypeTotals => ({ rides: 0, miles: 0, elevationFeet: 0 });
+export function computeRideTypeBreakdown(types: string[], distancesM: number[], elevationsM: number[], startDates: string[] = [], gearIds: string[] = [], gearFrameTypes: Map<string, number> = new Map(), movingTimesS: number[] = []): RideTypeBreakdown {
+    const empty = (): RideTypeTotals => ({ rides: 0, miles: 0, elevationFeet: 0, hours: 0 });
     const breakdown: RideTypeBreakdown = { mountain: empty(), roadGravel: empty(), perYear: [] };
-    const perYear = new Map<number, { year: number; mountainMiles: number; roadGravelMiles: number }>();
+    const perYear = new Map<number, RideTypeBreakdown['perYear'][number]>();
     for (let i = 0; i < types.length; i++) {
         const isMountain = isMountainBikeRide(types[i], gearIds[i] ?? '', gearFrameTypes);
         const bucket = isMountain ? breakdown.mountain : breakdown.roadGravel;
         const miles = (distancesM[i] || 0) / METERS_PER_MILE;
+        const hours = (movingTimesS[i] || 0) / SECONDS_PER_HOUR;
         bucket.rides += 1;
         bucket.miles += miles;
+        bucket.hours += hours;
         bucket.elevationFeet += (elevationsM[i] || 0) * METERS_TO_FEET;
 
         const year = Number(startDates[i]?.slice(0, 4));
         if (year) {
-            const y = perYear.get(year) ?? { year, mountainMiles: 0, roadGravelMiles: 0 };
-            if (isMountain) y.mountainMiles += miles; else y.roadGravelMiles += miles;
+            const y = perYear.get(year) ?? { year, mountainMiles: 0, roadGravelMiles: 0, mountainHours: 0, roadGravelHours: 0 };
+            if (isMountain) { y.mountainMiles += miles; y.mountainHours += hours; } else { y.roadGravelMiles += miles; y.roadGravelHours += hours; }
             perYear.set(year, y);
         }
     }
@@ -128,12 +140,13 @@ export interface YearRide {
     date: string;
     miles: number;
     elevationFeet: number;
+    hours: number;
     mountainBike: boolean;
 }
 
 export interface YearDetail {
     year: number;
-    months: { month: number; rides: number; mountainMiles: number; roadGravelMiles: number }[];
+    months: { month: number; rides: number; mountainMiles: number; roadGravelMiles: number; mountainHours: number; roadGravelHours: number }[];
     rides: YearRide[]; // newest first
 }
 
@@ -143,13 +156,14 @@ interface YearActivity {
     start_date: string;
     distance?: number;
     total_elevation_gain?: number;
+    moving_time?: number;
     type: string;
     sport_type?: string;
     gear_id?: string | null;
 }
 
 export function computeYearDetail(year: number, activities: YearActivity[], gearFrameTypes: Map<string, number> = new Map()): YearDetail {
-    const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, rides: 0, mountainMiles: 0, roadGravelMiles: 0 }));
+    const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, rides: 0, mountainMiles: 0, roadGravelMiles: 0, mountainHours: 0, roadGravelHours: 0 }));
     const rides = activities.map(a => {
         const ride: YearRide = {
             id: a.id,
@@ -157,11 +171,12 @@ export function computeYearDetail(year: number, activities: YearActivity[], gear
             date: a.start_date,
             miles: (a.distance || 0) / METERS_PER_MILE,
             elevationFeet: (a.total_elevation_gain || 0) * METERS_TO_FEET,
+            hours: (a.moving_time || 0) / SECONDS_PER_HOUR,
             mountainBike: isMountainBikeRide(a.sport_type || a.type, a.gear_id ?? '', gearFrameTypes),
         };
         const month = months[Number(a.start_date.slice(5, 7)) - 1];
         month.rides += 1;
-        if (ride.mountainBike) month.mountainMiles += ride.miles; else month.roadGravelMiles += ride.miles;
+        if (ride.mountainBike) { month.mountainMiles += ride.miles; month.mountainHours += ride.hours; } else { month.roadGravelMiles += ride.miles; month.roadGravelHours += ride.hours; }
         return ride;
     });
     return { year, months, rides: rides.sort((a, b) => b.date.localeCompare(a.date)) };
@@ -177,6 +192,7 @@ export function summarizeRides(rides: YearRide[]) {
         rides: rides.length,
         miles: rides.reduce((sum, r) => sum + r.miles, 0),
         elevationFeet: rides.reduce((sum, r) => sum + r.elevationFeet, 0),
+        hours: rides.reduce((sum, r) => sum + r.hours, 0),
         activeDays: new Set(rides.map(r => r.date.slice(0, 10))).size,
     };
 }
@@ -187,6 +203,16 @@ export function summarizeRides(rides: YearRide[]) {
 const CELL_METERS = 15;
 const DEG_PER_METER = 1 / 111320;
 const CELL_DEG = CELL_METERS * DEG_PER_METER;
+
+// "1,234 h" for totals; "5h 12m" for a single ride.
+export function formatHours(hours: number): string {
+    return `${Math.round(hours).toLocaleString()} h`;
+}
+
+export function formatDuration(hours: number): string {
+    const minutes = Math.round(hours * 60);
+    return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
+}
 
 export function quantizeCellKey(lat: number, lon: number): string {
     const cellLat = Math.floor(lat / CELL_DEG);
