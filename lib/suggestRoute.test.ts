@@ -1,4 +1,4 @@
-import { boundsOf, suggestionStepBbox, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
+import { boundsOf, placeSuggestedRoute, legsAlong, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
 import { haversineM } from './geometry';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -98,20 +98,41 @@ describe('boundsOf (#80)', () => {
     });
 });
 
-describe('suggestionStepBbox (#80)', () => {
-    it('routes every point within the padded ride, whatever the window size', () => {
-        const ride = { south: 47.54, north: 47.65, west: -117.44, east: -117.35 };
-        const box = suggestionStepBbox(ride, { lat: 47.6, lon: -117.4 });
-        expect(box.south).toBeCloseTo(47.53);
-        expect(box.north).toBeCloseTo(47.66);
-        expect(box.west).toBeCloseTo(-117.45);
-        expect(box.east).toBeCloseTo(-117.34);
+describe('legsAlong (#224)', () => {
+    const pathLengthM = (leg: [number, number][]) => leg.slice(1).reduce((sum, p, i) => sum + haversineM(leg[i][1], leg[i][0], p[1], p[0]), 0);
+
+    it('gives one leg per pair of waypoints, each starting and ending on them', () => {
+        const { waypoints, legs } = legsAlong(loop(3, 2), 1000);
+        expect(legs).toHaveLength(waypoints.length - 1);
+        legs.forEach((leg, i) => {
+            expect(leg[0]).toEqual([waypoints[i].lon, waypoints[i].lat]);
+            if (i < legs.length - 1) expect(leg[leg.length - 1]).toEqual([waypoints[i + 1].lon, waypoints[i + 1].lat]);
+        });
     });
 
-    it('falls back to the area around each point for a ride too large to fetch at once', () => {
-        const box = suggestionStepBbox({ south: 47.0, north: 47.8, west: -117.5, east: -117.3 }, { lat: 47.2, lon: -117.4 });
-        expect(box.north - box.south).toBeCloseTo(0.04);
-        expect(box.east - box.west).toBeCloseTo(0.04);
-        expect(box.south).toBeCloseTo(47.18);
+    it('covers the whole path, so the legs add up to its length', () => {
+        const path = loop(3, 2);
+        const total = path.slice(1).reduce((sum, p, i) => sum + haversineM(path[i][0], path[i][1], p[0], p[1]), 0);
+        const { legs } = legsAlong(path, 1000);
+        expect(legs.reduce((sum, leg) => sum + pathLengthM(leg), 0)).toBeCloseTo(total, 3);
+    });
+
+    it('folds a tiny last leg into the one before it', () => {
+        const line: [number, number][] = [[47.65, -117.42], [47.65 + 2.1 * DEG_PER_KM, -117.42]];
+        const { waypoints, legs } = legsAlong(line, 1000);
+        expect(waypoints).toHaveLength(3); // 0, 1 km, and the end at 2.1 km
+        expect(legs).toHaveLength(2);
+        expect(pathLengthM(legs[1])).toBeCloseTo(1100, -1);
+    });
+});
+
+describe('placeSuggestedRoute (#224)', () => {
+    it('turns waypoints into snapped route points with their legs between them', () => {
+        const { waypoints, legs } = legsAlong(loop(3, 2), 1000);
+        const placed = placeSuggestedRoute(waypoints, legs);
+        expect(placed.points).toHaveLength(waypoints.length);
+        expect(placed.points.every(p => p.status === 'snapped' && p.id.length > 0)).toBe(true);
+        expect(new Set(placed.points.map(p => p.id)).size).toBe(waypoints.length);
+        expect(placed.route).toEqual(legs);
     });
 });

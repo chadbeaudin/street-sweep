@@ -41,6 +41,16 @@ describe('suggest a route preference note (#227)', () => {
     });
 });
 
+describe('suggest a route placement (#224)', () => {
+    it('places the planned legs directly instead of routing each waypoint again', () => {
+        const handler = page.slice(page.indexOf('const handleSuggestRoute = useCallback'), page.indexOf('// A new area supersedes'));
+        expect(handler).toContain('placeSuggestedRoute(data.waypoints, data.legs)');
+        expect(handler).toContain('manualRouteRef.current = legs');
+        expect(handler).not.toMatch(/addPoint\(/);
+        expect(handler).not.toContain('/api/step');
+    });
+});
+
 describe('suggest a route progress (#80)', () => {
     it('marks the picked start and shows a progress pill while the suggestion is planned', () => {
         expect(page).toMatch(/setSuggestStart\(start\);\s+setIsSuggesting\(true\)/);

@@ -115,9 +115,18 @@ export function findMostCommonRide(rides: RideTrack[], anchor: { lat: number; lo
 const LOOP_CLOSE_M = 300;
 
 // Points every `spacingM` along the path, always including both ends.
-export function waypointsAlong(poly: [number, number][], spacingM: number): { lat: number; lon: number }[] {
-    if (poly.length === 0) return [];
-    const out = [{ lat: poly[0][0], lon: poly[0][1] }];
+export interface RouteLegs {
+    waypoints: { lat: number; lon: number }[];
+    legs: [number, number][][]; // [lon, lat], one per pair of neighbouring waypoints, as /api/step returns paths
+}
+
+// Cuts a routed path into waypoints about `spacingM` apart and the stretch of path between
+// each pair, so the client can show the route without routing it a second time (#224).
+export function legsAlong(poly: [number, number][], spacingM: number): RouteLegs {
+    if (poly.length === 0) return { waypoints: [], legs: [] };
+    const waypoints = [{ lat: poly[0][0], lon: poly[0][1] }];
+    const legs: [number, number][][] = [];
+    let leg: [number, number][] = [[poly[0][1], poly[0][0]]];
     let sinceLast = 0;
     for (let i = 1; i < poly.length; i++) {
         let [aLat, aLon] = poly[i - 1];
@@ -127,24 +136,34 @@ export function waypointsAlong(poly: [number, number][], spacingM: number): { la
             const t = (spacingM - sinceLast) / remaining;
             aLat += (bLat - aLat) * t;
             aLon += (bLon - aLon) * t;
-            out.push({ lat: aLat, lon: aLon });
+            waypoints.push({ lat: aLat, lon: aLon });
+            leg.push([aLon, aLat]);
+            legs.push(leg);
+            leg = [[aLon, aLat]];
             remaining -= spacingM - sinceLast;
             sinceLast = 0;
         }
         sinceLast += remaining;
+        leg.push([bLon, bLat]);
     }
     const [endLat, endLon] = poly[poly.length - 1];
-    const start = out[0];
+    const start = waypoints[0];
     const end = haversineM(start.lat, start.lon, endLat, endLon) <= LOOP_CLOSE_M ? start : { lat: endLat, lon: endLon };
-    const last = out[out.length - 1];
-    // A waypoint that landed just before the end would only make a tiny leg.
-    if (out.length > 1 && haversineM(last.lat, last.lon, end.lat, end.lon) < spacingM / 3) out.pop();
-    out.push(end);
-    return out;
+    const last = waypoints[waypoints.length - 1];
+    // A waypoint that landed just before the end would only make a tiny leg; fold it into the one before.
+    if (waypoints.length > 1 && haversineM(last.lat, last.lon, end.lat, end.lon) < spacingM / 3) {
+        waypoints.pop();
+        leg = [...legs.pop()!, ...leg.slice(1)];
+    }
+    waypoints.push(end);
+    legs.push(leg);
+    return { waypoints, legs };
 }
 
-// About a dozen legs: enough to keep the ride's shape, with room in each leg
-// for the router to pick unridden streets.
+export function waypointsAlong(poly: [number, number][], spacingM: number): { lat: number; lon: number }[] {
+    return legsAlong(poly, spacingM).waypoints;
+}
+
 export function waypointSpacingM(distanceM: number): number {
     return Math.min(3000, Math.max(1000, distanceM / 12));
 }
@@ -160,19 +179,11 @@ export function boundsOf(points: { lat: number; lon: number }[]): Bounds {
     };
 }
 
-// The area a suggested point is routed in. The step router fetches streets for this
-// box, and a box over the 0.5° Overpass limit returns no streets at all, so it can't
-// be the map view (that depends on window size). The whole ride when it fits; for a
-// very long ride, the area around each point (the router adds the previous point).
-const STEP_PAD_DEG = 0.01;
-const MAX_STEP_SPAN_DEG = 0.45;
-const LEG_PAD_DEG = 0.02;
-
-export function suggestionStepBbox(rideBounds: Bounds, point: { lat: number; lon: number }): Bounds {
-    const padded = {
-        south: rideBounds.south - STEP_PAD_DEG, north: rideBounds.north + STEP_PAD_DEG,
-        west: rideBounds.west - STEP_PAD_DEG, east: rideBounds.east + STEP_PAD_DEG,
+// The suggested loop as ordinary route points: each waypoint already sits on the road,
+// and leg i joins point i to point i + 1, the shape the page keeps clicked routes in.
+export function placeSuggestedRoute(waypoints: { lat: number; lon: number }[], legs: [number, number][][]) {
+    return {
+        points: waypoints.map(p => ({ ...p, id: Math.random().toString(36).slice(2, 11), status: 'snapped' as const })),
+        route: legs.slice(0, Math.max(0, waypoints.length - 1)),
     };
-    if (padded.north - padded.south <= MAX_STEP_SPAN_DEG && padded.east - padded.west <= MAX_STEP_SPAN_DEG) return padded;
-    return { south: point.lat - LEG_PAD_DEG, north: point.lat + LEG_PAD_DEG, west: point.lon - LEG_PAD_DEG, east: point.lon + LEG_PAD_DEG };
 }
