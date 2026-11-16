@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useUnits } from './UnitsContext';
 import { distanceFromMiles, distanceUnit } from '@/lib/units';
 import { formatHours } from '@/lib/stats';
@@ -31,6 +31,10 @@ function segmentsOf(b: StatsBar) {
     return b.virtual?.miles ? [{ series: SERIES.virtual, miles: b.virtual.miles, hours: b.virtual.hours, testId: `virtual-bar-${b.key}` }, ...outdoor] : outdoor;
 }
 
+// Which measure the bars show; the other one is drawn as the line (#230).
+type BarMetric = 'distance' | 'time';
+const BAR_METRIC_KEY = 'stats_bar_metric';
+
 interface StatsBarChartProps {
     title: string;
     bars: StatsBar[];
@@ -46,30 +50,62 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
     // Absent for stats computed before moving time was tracked.
     const showHours = bars.some(b => b.hours !== undefined);
     const hoursOf = (b: StatsBar) => (b.hours ?? 0) + (b.virtual?.hours ?? 0);
-    // Hours are drawn at the miles they would cover at the chart's average speed, so a
-    // point above its bar means more time than those miles usually take, and below, less.
-    const totalHours = bars.reduce((sum, b) => sum + hoursOf(b), 0);
-    const averageSpeed = totalHours > 0 ? bars.reduce((sum, b) => sum + totalOf(b), 0) / totalHours : 0;
-    const maxMiles = Math.max(...bars.map(b => Math.max(totalOf(b), hoursOf(b) * averageSpeed)), 1);
+
+    const [chosenMetric, setChosenMetric] = useState<BarMetric>('distance');
+    useEffect(() => {
+        try { if (localStorage.getItem(BAR_METRIC_KEY) === 'time') setChosenMetric('time'); } catch { /* storage unavailable */ }
+    }, []);
+    const chooseMetric = (metric: BarMetric) => {
+        setChosenMetric(metric);
+        try { localStorage.setItem(BAR_METRIC_KEY, metric); } catch { /* storage unavailable */ }
+    };
+    const barsShowTime = showHours && chosenMetric === 'time';
+    const barValueOf = (b: StatsBar) => (barsShowTime ? hoursOf(b) : totalOf(b));
+    const lineValueOf = (b: StatsBar) => (barsShowTime ? totalOf(b) : hoursOf(b));
+    const segmentValue = (seg: { miles: number; hours?: number }) => (barsShowTime ? seg.hours ?? 0 : seg.miles);
+
+    // The line is drawn at the bar value it matches at the chart's average speed, so a point
+    // above its bar means more of the line's measure than usual for that bar, and below, less.
+    const barTotal = bars.reduce((sum, b) => sum + barValueOf(b), 0);
+    const lineTotal = bars.reduce((sum, b) => sum + lineValueOf(b), 0);
+    const barPerLine = lineTotal > 0 ? barTotal / lineTotal : 0;
+    const maxValue = Math.max(...bars.map(b => Math.max(barValueOf(b), lineValueOf(b) * barPerLine)), 1);
     // Bars are equal-width columns, so bar i is centred at (i + 0.5) / n of the width.
-    const hourPoints = bars.map((b, i) => ({ key: b.key, x: ((i + 0.5) / bars.length) * 100, y: ((hoursOf(b) * averageSpeed) / maxMiles) * 100 }));
+    const linePoints = bars.map((b, i) => ({ key: b.key, x: ((i + 0.5) / bars.length) * 100, y: ((lineValueOf(b) * barPerLine) / maxValue) * 100 }));
+    const lineLabel = barsShowTime ? (units === 'metric' ? 'Kilometers' : 'Miles') : 'Hours';
     const seriesLegend = bars.some(b => b.virtual?.miles) ? [SERIES.virtual, ...(bars.some(b => b.type) ? [SERIES.mountain, SERIES.roadGravel] : [SERIES.outdoor])] : [];
 
     return (
         <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
             <div className="flex items-center justify-between gap-2 mb-2">
                 <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{title}</div>
-                {(seriesLegend.length > 0 || showHours) && (
-                    <div className="flex items-center gap-2.5 text-[10px] text-gray-500">
-                        {seriesLegend.map(s => <span key={s.label} className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-sm ${s.color}`} />{s.label}</span>)}
-                        {showHours && <span className="inline-flex items-center gap-1" title="Above a bar: more time than those miles usually take you. Below: less."><span className="w-3 h-0.5 bg-gray-800" />Hours</span>}
+                {showHours && (
+                    <div className="inline-flex rounded-md border border-gray-200 overflow-hidden text-[10px] font-medium" role="group" aria-label="What the bars show">
+                        {([['distance', 'Distance'], ['time', 'Time']] as const).map(([metric, label]) => (
+                            <button
+                                key={metric}
+                                type="button"
+                                aria-pressed={chosenMetric === metric}
+                                onClick={() => chooseMetric(metric)}
+                                className={`px-2 py-0.5 transition-colors ${chosenMetric === metric ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
                     </div>
                 )}
             </div>
+            {(seriesLegend.length > 0 || showHours) && (
+                <div className="flex items-center justify-end gap-2.5 text-[10px] text-gray-500 mb-2">
+                    {seriesLegend.map(s => <span key={s.label} className="inline-flex items-center gap-1"><span className={`w-2 h-2 rounded-sm ${s.color}`} />{s.label}</span>)}
+                    {showHours && <span className="inline-flex items-center gap-1" title={`Above a bar: more ${lineLabel.toLowerCase()} than usual for that bar. Below: fewer.`}><span className="w-3 h-0.5 bg-gray-800" />{lineLabel}</span>}
+                </div>
+            )}
             <div className="relative flex h-24">
                 {bars.map((b, i) => {
                     const align = i < 2 ? 'left-0' : i > bars.length - 3 ? 'right-0' : 'left-1/2 -translate-x-1/2';
                     const total = totalOf(b);
+                    const barValue = barValueOf(b);
                     const selectable = onSelect && b.miles > 0;
                     const selectProps = selectable ? {
                         role: 'button',
@@ -96,10 +132,10 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
                                 </div>
                             )}
                             <div className="w-full flex-1 flex items-end">
-                                {total > 0 && (
-                                    <div className="w-full rounded-t overflow-hidden flex flex-col-reverse hover:opacity-90 transition-opacity" style={{ height: `${Math.max(3, (total / maxMiles) * 100)}%` }}>
+                                {barValue > 0 && (
+                                    <div className="w-full rounded-t overflow-hidden flex flex-col-reverse hover:opacity-90 transition-opacity" style={{ height: `${Math.max(3, (barValue / maxValue) * 100)}%` }}>
                                         {segmentsOf(b).map(seg => (
-                                            <div key={seg.series.label} data-testid={seg.testId} className={`w-full ${seg.series.color}`} style={{ height: `${(seg.miles / total) * 100}%` }} />
+                                            <div key={seg.series.label} data-testid={seg.testId} className={`w-full ${seg.series.color}`} style={{ height: `${(segmentValue(seg) / barValue) * 100}%` }} />
                                         ))}
                                     </div>
                                 )}
@@ -112,10 +148,10 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
                 {showHours && (
                     <div className="absolute inset-x-0 top-0 bottom-4 pointer-events-none" aria-hidden="true">
                         <svg className="absolute inset-0 w-full h-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
-                            <polyline points={hourPoints.map(p => `${p.x},${100 - p.y}`).join(' ')} fill="none" stroke="#1f2937" strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+                            <polyline points={linePoints.map(p => `${p.x},${100 - p.y}`).join(' ')} fill="none" stroke="#1f2937" strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
                         </svg>
-                        {hourPoints.map(p => (
-                            <span key={p.key} data-testid={`hours-point-${p.key}`} className="absolute w-1.5 h-1.5 rounded-full bg-gray-800 ring-1 ring-white -translate-x-1/2 translate-y-1/2" style={{ left: `${p.x}%`, bottom: `${p.y}%` }} />
+                        {linePoints.map(p => (
+                            <span key={p.key} data-testid={`line-point-${p.key}`} className="absolute w-1.5 h-1.5 rounded-full bg-gray-800 ring-1 ring-white -translate-x-1/2 translate-y-1/2" style={{ left: `${p.x}%`, bottom: `${p.y}%` }} />
                         ))}
                     </div>
                 )}
