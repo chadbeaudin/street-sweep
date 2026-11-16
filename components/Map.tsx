@@ -15,6 +15,7 @@ import { useMapStyle } from './MapStyleContext';
 import { MapStylePicker } from './MapStylePicker';
 import { riddenColorFor, riddenPathOptionsFor, tileLayerProps } from '@/lib/mapStyles';
 import { AvoidEraserOverlay } from './AvoidEraserOverlay';
+import { loopTwinIndex } from '@/lib/pointMove';
 
 // Fix for default marker icon in Leaflet + Next.js
 // @ts-ignore
@@ -31,6 +32,8 @@ const PREFERRED_COLOR = '#16A34A';
 // L.divIcon each render makes react-leaflet call marker.setIcon() on every update,
 // which can collide with Leaflet's own drag-cleanup (finishDrag) and throw.
 const pointMarkerIconCache = new globalThis.Map<string, L.DivIcon>();
+const START_FINISH_FILL = 'linear-gradient(90deg, #10B981 50%, #EF4444 50%)';
+
 function getPointMarkerIcon(color: string, pending: boolean): L.DivIcon {
     const key = `${color}|${pending}`;
     let icon = pointMarkerIconCache.get(key);
@@ -1186,10 +1189,14 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
 
                 {/* Markers for selected points */}
                 {selectedPoints.map((point, idx) => {
+                    // A loop's start and finish share one spot (#236): one half-green, half-red
+                    // marker for both, so the start isn't hidden under the finish. Dragging it moves both.
+                    const isLoopEnd = loopTwinIndex(selectedPoints, idx) !== null;
+                    if (isLoopEnd && idx === 0) return null;
                     const isFirst = idx === 0;
                     const isPostAreaPoint = preAreaPointCount != null && idx >= preAreaPointCount;
                     const isLast = idx === selectedPoints.length - 1 && (selectionBoxes.length === 0 || isPostAreaPoint);
-                    const color = isFirst ? '#10B981' : (isLast ? '#EF4444' : '#3B82F6');
+                    const color = isLoopEnd ? START_FINISH_FILL : isFirst ? '#10B981' : (isLast ? '#EF4444' : '#3B82F6');
 
                     // Visible dot stays 14px, but the icon (and thus the draggable/clickable
                     // hit area) is padded out to 32px — the 14px target was too small to
@@ -1203,7 +1210,7 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                             icon={markerIcon}
                             draggable={true}
                             zIndexOffset={500}
-                            title="Drag to move, right-click to delete"
+                            title={isLoopEnd ? 'Start and finish: drag to move both, right-click to delete' : 'Drag to move, right-click to delete'}
                             eventHandlers={{
                                 dragstart: (e: any) => {
                                     onPointMoveStart?.();
