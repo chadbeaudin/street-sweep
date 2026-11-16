@@ -1,4 +1,4 @@
-import { buildStepPathCoords, EdgeSnap, legalSnapEnds, sameOnewayEdgePath } from './stepPath';
+import { buildStepPathCoords, EdgeSnap, legalSnapEnds, sameOnewayEdgePath, stepFetchBbox } from './stepPath';
 import { StreetGraph } from './graph';
 import { OverpassResponse } from './types';
 
@@ -159,5 +159,36 @@ describe('one-way snap edges (#82)', () => {
         const next: EdgeSnap = { lat: 0, lon: 0.2, u: 'A', v: 'B' };
         expect(sameOnewayEdgePath(prev, next, getNode, oneway('A', 'B'))).toBeNull();
         expect(sameOnewayEdgePath(next, prev, getNode, twoWay)).toBeNull();
+    });
+});
+
+describe('stepFetchBbox', () => {
+    const point = { lat: 47.65, lon: -117.42 };
+    const lastPoint = { lat: 47.66, lon: -117.40 };
+    type Box = { south: number; west: number; north: number; east: number };
+    const contains = (box: Box, inner: Box) =>
+        box.south <= inner.south && box.north >= inner.north && box.west <= inner.west && box.east >= inner.east;
+    const pointsBox = { south: 47.65, north: 47.66, west: -117.42, east: -117.40 };
+
+    it('covers the points and the whole viewport when that is small enough to fetch', () => {
+        const viewport = { south: 47.6, north: 47.7, west: -117.5, east: -117.3 };
+        const box = stepFetchBbox(point, lastPoint, viewport);
+        expect(contains(box, viewport)).toBe(true);
+        expect(box.east - box.west).toBeLessThan(0.25);
+    });
+
+    it('falls back to the area around the points when the viewport is too big to fetch', () => {
+        // The view after a rural suggestion fit the map: 0.16 x 0.65 degrees, past the 0.5 limit.
+        const viewport = { south: 47.6, north: 47.76, west: -118.3, east: -117.65 };
+        const box = stepFetchBbox(point, lastPoint, viewport);
+        expect(contains(box, pointsBox)).toBe(true);
+        expect(box.east - box.west).toBeLessThan(0.1);
+        expect(box.north - box.south).toBeLessThan(0.1);
+    });
+
+    it('works for a lone point, as when a moved point is first snapped', () => {
+        const box = stepFetchBbox(point, null, { south: 47, north: 48, west: -118, east: -117 });
+        expect(contains(box, { south: 47.65, north: 47.65, west: -117.42, east: -117.42 })).toBe(true);
+        expect(box.east - box.west).toBeLessThan(0.1);
     });
 });
