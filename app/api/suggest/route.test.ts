@@ -78,7 +78,7 @@ describe('POST /api/suggest (#80)', () => {
         expect((StreetGraph.getCachedGraphAsync as jest.Mock).mock.calls[0][2]).toHaveLength(2);
     });
 
-    it('uses rides from anywhere when none start nearby', async () => {
+    it("aims for the rider's typical ride, wherever it was (#237)", async () => {
         (fetchRideTracks as jest.Mock).mockResolvedValue([track(1, 'Far away', { lat: 40.76, lon: -111.89 })]);
         await post({ start: HOME, activityMode: 'running' });
         expect(cachedRideGainM).toHaveBeenCalledWith(1, track(1, 'Far away', { lat: 40.76, lon: -111.89 }).poly, expect.any(Function));

@@ -1,4 +1,4 @@
-import { boundsOf, placeSuggestedRoute, legsAlong, routeCells, routeSimilarity, findMostCommonRide, waypointsAlong, waypointSpacingM, RideTrack, LOCAL_RADIUS_M } from './suggestRoute';
+import { boundsOf, placeSuggestedRoute, legsAlong, findTypicalRide, waypointsAlong, waypointSpacingM, RideTrack } from './suggestRoute';
 import { haversineM } from './geometry';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -22,46 +22,35 @@ function loop(w: number, h: number, origin = HOME, jitter = 0): [number, number]
 }
 
 let nextId = 1;
-const ride = (poly: [number, number][], startDate = '2026-10-01T00:00:00Z', name = 'Ride'): RideTrack =>
-    ({ id: nextId++, name, startDate, distanceM: 0, elevationGainM: 0, poly });
+const MI = 1609.344, FT = 0.3048;
+const ride = (miles: number, feet: number, startDate = '2026-10-01T00:00:00Z', name = 'Ride', at = HOME): RideTrack =>
+    ({ id: nextId++, name, startDate, distanceM: miles * MI, elevationGainM: feet * FT, poly: loop(1, 1, at) });
+const NOW = Date.parse('2026-11-16T00:00:00Z');
 
-describe('routeSimilarity (#80)', () => {
-    it('treats the same loop with GPS noise as the same route', () => {
-        expect(routeSimilarity(routeCells(loop(3, 2)), routeCells(loop(3, 2, HOME, 0.00002)))).toBeGreaterThan(0.6);
+describe('findTypicalRide (#237)', () => {
+    it("picks the ride closest to the rider's median distance and climbing", () => {
+        const rides = [ride(8, 300), ride(20, 1500), ride(28, 1800, '2026-10-02T00:00:00Z', 'Usual'), ride(29, 1900), ride(30, 1700), ride(55, 4000)];
+        // Medians: 28.5 mi, 1750 ft.
+        expect(findTypicalRide(rides, NOW)!.name).toBe('Usual');
     });
 
-    it('does not treat a short ride inside a longer loop as the same route', () => {
-        expect(routeSimilarity(routeCells(loop(1, 0.5)), routeCells(loop(6, 4)))).toBeLessThan(0.3);
-    });
-});
-
-describe('findMostCommonRide (#80)', () => {
-    it('picks the loop ridden most often, not a longer or shorter one-off', () => {
-        const usual = [1, 2, 3, 4].map(k => ride(loop(3, 2, HOME, k * 0.00001), `2026-10-0${k}T00:00:00Z`, 'Usual loop'));
-        const rides = [...usual, ride(loop(8, 5), '2026-10-09T00:00:00Z', 'Big day'), ride(loop(1, 0.5), '2026-10-08T00:00:00Z', 'Short spin')];
-        const common = findMostCommonRide(rides, HOME)!;
-        expect(common.ride.name).toBe('Usual loop');
-        expect(common.timesRidden).toBe(4);
+    it('ignores where the rides were, so one-off rides near the start do not set the target', () => {
+        const nearStart = { lat: 47.72, lon: -117.54 };
+        const rides = [ride(8.3, 900, '2026-11-10T00:00:00Z', 'Short one-off', nearStart),
+            ...[1, 2, 3, 4, 5].map(d => ride(21, 1500, `2026-10-0${d}T00:00:00Z`, 'Usual', HOME))];
+        expect(findTypicalRide(rides, NOW)!.name).toBe('Usual');
     });
 
-    it('ignores rides that start far from the anchor', () => {
-        const away = { lat: 40.76, lon: -111.89 }; // Salt Lake City
-        const rides = [ride(loop(3, 2, away), '2026-10-01T00:00:00Z', 'Trip'), ride(loop(3, 2, away), '2026-10-02T00:00:00Z', 'Trip'), ride(loop(2, 2), '2026-09-01T00:00:00Z', 'Home')];
-        expect(findMostCommonRide(rides, HOME)!.ride.name).toBe('Home');
-        expect(findMostCommonRide(rides, away)!.ride.name).toBe('Trip');
-        expect(haversineM(HOME.lat, HOME.lon, away.lat, away.lon)).toBeGreaterThan(LOCAL_RADIUS_M);
+    it('judges habits from the past year, unless that year has too few rides', () => {
+        const old = [1, 2, 3, 4, 5].map(d => ride(27, 1600, `2022-03-0${d}T00:00:00Z`, 'Old habit'));
+        const recent = [1, 2, 3, 4, 5].map(d => ride(21, 1400, `2026-10-0${d}T00:00:00Z`, 'This year'));
+        expect(findTypicalRide([...old, ...recent], NOW)!.name).toBe('This year');
+        expect(findTypicalRide([...old, recent[0]], NOW)!.name).toBe('Old habit');
     });
 
-    it('returns null with no local rides, and searches everywhere given no radius limit', () => {
-        expect(findMostCommonRide([], HOME)).toBeNull();
-        const away = { lat: 40.76, lon: -111.89 };
-        expect(findMostCommonRide([ride(loop(3, 2))], away)).toBeNull();
-        expect(findMostCommonRide([ride(loop(3, 2), '2026-10-01T00:00:00Z', 'Home loop')], away, Infinity)!.ride.name).toBe('Home loop');
-    });
-
-    it('prefers the most recent ride when nothing repeats', () => {
-        const rides = [ride(loop(3, 2), '2026-09-01T00:00:00Z', 'Old'), ride(loop(1, 4), '2026-10-01T00:00:00Z', 'New')];
-        expect(findMostCommonRide(rides, HOME)!.ride.name).toBe('New');
+    it('returns nothing without usable rides', () => {
+        expect(findTypicalRide([], NOW)).toBeNull();
+        expect(findTypicalRide([{ ...ride(20, 1000), poly: [] }], NOW)).toBeNull();
     });
 });
 
