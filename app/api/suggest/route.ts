@@ -8,7 +8,7 @@ import { fetchElevationData } from '@/lib/elevationFetch';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { polylineSetFingerprint } from '@/lib/riddenRoads';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
-import { findMostCommonRide, waypointsAlong, waypointSpacingM } from '@/lib/suggestRoute';
+import { findMostCommonRide, legsAlong, waypointSpacingM } from '@/lib/suggestRoute';
 import { planLoop, loopReachM, cachedRideGainM, activeAvoidPreferences, hamperedNote } from '@/lib/suggestLoop';
 import { LatLon, RoutingOptions, parseBody } from '@/lib/validation';
 
@@ -24,7 +24,7 @@ const Body = z.object({
 
 // "Suggest a Route" (#80): a loop from the chosen start matching the distance and
 // climbing of the rider's most common ride (from near there, else anywhere), on
-// unridden streets where it can. Returned as waypoints the client routes like clicks.
+// unridden streets where it can. Returned as waypoints with the routed path between them.
 async function handlePOST(request: Request) {
     try {
         const creds = await resolveRequestStravaCredentials();
@@ -58,10 +58,10 @@ async function handlePOST(request: Request) {
             return NextResponse.json({ error: `Couldn't find streets to ride from there. Try a start point on a road.${hint}` }, { status: 404 });
         }
 
-        const waypoints = waypointsAlong(loop.path, waypointSpacingM(loop.distanceM));
-        waypoints[0] = start;
-        waypoints[waypoints.length - 1] = start;
-        return NextResponse.json({ waypoints, note: hamperedNote(loop, target, preferences) });
+        // The legs are the loop as planned and scored, so the client draws them as they are;
+        // routing the waypoints a second time gave a different, longer route (#224).
+        const { waypoints, legs } = legsAlong(loop.path, waypointSpacingM(loop.distanceM));
+        return NextResponse.json({ waypoints, legs, note: hamperedNote(loop, target, preferences) });
     } catch (error: any) {
         return errorResponse(error, 'Suggest route error:', "Couldn't suggest a route. Try again in a moment.");
     }

@@ -64,6 +64,10 @@ describe('POST /api/suggest (#80)', () => {
         expect(data.waypoints[0]).toEqual(HOME);
         expect(data.waypoints[data.waypoints.length - 1]).toEqual(HOME);
         expect(data.waypoints.length).toBeGreaterThan(8);
+        // The planned loop comes back as one routed leg per pair of waypoints, joined end to end (#224).
+        expect(data.legs).toHaveLength(data.waypoints.length - 1);
+        for (let i = 1; i < data.legs.length; i++) expect(data.legs[i][0]).toEqual(data.legs[i - 1][data.legs[i - 1].length - 1]);
+        expect(data.legs[0][0]).toEqual([HOME.lon, HOME.lat]);
     });
 
     it("marks the rider's ridden streets and keeps the street fetch under the Overpass size limit", async () => {

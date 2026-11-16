@@ -9,7 +9,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, ThumbsUp, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
-import { boundsOf, suggestionStepBbox } from '@/lib/suggestRoute';
+import { boundsOf, placeSuggestedRoute } from '@/lib/suggestRoute';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
@@ -1663,8 +1663,8 @@ export default function Home() {
 
     const canSuggest = hasStravaCreds(stravaCredentials) && selectedPoints.length === 0 && !route && selectionBoxes.length === 0 && selectionPolygons.length === 0;
 
-    // "Suggest a Route" (#80): waypoints along the rider's most common ride, added as
-    // ordinary points so the point router connects them preferring unridden streets.
+    // "Suggest a Route" (#80): the planned loop arrives as waypoints with the routed path
+    // between them, and is placed as ordinary points the rider can then move or delete.
     const handleSuggestRoute = useCallback(async (start: { lat: number; lon: number }) => {
         setPickingSuggestStart(false);
         setSuggestStart(start);
@@ -1680,10 +1680,19 @@ export default function Home() {
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Could not suggest a route');
 
-            const bounds = boundsOf(data.waypoints);
-            setFitBoundsRequest(bounds);
+            setFitBoundsRequest(boundsOf(data.waypoints));
             clearPoints();
-            for (const p of data.waypoints) addPoint(p, suggestionStepBbox(bounds, p));
+            // Placed as planned, without stepping point to point: routing the waypoints again
+            // gave a different, longer route than the one the suggestion was scored on (#224).
+            const { points, route: legs } = placeSuggestedRoute(data.waypoints, data.legs);
+            pointsRef.current = points;
+            manualRouteRef.current = legs;
+            historyRef.current = [{ points: [...points], route: [...legs], selectionBoxes: [], selectionPolygons: [], areaAnchors: NO_ANCHORS }];
+            historyIndexRef.current = 0;
+            setSelectedPoints([...points]);
+            setManualRoute(legs);
+            setHistory(historyRef.current);
+            setHistoryIndex(0);
             setSuggestNote(data.note ?? null);
         } catch (err: any) {
             setError({ message: err.message });
@@ -1691,7 +1700,7 @@ export default function Home() {
             setIsSuggesting(false);
             setSuggestStart(null);
         }
-    }, [activityMode, addPoint, clearPoints]);
+    }, [activityMode, clearPoints]);
 
     // A new area supersedes the auto-added end of the previous sweep (see
     // dropStaleComputedEndpoint); its empty incoming segment goes with it.
