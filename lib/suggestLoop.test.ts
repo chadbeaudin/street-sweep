@@ -1,7 +1,7 @@
 import { StreetGraph } from './graph';
 import { OverpassResponse } from './types';
 import { haversineM } from './geometry';
-import { offsetPoint, scoreLoop, planLoop, loopReachM, measureGainM } from './suggestLoop';
+import { offsetPoint, scoreLoop, planLoop, loopReachM, measureGainM, cachedRideGainM } from './suggestLoop';
 
 // 41×41 street grid at ~200 m spacing (8 km square) with the start in the middle.
 const N = 41, STEP = 0.0018, LAT0 = 47.6, LON0 = -117.4;
@@ -76,6 +76,24 @@ describe('planLoop (#80)', () => {
         expect(loop.unriddenFraction).toBeGreaterThan(0.8);
     });
 
+    it('skips measuring climbing for loops too far off on distance to win (#223)', async () => {
+        // From near the grid's corner, loops heading off the grid come out far too short.
+        const corner = coord(3, 3);
+        const counting = jest.fn(elevationsFor);
+        const loop = (await planLoop(buildGrid(), corner, { distanceM: 8_000, gainM: 0 }, new Map(), counting))!;
+        expect(counting.mock.calls.length).toBeGreaterThanOrEqual(3);
+        expect(counting.mock.calls.length).toBeLessThan(8);
+        expect(Math.abs(loop.distanceM - 8_000) / 8_000).toBeLessThan(0.15);
+    });
+
+    it('measures every loop when none is ruled out on distance (#223)', async () => {
+        // Every loop but the worst-fitting ones climbs far more than the flat usual ride.
+        const steepNearStart = async (pts: [number, number][]) => pts.map(([lon, lat], k) => (haversineM(lat, lon, START.lat, START.lon) < 3000 ? (k % 2) * 40 : 0));
+        const counting = jest.fn(steepNearStart);
+        await planLoop(buildGrid(), START, { distanceM: 8_000, gainM: 0 }, new Map(), counting);
+        expect(counting.mock.calls.length).toBe(8);
+    });
+
     it('sizes the street graph to cover the farthest corner it might try', () => {
         expect(loopReachM({ distanceM: 39_000, gainM: 0 })).toBeCloseTo(16_000, -2);
     });
@@ -85,5 +103,17 @@ describe('measureGainM (#80)', () => {
     it("measures a ride's climbing from map elevations along it", async () => {
         const overHill: [number, number][] = [[START.lat, START.lon], [HILL.lat, HILL.lon], [START.lat, START.lon]];
         expect(await measureGainM(overHill, elevationsFor)).toBeGreaterThan(140);
+    });
+});
+
+describe('cachedRideGainM (#223)', () => {
+    it("measures a ride's climbing once and reuses it", async () => {
+        const overHill: [number, number][] = [[START.lat, START.lon], [HILL.lat, HILL.lon], [START.lat, START.lon]];
+        const counting = jest.fn(elevationsFor);
+        const first = await cachedRideGainM(7, overHill, counting);
+        expect(await cachedRideGainM(7, overHill, counting)).toBe(first);
+        expect(counting).toHaveBeenCalledTimes(1);
+        await cachedRideGainM(8, overHill, counting);
+        expect(counting).toHaveBeenCalledTimes(2);
     });
 });

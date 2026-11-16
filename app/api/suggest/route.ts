@@ -9,7 +9,7 @@ import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { polylineSetFingerprint } from '@/lib/riddenRoads';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { findMostCommonRide, waypointsAlong, waypointSpacingM } from '@/lib/suggestRoute';
-import { planLoop, loopReachM, measureGainM } from '@/lib/suggestLoop';
+import { planLoop, loopReachM, cachedRideGainM } from '@/lib/suggestLoop';
 import { LatLon, RoutingOptions, parseBody } from '@/lib/validation';
 
 const M_PER_DEG = 111_320;
@@ -41,7 +41,7 @@ async function handlePOST(request: Request) {
         }
         const { ride } = common;
         const elevationsFor = async (lonLats: [number, number][]) => (await fetchElevationData(lonLats)).elevations;
-        const target = { distanceM: ride.distanceM, gainM: await measureGainM(ride.poly, elevationsFor) };
+        const target = { distanceM: ride.distanceM, gainM: await cachedRideGainM(ride.id, ride.poly, elevationsFor) };
 
         const halfLat = Math.min(MAX_HALF_SPAN_DEG, (loopReachM(target) + 1500) / M_PER_DEG);
         const halfLon = Math.min(MAX_HALF_SPAN_DEG, halfLat / Math.cos(start.lat * Math.PI / 180));

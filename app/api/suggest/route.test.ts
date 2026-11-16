@@ -4,7 +4,7 @@ jest.mock('@/lib/strava', () => ({ fetchRideTracks: jest.fn() }));
 jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn() }));
 jest.mock('@/lib/elevationFetch', () => ({ fetchElevationData: jest.fn() }));
-jest.mock('@/lib/suggestLoop', () => ({ planLoop: jest.fn(), loopReachM: jest.fn(), measureGainM: jest.fn() }));
+jest.mock('@/lib/suggestLoop', () => ({ planLoop: jest.fn(), loopReachM: jest.fn(), cachedRideGainM: jest.fn() }));
 jest.mock('@/lib/graph', () => ({
     StreetGraph: { getCachedGraphAsync: jest.fn(), reuseKey: jest.fn() },
     filterRiddenRoadsToBbox: jest.fn(),
@@ -14,7 +14,7 @@ import { POST } from './route';
 import { fetchRideTracks } from '@/lib/strava';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { fetchOSMData } from '@/lib/overpass';
-import { planLoop, loopReachM, measureGainM } from '@/lib/suggestLoop';
+import { planLoop, loopReachM, cachedRideGainM } from '@/lib/suggestLoop';
 import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -36,7 +36,7 @@ beforeEach(() => {
     (filterRiddenRoadsToBbox as jest.Mock).mockImplementation((roads: unknown) => roads);
     (fetchOSMData as jest.Mock).mockResolvedValue({ elements: [] });
     (loopReachM as jest.Mock).mockReturnValue(5000);
-    (measureGainM as jest.Mock).mockResolvedValue(350);
+    (cachedRideGainM as jest.Mock).mockResolvedValue(350);
     graph.buildRiddenPenaltyMap.mockReturnValue(new Map());
     (planLoop as jest.Mock).mockResolvedValue({ path: loopPath, distanceM: 29_000, gainM: 380, unriddenFraction: 0.7, score: 0 });
 });
@@ -57,7 +57,7 @@ describe('POST /api/suggest (#80)', () => {
     it("plans a loop for the usual ride's distance and climbing and returns it as waypoints from the start", async () => {
         await post({ start: HOME, routingOptions: { pointRoutePenalty: 6 } });
         // The usual ride's climbing is measured like the candidates', not taken from Strava.
-        expect(measureGainM).toHaveBeenCalledWith(track(1, 'Usual').poly, expect.any(Function));
+        expect(cachedRideGainM).toHaveBeenCalledWith(2, track(2, 'Usual').poly, expect.any(Function));
         expect(planLoop).toHaveBeenCalledWith(graph, HOME, { distanceM: 30_000, gainM: 350 }, expect.any(Map), expect.any(Function));
         expect(graph.buildRiddenPenaltyMap).toHaveBeenCalledWith(6);
         const data = lastResponse()[0];
@@ -77,7 +77,7 @@ describe('POST /api/suggest (#80)', () => {
     it('uses rides from anywhere when none start nearby', async () => {
         (fetchRideTracks as jest.Mock).mockResolvedValue([track(1, 'Far away', { lat: 40.76, lon: -111.89 })]);
         await post({ start: HOME, activityMode: 'running' });
-        expect(measureGainM).toHaveBeenCalledWith(track(1, 'Far away', { lat: 40.76, lon: -111.89 }).poly, expect.any(Function));
+        expect(cachedRideGainM).toHaveBeenCalledWith(1, track(1, 'Far away', { lat: 40.76, lon: -111.89 }).poly, expect.any(Function));
         expect(fetchRideTracks).toHaveBeenCalledWith(expect.anything(), 'running');
     });
 
