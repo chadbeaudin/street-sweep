@@ -4,7 +4,7 @@ import {
     buildCoverageCells,
     cellsToMiles,
     pointInPolygon,
-    polylineCentroid,
+    placeBucketsAlong,
     computeRideRecords,
     computeActivityTotals,
     computeRideTypeBreakdown,
@@ -34,7 +34,8 @@ const MAX_CITIES = 5;
 // v11: totals split into IRL vs virtual; records are combined.
 // v12: virtualPerYear added for the per-year chart.
 // v13: moving time (hours) added to totals, per-year and ride types.
-export const STATS_VERSION = 13;
+// v14: a ride counts toward every place it passes through, not just its midpoint (#233).
+export const STATS_VERSION = 14;
 
 interface CityStats {
     name: string;
@@ -144,16 +145,15 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     const totalUniqueMiles = cellsToMiles(totalCells.size);
     const totalElevationFeet = totalCyclingElevationGainMeters * METERS_TO_FEET;
 
-    // Dedupe centroids to ~5km buckets BEFORE hitting Nominatim. With 800+
-    // activities concentrated in one metro area this collapses to <20 lookups
-    // instead of one per activity (which would take ~15 min at 1 req/sec).
-    const centroidByActivity = riddenRoads.map(polylineCentroid);
+    // A ride is credited to every place it passes through. Its midpoint alone missed any
+    // city the rider started in and rode out of (#233). Buckets are ~5km and shared across
+    // rides, so hundreds of rides in one metro area still collapse to a few dozen lookups.
+    const bucketsByActivity = riddenRoads.map(placeBucketsAlong);
     const uniqueBuckets = new Map<string, [number, number]>();
-    for (const c of centroidByActivity) {
-        if (!c) continue;
-        // Same 5km quantization that lib/nominatim uses for its cache key.
-        const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
-        if (!uniqueBuckets.has(bucketKey)) uniqueBuckets.set(bucketKey, c);
+    for (const buckets of bucketsByActivity) {
+        for (const [bucketKey, point] of buckets) {
+            if (!uniqueBuckets.has(bucketKey)) uniqueBuckets.set(bucketKey, point);
+        }
     }
     console.log(`${ts()} Stats: ${uniqueBuckets.size} unique ~5km buckets to reverse-geocode`);
 
@@ -194,20 +194,20 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         throw new Error('reverse-geocoding bailed on sustained rate-limits; skipping persist to protect cached stats');
     }
 
-    const cityByActivity: ({ city: string | null; county: string | null; state: string | null; country: string | null } | null)[] = centroidByActivity.map(c => {
-        if (!c) return null;
-        const bucketKey = `${Math.round(c[0] * 20) / 20}:${Math.round(c[1] * 20) / 20}`;
-        return bucketResult.get(bucketKey) ?? null;
-    });
+    type Place = { city: string | null; county: string | null; state: string | null; country: string | null };
+    const placesByActivity: Place[][] = bucketsByActivity.map(buckets =>
+        Array.from(buckets.keys()).map(bucketKey => bucketResult.get(bucketKey)).filter((place): place is Place => !!place));
 
     const byCity = new Map<string, { city: string; state: string | null; country: string | null; activityIdx: number[] }>();
-    for (let i = 0; i < cityByActivity.length; i++) {
-        const info = cityByActivity[i];
-        if (!info || !info.city) continue;
-        const key = `${info.city}|${info.state ?? ''}|${info.country ?? ''}`;
-        let entry = byCity.get(key);
-        if (!entry) { entry = { city: info.city, state: info.state, country: info.country, activityIdx: [] }; byCity.set(key, entry); }
-        entry.activityIdx.push(i);
+    for (let i = 0; i < placesByActivity.length; i++) {
+        for (const info of placesByActivity[i]) {
+            if (!info.city) continue;
+            const key = `${info.city}|${info.state ?? ''}|${info.country ?? ''}`;
+            let entry = byCity.get(key);
+            if (!entry) { entry = { city: info.city, state: info.state, country: info.country, activityIdx: [] }; byCity.set(key, entry); }
+            // A ride crosses several buckets of the same city; count it once.
+            if (entry.activityIdx[entry.activityIdx.length - 1] !== i) entry.activityIdx.push(i);
+        }
     }
 
     const topCities = Array.from(byCity.values())
@@ -247,7 +247,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
         }
     }
 
-    // cityByActivity is already biking-only (non-biking activities were filtered
+    // placesByActivity is already biking-only (non-biking activities were filtered
     // out at the top). Dedup each level while keeping its parent chain so the UI
     // can drill Country -> State -> County -> City.
     const countrySet = new Set<string>();
@@ -255,8 +255,7 @@ async function computeStats(riddenRoads: [number, number][][], activityElevation
     const countyMap = new Map<string, { name: string; state: string; country: string }>();
     const cityMap = new Map<string, { name: string; county: string | null; state: string; country: string }>();
 
-    for (const info of cityByActivity) {
-        if (!info) continue;
+    for (const info of placesByActivity.flat()) {
         const country = info.country ?? '';
         const state = info.state ?? '';
         if (info.country) countrySet.add(info.country);

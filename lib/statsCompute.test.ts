@@ -8,6 +8,7 @@ jest.mock('./prisma', () => ({ prisma: { statsCache: { upsert: jest.fn() } } }))
 
 import { recomputeStats } from './statsCompute';
 import { fetchCyclingRiddenRoads, fetchGearFrameTypes } from './strava';
+import { reverseGeocode } from './nominatim';
 import { prisma } from './prisma';
 
 const MI = 1609.344;
@@ -110,5 +111,39 @@ describe('recomputeStats IRL vs virtual split', () => {
         expect(stats.totalHours).toBeCloseTo(6, 5);
         expect(stats.split.irl.hours).toBeCloseTo(5, 5);
         expect(stats.split.virtual.hours).toBeCloseTo(1, 5);
+    });
+});
+
+describe('recomputeStats places along a ride (#233)', () => {
+    const place = (city: string | null, county: string) => ({ city, county, state: 'Utah', country: 'United States' });
+    // Starts in the city, ends well north of it: the midpoint is in neither place.
+    const outOfTown: [number, number][] = [[40.76, -111.89], [40.89, -111.95], [41.0, -112.0]];
+    const inTown: [number, number][] = [[40.76, -111.89], [40.761, -111.888]];
+
+    beforeEach(() => {
+        (reverseGeocode as jest.Mock).mockImplementation(async (lat: number) =>
+            lat < 40.8 ? place('Salt Lake City', 'Salt Lake County') : lat < 40.95 ? place(null, 'Davis County') : place('Farmington', 'Davis County'));
+        (fetchCyclingRiddenRoads as jest.Mock).mockResolvedValue({
+            riddenRoads: [outOfTown, inTown],
+            activityElevations: [0, 0], activityTypes: ['Ride', 'Ride'], activityGearIds: ['', ''],
+            activityDistances: [20 * MI, 1 * MI], activityStartDates: ['2026-11-06T00:00:00Z', '2026-11-07T00:00:00Z'],
+            totalCyclingActivities: 2, totalCyclingElevationGainMeters: 0,
+            virtualDistances: [], virtualElevations: [], virtualStartDates: [], activityMovingTimes: [], virtualMovingTimes: [],
+        });
+    });
+
+    it('credits a ride to every city and county it passes through, not just its midpoint', async () => {
+        await recomputeStats('42', undefined, 'cycling');
+        const { bikingStats } = persisted();
+        expect(bikingStats.cities.map((c: { name: string }) => c.name)).toEqual(['Farmington', 'Salt Lake City']);
+        expect(bikingStats.counties.map((c: { name: string }) => c.name)).toEqual(['Davis County', 'Salt Lake County']);
+    });
+
+    it('counts a ride once per city, and looks each bucket up once across rides', async () => {
+        await recomputeStats('42', undefined, 'cycling');
+        const { cities } = persisted();
+        expect(cities.find((c: { name: string }) => c.name === 'Salt Lake City').activityCount).toBe(2);
+        expect(cities.find((c: { name: string }) => c.name === 'Farmington').activityCount).toBe(1);
+        expect(reverseGeocode).toHaveBeenCalledTimes(3); // both rides share the Salt Lake City bucket
     });
 });

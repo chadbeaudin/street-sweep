@@ -273,6 +273,21 @@ export function pointInPolygon(lat: number, lon: number, polygon: [number, numbe
     return inside;
 }
 
+// The ~5 km buckets a track passes through, each with the first track point seen in it.
+// Same quantization as lib/nominatim's reverse-geocode cache key, so each bucket is one lookup.
+export function placeBucketKey(lat: number, lon: number): string {
+    return `${Math.round(lat * 20) / 20}:${Math.round(lon * 20) / 20}`;
+}
+
+export function placeBucketsAlong(polyline: [number, number][]): Map<string, [number, number]> {
+    const buckets = new Map<string, [number, number]>();
+    for (const [lat, lon] of polyline ?? []) {
+        const key = placeBucketKey(lat, lon);
+        if (!buckets.has(key)) buckets.set(key, [lat, lon]);
+    }
+    return buckets;
+}
+
 export function polylineCentroid(polyline: [number, number][]): [number, number] | null {
     if (!polyline || polyline.length === 0) return null;
     let sumLat = 0, sumLon = 0;
