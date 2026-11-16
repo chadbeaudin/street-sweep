@@ -9,14 +9,14 @@ const START = { lat: LAT0 + STEP * 20, lon: LON0 + STEP * 20 * 1.48 };
 const coord = (i: number, j: number) => ({ lat: LAT0 + STEP * i, lon: LON0 + STEP * j * 1.48 });
 const id = (i: number, j: number) => 1 + i * N + j;
 
-function buildGrid(): StreetGraph {
+function buildGrid(surface?: string, options?: object): StreetGraph {
     const ways: unknown[] = [];
     let w = 1;
-    const way = (cells: [number, number][]) => ({ type: 'way', id: w++, nodes: cells.map(([i, j]) => id(i, j)), geometry: cells.map(([i, j]) => coord(i, j)), tags: { highway: 'residential' } });
+    const way = (cells: [number, number][]) => ({ type: 'way', id: w++, nodes: cells.map(([i, j]) => id(i, j)), geometry: cells.map(([i, j]) => coord(i, j)), tags: { highway: 'residential', ...(surface ? { surface } : {}) } });
     for (let i = 0; i < N; i++) ways.push(way(Array.from({ length: N }, (_, j) => [i, j] as [number, number])));
     for (let j = 0; j < N; j++) ways.push(way(Array.from({ length: N }, (_, i) => [i, j] as [number, number])));
     const g = new StreetGraph();
-    g.buildFromOSM({ version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' }, elements: ways } as OverpassResponse);
+    g.buildFromOSM({ version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' }, elements: ways } as OverpassResponse, null, options);
     return g;
 }
 
@@ -92,6 +92,15 @@ describe('planLoop (#80)', () => {
         const counting = jest.fn(steepNearStart);
         await planLoop(buildGrid(), START, { distanceM: 8_000, gainM: 0 }, new Map(), counting);
         expect(counting.mock.calls.length).toBe(8);
+    });
+
+    it('sizes a loop by real distance where every road is gravel and gravel is avoided', async () => {
+        const gravel = buildGrid('gravel', { avoidGravel: true });
+        const loop = (await planLoop(gravel, START, { distanceM: 8_000, gainM: 0 }, new Map(), async pts => pts.map(() => 0)))!;
+        let ridden = 0;
+        for (let i = 1; i < loop.path.length; i++) ridden += haversineM(loop.path[i - 1][0], loop.path[i - 1][1], loop.path[i][0], loop.path[i][1]);
+        expect(loop.distanceM).toBeCloseTo(ridden, 0);
+        expect(Math.abs(ridden - 8_000) / 8_000).toBeLessThan(0.15);
     });
 
     it('sizes the street graph to cover the farthest corner it might try', () => {

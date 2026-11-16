@@ -60,8 +60,6 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
         for (const step of leg.path) {
             const link = graph.graph.getLink(step.id, step.idNext);
             if (!link) continue;
-            distanceM += link.data.weight;
-            if (!link.data.isRidden) unriddenM += link.data.weight;
             penalties.set(link.id, (penalties.get(link.id) ?? 1) * REUSE_PENALTY);
             const back = graph.graph.getLink(step.idNext, step.id);
             if (back) penalties.set(back.id, (penalties.get(back.id) ?? 1) * REUSE_PENALTY);
@@ -69,6 +67,10 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
             if (path.length === 0) path.push([from.lat, from.lon]);
             const to = graph.graph.getNode(step.idNext)!.data;
             path.push([to.lat, to.lon]);
+            // The link's weight is a routing cost (gravel, avoided and preferred roads scale it), not its length.
+            const lengthM = haversineM(from.lat, from.lon, to.lat, to.lon);
+            distanceM += lengthM;
+            if (!link.data.isRidden) unriddenM += lengthM;
         }
     }
     if (path.length < 2) return null;
