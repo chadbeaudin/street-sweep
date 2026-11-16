@@ -281,3 +281,27 @@ export function buildFetchRegions(input: FetchRegionInput): BoundingBox[] {
 
     return regions;
 }
+
+// Overpass requests are refused past 0.5° a side (lib/overpass.ts), and a corridor along
+// a long straight road is one thin rectangle far longer than that, so cut it into pieces.
+export const MAX_REGION_SPAN_DEG = 0.4;
+
+export function splitOversizedRegions(regions: BoundingBox[], maxSpanDeg = MAX_REGION_SPAN_DEG): BoundingBox[] {
+    return regions.flatMap(region => {
+        const rows = Math.max(1, Math.ceil((region.north - region.south) / maxSpanDeg));
+        const cols = Math.max(1, Math.ceil((region.east - region.west) / maxSpanDeg));
+        if (rows === 1 && cols === 1) return [region];
+        const latStep = (region.north - region.south) / rows;
+        const lonStep = (region.east - region.west) / cols;
+        const pieces: BoundingBox[] = [];
+        for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+                pieces.push({
+                    south: region.south + latStep * r, north: region.south + latStep * (r + 1),
+                    west: region.west + lonStep * c, east: region.west + lonStep * (c + 1),
+                });
+            }
+        }
+        return pieces;
+    });
+}

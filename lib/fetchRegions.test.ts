@@ -1,4 +1,4 @@
-import { buildFetchRegions, bboxArea, CELL_DEG, CORRIDOR_BUFFER_DEG } from './fetchRegions';
+import { buildFetchRegions, bboxArea, CELL_DEG, CORRIDOR_BUFFER_DEG, splitOversizedRegions } from './fetchRegions';
 import type { BoundingBox } from './types';
 
 function enclosingRect(regions: BoundingBox[]): BoundingBox {
@@ -213,5 +213,27 @@ describe('buildFetchRegions', () => {
                 west: duvall.west - CELL_DEG, east: duvall.east + CELL_DEG,
             }));
         });
+    });
+});
+
+describe('splitOversizedRegions', () => {
+    it('leaves regions within the limit untouched', () => {
+        const region = { south: 47.6, north: 47.7, west: -117.5, east: -117.2 };
+        expect(splitOversizedRegions([region])).toEqual([region]);
+    });
+
+    it('cuts a long thin corridor into pieces Overpass will accept, covering the same strip', () => {
+        const strip = { south: 47.60, north: 47.62, west: -118.48, east: -117.69 };
+        const pieces = splitOversizedRegions([strip]);
+        expect(pieces).toHaveLength(2);
+        for (const p of pieces) expect(p.east - p.west).toBeLessThanOrEqual(0.4);
+        expect(pieces[0].west).toBe(strip.west);
+        expect(pieces[0].east).toBeCloseTo(pieces[1].west, 10);
+        expect(pieces[1].east).toBeCloseTo(strip.east, 10);
+        expect(pieces.every(p => p.south === strip.south && p.north === strip.north)).toBe(true);
+    });
+
+    it('cuts in both directions when a region is too tall and too wide', () => {
+        expect(splitOversizedRegions([{ south: 47, north: 47.9, west: -118, east: -117.1 }])).toHaveLength(9);
     });
 });

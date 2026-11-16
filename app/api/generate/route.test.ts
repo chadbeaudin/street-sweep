@@ -6,7 +6,7 @@ const mockJson = jest.fn((data: any, init?: { status?: number }) => ({
 }));
 
 jest.mock('next/server', () => ({ NextResponse: { json: mockJson } }));
-jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn() }));
+jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn(), fetchOSMDataForRegions: jest.fn() }));
 jest.mock('@/lib/graph', () => ({
     StreetGraph: { getCachedGraphAsync: jest.fn() },
     filterRiddenRoadsToBbox: jest.fn((riddenRoads: any) => riddenRoads ?? null),
@@ -15,7 +15,7 @@ jest.mock('@/lib/elevation', () => ({ calculateElevationProfile: jest.fn() }));
 jest.mock('@/lib/elevationFetch', () => ({ fetchElevationData: jest.fn() }));
 
 import { POST } from './route';
-import { fetchOSMData } from '@/lib/overpass';
+import { fetchOSMData, fetchOSMDataForRegions } from '@/lib/overpass';
 import { StreetGraph } from '@/lib/graph';
 import { calculateElevationProfile } from '@/lib/elevation';
 import { fetchElevationData } from '@/lib/elevationFetch';
@@ -87,6 +87,18 @@ describe('POST /api/generate', () => {
             bbox: { north: 40.5, south: 38.5, east: -103.5, west: -105.5 }, // ~220km-wide viewport
             manualRoute: [[-104.710, 39.020], [-104.715, 39.025]], // two points ~0.6km apart
         }));
+        expect(mockedFetchOSM).toHaveBeenCalled();
+    });
+
+    it('does not fetch a corridor out to a distant home start that a point route never visits', async () => {
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        await POST(makeRequest({
+            bbox: { north: 39.3, south: 38.7, east: -104.4, west: -105.0 }, // zoomed out, as after a suggestion
+            selectedPoints: [{ lat: 39.020, lon: -104.710 }, { lat: 39.025, lon: -104.715 }],
+            manualRoute: [[-104.710, 39.020], [-104.715, 39.025]],
+            startPoint: { lat: 39.5, lon: -104.0 }, // home, ~80km away
+        }));
+        expect(fetchOSMDataForRegions).not.toHaveBeenCalled();
         expect(mockedFetchOSM).toHaveBeenCalled();
     });
 

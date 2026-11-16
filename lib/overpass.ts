@@ -1,5 +1,6 @@
 import { BoundingBox, OverpassResponse, OSMElement } from './types';
 import { isRoutableHighway } from './highwayFilter';
+import { splitOversizedRegions } from './fetchRegions';
 import { prisma } from './prisma';
 import { readDiskCache, writeDiskCache } from './osmDiskCache';
 import { outcomeForResponse, recordCacheLookup, recordExternalBreaker, recordExternalCall } from './metrics';
@@ -600,7 +601,8 @@ export async function fetchOSMDataByQuery(queryStr: string): Promise<OverpassRes
  * A region that fails or comes back empty is skipped rather than failing the
  * whole route — the remaining regions still produce a usable graph.
  */
-export async function fetchOSMDataForRegions(regions: BoundingBox[]): Promise<OverpassResponse> {
+export async function fetchOSMDataForRegions(requestedRegions: BoundingBox[]): Promise<OverpassResponse> {
+  const regions = splitOversizedRegions(requestedRegions);
   const CONCURRENCY = 4;
   const results: OverpassResponse[] = [];
   let skippedTooLarge = false;

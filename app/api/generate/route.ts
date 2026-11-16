@@ -185,7 +185,10 @@ async function handlePOST(request: Request) {
             areaBboxes.push({ south: Math.min(...lats) - BUFFER, north: Math.max(...lats) + BUFFER, west: Math.min(...lons) - BUFFER, east: Math.max(...lons) + BUFFER });
         }
         const regionPoints: [number, number][] = (selectedPoints || []).map((p: any) => [p.lat, p.lon] as [number, number]);
-        if (persistentStart && typeof persistentStart.lat === 'number') regionPoints.push([persistentStart.lat, persistentStart.lon]);
+        // A point route starts at its first point, so a saved home start far away is never
+        // visited; fetching a corridor out to it made a distant suggested route "too large".
+        const homeIsUsed = hasDrawnArea || regionPoints.length === 0;
+        if (homeIsUsed && persistentStart && typeof persistentStart.lat === 'number') regionPoints.push([persistentStart.lat, persistentStart.lon]);
 
         const regions = buildFetchRegions({ areaBboxes, paths: regionPaths, points: regionPoints });
         const fullArea = bboxArea(bufferedBbox);
