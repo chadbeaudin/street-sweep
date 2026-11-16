@@ -485,7 +485,7 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                         return (
                                             <div className="mt-3">
                                                 <StatsBarChart
-                                                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'} per Year`}
+                                                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'}${stats.totalHours !== undefined ? ' and Hours' : ''} per Year`}
                                                     activityNounPlural={activityNounPlural}
                                                     onSelect={year => drillInto(() => setSelectedYear(year))}
                                                     bars={years.map(year => ({
@@ -494,34 +494,12 @@ export function StatsDialog({ isOpen, onClose, riddenRoads, activityElevations, 
                                                         tooltipTitle: String(year),
                                                         miles: outdoorByYear.get(year)?.miles ?? 0,
                                                         rides: outdoorByYear.get(year)?.rides ?? 0,
+                                                        // Absent until stats computed before moving time was tracked are refreshed (#230).
+                                                        hours: stats.totalHours !== undefined ? outdoorByYear.get(year)?.hours ?? 0 : undefined,
                                                         type: typeByYear.get(year),
                                                         virtual: virtualByYear.get(year),
                                                     }))}
                                                 />
-                                                {stats.totalHours !== undefined && (
-                                                    <div className="mt-3">
-                                                        <StatsBarChart
-                                                            title="Hours per Year"
-                                                            activityNounPlural={activityNounPlural}
-                                                            onSelect={year => drillInto(() => setSelectedYear(year))}
-                                                            formatValue={formatHours}
-                                                            testIdPrefix="hours-"
-                                                            bars={years.map(year => {
-                                                                const type = typeByYear.get(year);
-                                                                const virtual = virtualByYear.get(year);
-                                                                return {
-                                                                    key: year,
-                                                                    label: `'${String(year).slice(2)}`,
-                                                                    tooltipTitle: String(year),
-                                                                    miles: outdoorByYear.get(year)?.hours ?? 0,
-                                                                    rides: outdoorByYear.get(year)?.rides ?? 0,
-                                                                    type: type && { mountainMiles: type.mountainHours ?? 0, roadGravelMiles: type.roadGravelHours ?? 0 },
-                                                                    virtual: virtual && { miles: virtual.hours ?? 0, rides: virtual.rides },
-                                                                };
-                                                            })}
-                                                        />
-                                                    </div>
-                                                )}
                                             </div>
                                         );
                                     })()}

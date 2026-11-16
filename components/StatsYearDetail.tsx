@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 import { useUnits } from './UnitsContext';
 import { StatsBarChart } from './StatsBarChart';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
-import { formatDuration, formatHours, ridesInMonth, summarizeRides, type YearDetail, type YearRide } from '@/lib/stats';
+import { formatDuration, ridesInMonth, summarizeRides, type YearDetail, type YearRide } from '@/lib/stats';
 import { reportClientError } from '@/lib/clientErrors';
 
 interface StatsYearDetailProps {
@@ -106,7 +106,7 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
 
             {month === null && (
                 <StatsBarChart
-                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'} per Month`}
+                    title={`${units === 'metric' ? 'Kilometers' : 'Miles'} and Hours per Month`}
                     activityNounPlural={activityNounPlural}
                     onSelect={onSelectMonth}
                     bars={detail.months.map((m, i) => ({
@@ -114,26 +114,9 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
                         label: MONTHS[i].charAt(0),
                         tooltipTitle: `${MONTHS[i]} ${year}`,
                         miles: m.mountainMiles + m.roadGravelMiles,
+                        hours: m.mountainHours + m.roadGravelHours,
                         rides: m.rides,
                         type: showType ? m : undefined,
-                    }))}
-                />
-            )}
-
-            {month === null && (
-                <StatsBarChart
-                    title="Hours per Month"
-                    activityNounPlural={activityNounPlural}
-                    onSelect={onSelectMonth}
-                    formatValue={formatHours}
-                    testIdPrefix="hours-"
-                    bars={detail.months.map((m, i) => ({
-                        key: m.month,
-                        label: MONTHS[i].charAt(0),
-                        tooltipTitle: `${MONTHS[i]} ${year}`,
-                        miles: m.mountainHours + m.roadGravelHours,
-                        rides: m.rides,
-                        type: showType ? { mountainMiles: m.mountainHours, roadGravelMiles: m.roadGravelHours } : undefined,
                     }))}
                 />
             )}
