@@ -43,10 +43,27 @@ describe('suggest a route preference note (#227)', () => {
     });
 });
 
+describe('moving a suggestion start (#236)', () => {
+    it('plans a new suggestion from where the start/finish of a suggested loop is dropped', () => {
+        const handler = page.slice(page.indexOf('const handlePointMove = useCallback'), page.indexOf('const handlePointMoveStart'));
+        expect(handler).toMatch(/if \(twinIdx !== null && suggestionActiveRef\.current\) \{\s+suggestRouteRef\.current\(newLatLng\);\s+return;/);
+        expect(page).toContain('suggestionActiveRef.current = true;');
+        expect(page).toContain('useEffect(() => { suggestRouteRef.current = handleSuggestRoute; }, [handleSuggestRoute]);');
+    });
+
+    it('treats the route as ordinary once it is edited any other way', () => {
+        for (const handler of ['const addPoint = useCallback', 'const handlePointDelete = useCallback', 'const clearPoints = useCallback']) {
+            const body = page.slice(page.indexOf(handler), page.indexOf(handler) + 400);
+            expect(body).toContain('suggestionActiveRef.current = false;');
+        }
+        expect(page).toMatch(/if \(selectionBoxes\.length > 0 \|\| selectionPolygons\.length > 0\) suggestionActiveRef\.current = false;/);
+    });
+});
+
 describe('moving a loop start (#236)', () => {
     it("moves a loop's start and end together, re-routing the legs at both ends", () => {
         const handler = page.slice(page.indexOf('const handlePointMove = useCallback'), page.indexOf('const handlePointMoveStart'));
-        expect(handler).toContain('loopTwinIndex(newPoints, idx)');
+        expect(handler).toContain('loopTwinIndex(pointsRef.current, idx)');
         expect(handler).toContain('getAffectedSegmentIndices(twinIdx, pointsRef.current.length)');
         expect(handler).toMatch(/applyMovedPoint\(movedPoints, twinId/);
     });

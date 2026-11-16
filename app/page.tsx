@@ -246,6 +246,10 @@ export default function Home() {
     const [activeSteps, setActiveSteps] = useState(0);
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
+    // True while the route is a suggestion as placed: moving its start/finish then plans a
+    // new loop from there (#236). Any other edit makes it an ordinary route again.
+    const suggestionActiveRef = useRef(false);
+    const suggestRouteRef = useRef<(start: { lat: number; lon: number }) => void>(() => {});
     const generateAbortControllerRef = useRef<AbortController | null>(null);
     const roadsAbortControllerRef = useRef<AbortController | null>(null);
     const fetchedRoadTilesRef = useRef<Set<string>>(new Set());
@@ -1251,6 +1255,7 @@ export default function Home() {
 
     const addPoint = useCallback((point: { lat: number; lon: number }, routingBbox?: { south: number; west: number; north: number; east: number }) => {
         if (isDraggingRef.current) return;
+        suggestionActiveRef.current = false;
         isImportedRouteRef.current = false;
         setIsImportedRoute(false);
 
@@ -1366,10 +1371,16 @@ export default function Home() {
         const currentBbox = bboxRef.current;
         if (!currentBbox) return;
 
+        const twinIdx = loopTwinIndex(pointsRef.current, idx);
+        if (twinIdx !== null && suggestionActiveRef.current) {
+            suggestRouteRef.current(newLatLng);
+            return;
+        }
+        suggestionActiveRef.current = false;
+
         // 1. Optimistic Update: Update the waypoint immediately
         const newPoints = [...pointsRef.current];
         const pointId = newPoints[idx].id;
-        const twinIdx = loopTwinIndex(newPoints, idx);
         const twinId = twinIdx === null ? null : newPoints[twinIdx].id;
         newPoints[idx] = { ...newLatLng, id: pointId, status: 'pending' };
         if (twinIdx !== null) newPoints[twinIdx] = { ...newLatLng, id: twinId!, status: 'pending' };
@@ -1474,6 +1485,7 @@ export default function Home() {
         const currentBbox = bboxRef.current;
         if (!currentBbox) return;
         if (idx < 0 || idx >= pointsRef.current.length) return;
+        suggestionActiveRef.current = false;
 
         const { newPoints, newRoute, segmentToRoute } = removeWaypoint(pointsRef.current, manualRouteRef.current, idx);
         pointsRef.current = newPoints;
@@ -1645,6 +1657,7 @@ export default function Home() {
 
     const clearPoints = useCallback(() => {
         // Reset refs
+        suggestionActiveRef.current = false;
         pointsRef.current = [];
         manualRouteRef.current = [];
         historyRef.current = [];
@@ -1709,6 +1722,7 @@ export default function Home() {
             setManualRoute(legs);
             setHistory(historyRef.current);
             setHistoryIndex(0);
+            suggestionActiveRef.current = true;
             setSuggestNote(data.note ?? null);
         } catch (err: any) {
             setError({ message: err.message });
@@ -1718,6 +1732,11 @@ export default function Home() {
             setSuggestTarget(null);
         }
     }, [activityMode, clearPoints]);
+    useEffect(() => { suggestRouteRef.current = handleSuggestRoute; }, [handleSuggestRoute]);
+    // Drawing an area on a suggestion makes it an ordinary route too.
+    useEffect(() => {
+        if (selectionBoxes.length > 0 || selectionPolygons.length > 0) suggestionActiveRef.current = false;
+    }, [selectionBoxes.length, selectionPolygons.length]);
 
     // A new area supersedes the auto-added end of the previous sweep (see
     // dropStaleComputedEndpoint); its empty incoming segment goes with it.
