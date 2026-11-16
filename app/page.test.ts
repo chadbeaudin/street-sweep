@@ -70,7 +70,8 @@ describe('suggest a route progress (#80)', () => {
     });
 
     it('names what it is doing, and leaves the result to the route preview', () => {
-        expect(page).toContain('Creating a route similar to your most common rides&hellip;');
+        expect(page).toContain("{suggestTarget ? suggestTargetMessage(suggestTarget, units) : 'Finding your typical ride'}&hellip;");
+        expect(page).toContain("fetch('/api/suggest/target'");
         expect(page).not.toMatch(/setSuggestion\(/);
     });
 });

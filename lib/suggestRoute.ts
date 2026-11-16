@@ -1,4 +1,5 @@
 import { haversineM } from './geometry';
+import { distanceFromMeters, elevationFromFeet, elevationUnit, type UnitSystem } from './units';
 
 // "Suggest a Route" (#80): find the rider's typical ride -- its distance and climbing
 // are what a suggestion aims for (lib/suggestLoop.ts) -- and lay the chosen loop out
@@ -11,6 +12,17 @@ export interface RideTrack {
     distanceM: number;
     elevationGainM: number;
     poly: [number, number][]; // [lat, lon]
+}
+
+const FEET_PER_METER = 3.28084;
+
+// Shown while a suggestion is planned, e.g. "Planning a 21-mile loop with about
+// 1,270 ft of climbing, like your typical ride".
+export function suggestTargetMessage(target: { distanceM: number; elevationGainM: number }, units: UnitSystem): string {
+    const distance = Math.round(distanceFromMeters(target.distanceM, units));
+    const climb = Math.round(elevationFromFeet(target.elevationGainM * FEET_PER_METER, units) / 10) * 10;
+    const length = units === 'metric' ? `${distance} km` : `${distance}-mile`;
+    return `Planning a ${length} loop with about ${climb.toLocaleString()} ${elevationUnit(units)} of climbing, like your typical ride`;
 }
 
 // What the rider usually rides is judged from the past year; older habits may not hold.

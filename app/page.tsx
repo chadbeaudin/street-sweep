@@ -9,7 +9,7 @@ import { useSession, signIn, signOut } from 'next-auth/react';
 import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, ThumbsUp, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
-import { boundsOf, placeSuggestedRoute } from '@/lib/suggestRoute';
+import { boundsOf, placeSuggestedRoute, suggestTargetMessage } from '@/lib/suggestRoute';
 import { preloadAfter } from '@/lib/deferredPreload';
 import { useDelayedFlag } from '@/lib/useDelayedFlag';
 import { ROAD_ENCODING, decodeRoads } from '@/lib/roadEncoding';
@@ -237,6 +237,7 @@ export default function Home() {
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [pickingSuggestStart, setPickingSuggestStart] = useState(false);
     const [suggestNote, setSuggestNote] = useState<string | null>(null);
+    const [suggestTarget, setSuggestTarget] = useState<{ distanceM: number; elevationGainM: number } | null>(null);
     const [suggestStart, setSuggestStart] = useState<{ lat: number; lon: number } | null>(null);
     const [fitBoundsRequest, setFitBoundsRequest] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
     const [isImportedRoute, setIsImportedRoute] = useState(false);
@@ -1677,8 +1678,16 @@ export default function Home() {
         setSuggestStart(start);
         setIsSuggesting(true);
         setSuggestNote(null);
+        setSuggestTarget(null);
         setError(null);
         try {
+            // Quick, so the progress message can say what's being planned; the plan itself doesn't need it.
+            fetch('/api/suggest/target', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activityMode }),
+            }).then(r => (r.ok ? r.json() : null)).then(target => { if (target) setSuggestTarget(target); }).catch(() => { /* keep the generic message */ });
+
             const res = await fetch('/api/suggest', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1706,6 +1715,7 @@ export default function Home() {
         } finally {
             setIsSuggesting(false);
             setSuggestStart(null);
+            setSuggestTarget(null);
         }
     }, [activityMode, clearPoints]);
 
@@ -2463,7 +2473,7 @@ export default function Home() {
                     <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur px-5 py-2.5 rounded-full shadow-2xl border border-indigo-100 flex items-center gap-3 max-w-[calc(100%-32px)]">
                         <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
                         <span className="text-sm font-bold text-indigo-900 tracking-tight">
-                            Creating a route similar to your most common rides&hellip;
+                            {suggestTarget ? suggestTargetMessage(suggestTarget, units) : 'Finding your typical ride'}&hellip;
                         </span>
                     </div>
                 )}

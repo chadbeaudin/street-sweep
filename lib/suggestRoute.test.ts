@@ -1,4 +1,4 @@
-import { boundsOf, placeSuggestedRoute, legsAlong, findTypicalRide, waypointsAlong, waypointSpacingM, RideTrack } from './suggestRoute';
+import { boundsOf, placeSuggestedRoute, legsAlong, findTypicalRide, suggestTargetMessage, waypointsAlong, waypointSpacingM, RideTrack } from './suggestRoute';
 import { haversineM } from './geometry';
 
 const HOME = { lat: 47.65, lon: -117.42 };
@@ -26,6 +26,14 @@ const MI = 1609.344, FT = 0.3048;
 const ride = (miles: number, feet: number, startDate = '2026-10-01T00:00:00Z', name = 'Ride', at = HOME): RideTrack =>
     ({ id: nextId++, name, startDate, distanceM: miles * MI, elevationGainM: feet * FT, poly: loop(1, 1, at) });
 const NOW = Date.parse('2026-11-16T00:00:00Z');
+
+describe('suggestTargetMessage (#237)', () => {
+    it("says what is being planned in the rider's units, with climbing rounded to 10", () => {
+        const target = { distanceM: 20.9 * MI, elevationGainM: 1266 * FT };
+        expect(suggestTargetMessage(target, 'imperial')).toBe('Planning a 21-mile loop with about 1,270 ft of climbing, like your typical ride');
+        expect(suggestTargetMessage(target, 'metric')).toBe('Planning a 34 km loop with about 390 m of climbing, like your typical ride');
+    });
+});
 
 describe('findTypicalRide (#237)', () => {
     it("picks the ride closest to the rider's median distance and climbing", () => {
