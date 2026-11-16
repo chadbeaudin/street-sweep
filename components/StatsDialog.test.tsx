@@ -198,10 +198,43 @@ describe('StatsDialog time in the saddle (#230)', () => {
         expect(screen.getByText('Hours')).toBeInTheDocument();
         // 210 miles in 30 hours is 7 mph. 2016's 28 hours sit at 196 of its 200 miles: just below its bar,
         // because that year was a little faster than average. 2017's 2 hours sit at 14, above its 10 miles.
-        expect(screen.getByTestId('hours-point-2016')).toHaveStyle({ bottom: '98%', left: '25%' });
-        expect(screen.getByTestId('hours-point-2017')).toHaveStyle({ bottom: `${((2 * 7) / 200) * 100}%`, left: '75%' });
+        expect(screen.getByTestId('line-point-2016')).toHaveStyle({ bottom: '98%', left: '25%' });
+        expect(screen.getByTestId('line-point-2017')).toHaveStyle({ bottom: `${((2 * 7) / 200) * 100}%`, left: '75%' });
         // The bars still show miles.
         expect(screen.getByTestId('virtual-bar-2016')).toHaveStyle({ height: '50%' });
+    });
+
+    it('swaps to hours as the bars and miles as the line, and remembers the choice', async () => {
+        renderStats('imperial', withHours);
+        fireEvent.click(await screen.findByRole('button', { name: 'Time' }));
+        expect(screen.getByRole('button', { name: 'Time' })).toHaveAttribute('aria-pressed', 'true');
+        // 2016's bar is its 28 hours: 6 virtual, 12 mountain bike, 10 road.
+        expect(screen.getByTestId('virtual-bar-2016')).toHaveStyle({ height: `${(6 / 28) * 100}%` });
+        expect(screen.getByTestId('mtb-bar-2016')).toHaveStyle({ height: `${(12 / 28) * 100}%` });
+        // The line is now miles: 2016's 200 miles at 7 mph is 28.57 hours, the tallest thing on the chart.
+        expect(screen.getByText('Miles')).toBeInTheDocument();
+        expect(screen.queryByText('Hours')).not.toBeInTheDocument();
+        expect(screen.getByTestId('line-point-2016')).toHaveStyle({ bottom: '100%' });
+        expect(localStorage.getItem('stats_bar_metric')).toBe('time');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Distance' }));
+        expect(screen.getByTestId('virtual-bar-2016')).toHaveStyle({ height: '50%' });
+        expect(screen.getByText('Hours')).toBeInTheDocument();
+    });
+
+    it('opens on the measure chosen last time', async () => {
+        localStorage.setItem('stats_bar_metric', 'time');
+        localStorage.setItem('unit_system', 'imperial');
+        global.fetch = jest.fn((url: string) => Promise.resolve({ json: async () => (url === '/api/stats' ? { ...stats, ...withHours } : { readings: [] }) })) as unknown as typeof fetch;
+        render(dialog(true));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Time' })).toHaveAttribute('aria-pressed', 'true'));
+        expect(screen.getByTestId('mtb-bar-2016')).toHaveStyle({ height: `${(12 / 28) * 100}%` });
+    });
+
+    it('offers no switch for stats cached before moving time was tracked', async () => {
+        renderStats('imperial', { ridesPerYear: [{ year: 2016, rides: 5, miles: 100 }, { year: 2017, rides: 1, miles: 10 }] });
+        expect(await screen.findByText('Miles per Year')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Time' })).not.toBeInTheDocument();
     });
 
     it('shows miles and hours together in the tooltip', async () => {
@@ -218,7 +251,7 @@ describe('StatsDialog time in the saddle (#230)', () => {
         renderStats('imperial', { ridesPerYear: [{ year: 2016, rides: 5, miles: 100 }, { year: 2017, rides: 1, miles: 10 }] });
         expect(await screen.findByText('Miles per Year')).toBeInTheDocument();
         expect(screen.queryByText('Hours')).not.toBeInTheDocument();
-        expect(screen.queryByTestId('hours-point-2016')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('line-point-2016')).not.toBeInTheDocument();
         expect(screen.queryByText('Time in the Saddle')).not.toBeInTheDocument();
     });
 
@@ -226,11 +259,11 @@ describe('StatsDialog time in the saddle (#230)', () => {
         renderStats('imperial', { ridesPerYear: [{ year: 2016, rides: 4, miles: 100 }, { year: 2017, rides: 1, miles: 10 }] });
         fireEvent.click(await screen.findByRole('button', { name: 'View 2016 details' }));
         expect(await screen.findByText('Miles and Hours per Month')).toBeInTheDocument();
-        expect(screen.getByText('Time')).toBeInTheDocument();
+        expect(screen.getByText('Moving Time')).toBeInTheDocument();
         expect(screen.getByText('10')).toBeInTheDocument(); // 1 + 5 + 1.5 + 2.5 hours
         // 100 miles in 10 hours. June's 9 hours for 75 miles sit above its bar; July's 1 hour for 25 miles, below.
-        expect(screen.getByTestId('hours-point-6')).toHaveStyle({ bottom: '100%' });
-        expect(screen.getByTestId('hours-point-7')).toHaveStyle({ bottom: `${(10 / 90) * 100}%` });
+        expect(screen.getByTestId('line-point-6')).toHaveStyle({ bottom: '100%' });
+        expect(screen.getByTestId('line-point-7')).toHaveStyle({ bottom: `${(10 / 90) * 100}%` });
         expect(screen.getAllByText(/1,000 ft · 5h 00m/).length).toBeGreaterThan(0);
     });
 });

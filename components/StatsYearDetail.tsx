@@ -85,7 +85,7 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
     const totals = summarizeRides(rides);
     const tiles = [
         { label: 'Distance', value: Math.round(distanceFromMiles(totals.miles, units)).toLocaleString(), unit: distanceUnit(units) },
-        { label: 'Time', value: Math.round(totals.hours).toLocaleString(), unit: 'hours' },
+        { label: 'Moving Time', value: Math.round(totals.hours).toLocaleString(), unit: 'hours' },
         { label: activityNounPlural, value: totals.rides.toLocaleString(), unit: 'total' },
         { label: 'Climbed', value: Math.round(elevationFromFeet(totals.elevationFeet, units)).toLocaleString(), unit: elevationUnit(units) },
         { label: 'Active Days', value: totals.activeDays.toLocaleString(), unit: 'days' },

@@ -1,4 +1,4 @@
-import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, computeYearDetail, isMountainBikeRide, ridesInMonth, summarizeRides, formatHours, formatDuration } from './stats';
+import { buildCoverageCells, cellsToMiles, computeUniqueMiles, pointInPolygon, isBikingActivity, isCyclingActivity, isRunningActivity, isRunningActivityBroad, isModeActivity, isModeActivityBroad, computeRideRecords, computeActivityTotals, computeRideTypeBreakdown, computeYearDetail, isMountainBikeRide, ridesInMonth, summarizeRides, formatHours, formatDuration, placeBucketsAlong } from './stats';
 
 describe('stats.buildCoverageCells', () => {
     it('returns no cells for empty input', () => {
@@ -356,5 +356,18 @@ describe('stats.computeYearDetail', () => {
         expect(summary).toMatchObject({ rides: 3, activeDays: 2 });
         expect(summary.miles).toBeCloseTo(35);
         expect(summary.elevationFeet).toBeCloseTo(984.25, 1);
+    });
+});
+
+describe('stats.placeBucketsAlong (#233)', () => {
+    it('returns each ~5 km bucket a track passes through once, with a point on the track', () => {
+        const track: [number, number][] = [[40.76, -111.89], [40.761, -111.888], [40.80, -111.90], [40.89, -111.95]];
+        const buckets = placeBucketsAlong(track);
+        expect(Array.from(buckets.keys())).toEqual(['40.75:-111.9', '40.8:-111.9', '40.9:-111.95']);
+        expect(buckets.get('40.75:-111.9')).toEqual([40.76, -111.89]); // the first point seen there
+    });
+
+    it('returns nothing for an empty track', () => {
+        expect(placeBucketsAlong([]).size).toBe(0);
     });
 });

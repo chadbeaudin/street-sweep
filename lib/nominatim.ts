@@ -1,4 +1,5 @@
 import { prisma } from './prisma';
+import { placeBucketKey } from './stats';
 import { outcomeForResponse, recordCacheLookup, recordExternalCall } from './metrics';
 
 const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
@@ -55,9 +56,7 @@ const POLYGON_CACHE = new Map<string, CityPolygon | null>();
 // Quantize lat/lon to ~5km grid so nearby activity centroids share a single
 // reverse-geocode lookup. City attribution at this resolution is plenty accurate
 // and keeps Nominatim's 1-req/sec limit from dominating the stats endpoint.
-function reverseKey(lat: number, lon: number): string {
-    return `${Math.round(lat * 20) / 20}:${Math.round(lon * 20) / 20}`;
-}
+const reverseKey = placeBucketKey;
 
 // Reverse-geocode results are stable, so persist them in Postgres keyed by the
 // 5km bucket. This survives server restarts and serverless cold starts — without
