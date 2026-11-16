@@ -28,7 +28,7 @@ const stats: Record<string, unknown> = {
 const RIDDEN: [number, number][][] = [[[44, -121], [44.1, -121]]];
 const CREDS = { sessionLinked: true };
 
-const yearRide = (id: number, name: string, miles: number, mountainBike = false, date = '2016-06-15T17:00:00Z') => ({ id, name, date, miles, elevationFeet: 1000, mountainBike });
+const yearRide = (id: number, name: string, miles: number, mountainBike = false, date = '2016-06-15T17:00:00Z') => ({ id, name, date, miles, elevationFeet: 1000, hours: miles / 10, mountainBike });
 
 const yearDetail: Record<string, unknown> = {
     year: 2016,
@@ -37,6 +37,8 @@ const yearDetail: Record<string, unknown> = {
         rides: i === 5 ? 3 : i === 6 ? 1 : 0,
         mountainMiles: i === 5 ? 25 : 0,
         roadGravelMiles: i === 5 ? 50 : i === 6 ? 25 : 0,
+        mountainHours: i === 5 ? 6 : 0,
+        roadGravelHours: i === 5 ? 3 : i === 6 ? 1 : 0,
     })),
     rides: [yearRide(1, 'Morning Spin', 10, false, '2016-07-02T17:00:00Z'), yearRide(2, 'Epic Day', 50, true), yearRide(3, 'Commute', 15), yearRide(4, 'Gravel Loop', 25)],
 };
@@ -170,6 +172,58 @@ describe('StatsDialog virtual miles per year', () => {
     });
 });
 
+describe('StatsDialog time in the saddle (#230)', () => {
+    const withHours = {
+        totalHours: 30,
+        ridesPerYear: [{ year: 2016, rides: 5, miles: 100, hours: 22 }, { year: 2017, rides: 1, miles: 10, hours: 2 }],
+        virtualPerYear: [{ year: 2016, rides: 3, miles: 100, hours: 6 }],
+        rideTypeBreakdown: {
+            mountain: { rides: 2, miles: 120, elevationFeet: 0, hours: 12 },
+            roadGravel: { rides: 4, miles: 150, elevationFeet: 0, hours: 10 },
+            perYear: [{ year: 2016, mountainMiles: 75, roadGravelMiles: 25, mountainHours: 12, roadGravelHours: 10 }],
+        },
+    };
+
+    it('shows total hours, hours per ride type and an Hours per Year chart', async () => {
+        renderStats('imperial', withHours);
+        expect(await screen.findByText('Time in the Saddle')).toBeInTheDocument();
+        expect(screen.getByText('30')).toBeInTheDocument();
+        expect(screen.getByText('Hours per Year')).toBeInTheDocument();
+        expect(screen.getByText('12 h')).toBeInTheDocument();
+        expect(screen.getByText('10 h')).toBeInTheDocument();
+        // 2016: 6 virtual + 12 mountain + 10 road of 28 hours.
+        expect(screen.getByTestId('hours-virtual-bar-2016')).toHaveStyle({ height: `${(6 / 28) * 100}%` });
+        expect(screen.getByTestId('hours-mtb-bar-2016')).toHaveStyle({ height: `${(12 / 28) * 100}%` });
+    });
+
+    it('shows hours, not miles, in the Hours per Year tooltip', async () => {
+        renderStats('imperial', withHours);
+        const chart = (await screen.findByText('Hours per Year')).parentElement!.parentElement!;
+        fireEvent.mouseEnter(within(chart).getByText("'16").parentElement!);
+        const tip = within(chart).getByRole('tooltip');
+        expect(tip).toHaveTextContent('28 h · 8 rides');
+        expect(tip).toHaveTextContent('Mountain Bike 12 h');
+        expect(tip).toHaveTextContent('Virtual 6 h');
+    });
+
+    it('is hidden for stats cached before moving time was tracked', async () => {
+        renderStats('imperial', { ridesPerYear: [{ year: 2016, rides: 5, miles: 100 }, { year: 2017, rides: 1, miles: 10 }] });
+        expect(await screen.findByText('Miles per Year')).toBeInTheDocument();
+        expect(screen.queryByText('Hours per Year')).not.toBeInTheDocument();
+        expect(screen.queryByText('Time in the Saddle')).not.toBeInTheDocument();
+    });
+
+    it('shows time for a year, its months and each ride', async () => {
+        renderStats('imperial', { ridesPerYear: [{ year: 2016, rides: 4, miles: 100 }, { year: 2017, rides: 1, miles: 10 }] });
+        fireEvent.click(await screen.findByRole('button', { name: 'View 2016 details' }));
+        expect(await screen.findByText('Hours per Month')).toBeInTheDocument();
+        expect(screen.getByText('Time')).toBeInTheDocument();
+        expect(screen.getByText('10')).toBeInTheDocument(); // 1 + 5 + 1.5 + 2.5 hours
+        expect(screen.getByTestId('hours-mtb-bar-6')).toHaveStyle({ height: `${(6 / 9) * 100}%` });
+        expect(screen.getAllByText(/1,000 ft · 5h 00m/).length).toBeGreaterThan(0);
+    });
+});
+
 describe('StatsDialog IRL vs virtual split', () => {
     const totals = (activities: number, distanceMiles: number) => ({ activities, distanceMiles, elevationFeet: 1000, longestRideMiles: 10, biggestClimbFeet: 500, activeDays: activities });
 
@@ -229,7 +283,7 @@ describe('StatsDialog year drilldown', () => {
     it('narrows to the clicked month and goes back to the year', async () => {
         renderStats('imperial', { ridesPerYear });
         await openYear();
-        fireEvent.click(screen.getByRole('button', { name: 'View Jul 2016 details' }));
+        fireEvent.click(screen.getAllByRole('button', { name: 'View Jul 2016 details' })[0]);
 
         expect(screen.getByRole('heading', { name: 'July 2016' })).toBeInTheDocument();
         expect(screen.getAllByRole('link').map(a => a.textContent)).toEqual([expect.stringContaining('Morning Spin')]);
@@ -245,7 +299,7 @@ describe('StatsDialog year drilldown', () => {
     it('does not refetch the year when moving between it and a month', async () => {
         renderStats('imperial', { ridesPerYear });
         await openYear();
-        fireEvent.click(screen.getByRole('button', { name: 'View Jun 2016 details' }));
+        fireEvent.click(screen.getAllByRole('button', { name: 'View Jun 2016 details' })[0]);
         fireEvent.click(screen.getByRole('button', { name: 'Back to 2016' }));
         expect((global.fetch as jest.Mock).mock.calls.filter(([url]) => url === '/api/stats/year')).toHaveLength(1);
     });
@@ -259,7 +313,7 @@ describe('StatsDialog year drilldown', () => {
     it('starts over at the overview when reopened', async () => {
         const { rerender } = renderStats('imperial', { ridesPerYear });
         await openYear();
-        fireEvent.click(screen.getByRole('button', { name: 'View Jun 2016 details' }));
+        fireEvent.click(screen.getAllByRole('button', { name: 'View Jun 2016 details' })[0]);
         rerender(dialog(false));
         rerender(dialog(true));
         expect(await screen.findByRole('heading', { name: 'Your Coverage' })).toBeInTheDocument();

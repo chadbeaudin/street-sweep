@@ -5,7 +5,7 @@ import { Loader2 } from 'lucide-react';
 import { useUnits } from './UnitsContext';
 import { StatsBarChart } from './StatsBarChart';
 import { distanceFromMiles, distanceUnit, elevationFromFeet, elevationUnit } from '@/lib/units';
-import { ridesInMonth, summarizeRides, type YearDetail, type YearRide } from '@/lib/stats';
+import { formatDuration, formatHours, ridesInMonth, summarizeRides, type YearDetail, type YearRide } from '@/lib/stats';
 import { reportClientError } from '@/lib/clientErrors';
 
 interface StatsYearDetailProps {
@@ -37,7 +37,7 @@ function RideRow({ ride, showType }: { ride: YearRide; showType: boolean }) {
             </span>
             <span className="text-right flex-shrink-0 tabular-nums">
                 <span className="block font-semibold text-gray-900">{distanceFromMiles(ride.miles, units).toFixed(1)} {distanceUnit(units)}</span>
-                <span className="block text-xs text-gray-500">{Math.round(elevationFromFeet(ride.elevationFeet, units)).toLocaleString()} {elevationUnit(units)}</span>
+                <span className="block text-xs text-gray-500">{Math.round(elevationFromFeet(ride.elevationFeet, units)).toLocaleString()} {elevationUnit(units)}{ride.hours > 0 && ` · ${formatDuration(ride.hours)}`}</span>
             </span>
         </a>
     );
@@ -85,6 +85,7 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
     const totals = summarizeRides(rides);
     const tiles = [
         { label: 'Distance', value: Math.round(distanceFromMiles(totals.miles, units)).toLocaleString(), unit: distanceUnit(units) },
+        { label: 'Time', value: Math.round(totals.hours).toLocaleString(), unit: 'hours' },
         { label: activityNounPlural, value: totals.rides.toLocaleString(), unit: 'total' },
         { label: 'Climbed', value: Math.round(elevationFromFeet(totals.elevationFeet, units)).toLocaleString(), unit: elevationUnit(units) },
         { label: 'Active Days', value: totals.activeDays.toLocaleString(), unit: 'days' },
@@ -93,7 +94,7 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
 
     return (
         <>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-3 gap-2">
                 {tiles.map(t => (
                     <div key={t.label} className="bg-gray-50 border border-gray-100 rounded-xl p-3">
                         <div className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{t.label}</div>
@@ -115,6 +116,24 @@ export function StatsYearDetail({ year, month, onSelectMonth, stravaCredentials,
                         miles: m.mountainMiles + m.roadGravelMiles,
                         rides: m.rides,
                         type: showType ? m : undefined,
+                    }))}
+                />
+            )}
+
+            {month === null && (
+                <StatsBarChart
+                    title="Hours per Month"
+                    activityNounPlural={activityNounPlural}
+                    onSelect={onSelectMonth}
+                    formatValue={formatHours}
+                    testIdPrefix="hours-"
+                    bars={detail.months.map((m, i) => ({
+                        key: m.month,
+                        label: MONTHS[i].charAt(0),
+                        tooltipTitle: `${MONTHS[i]} ${year}`,
+                        miles: m.mountainHours + m.roadGravelHours,
+                        rides: m.rides,
+                        type: showType ? { mountainMiles: m.mountainHours, roadGravelMiles: m.roadGravelHours } : undefined,
                     }))}
                 />
             )}

@@ -8,7 +8,7 @@ export interface StatsBar {
     key: number;
     label: string;
     tooltipTitle: string;
-    miles: number; // outdoor only; virtual stacks underneath
+    miles: number; // outdoor only; virtual stacks underneath. Holds the chart's own unit when formatValue is given (hours, #230).
     rides: number;
     type?: { mountainMiles: number; roadGravelMiles: number };
     virtual?: { miles: number; rides: number };
@@ -22,11 +22,11 @@ const SERIES = {
 };
 
 // Bottom to top.
-function segmentsOf(b: StatsBar) {
+function segmentsOf(b: StatsBar, testIdPrefix = '') {
     const outdoor = b.type
-        ? [{ series: SERIES.mountain, miles: b.type.mountainMiles, testId: `mtb-bar-${b.key}` }, { series: SERIES.roadGravel, miles: b.type.roadGravelMiles }]
+        ? [{ series: SERIES.mountain, miles: b.type.mountainMiles, testId: `${testIdPrefix}mtb-bar-${b.key}` }, { series: SERIES.roadGravel, miles: b.type.roadGravelMiles }]
         : [{ series: SERIES.outdoor, miles: b.miles }];
-    return b.virtual?.miles ? [{ series: SERIES.virtual, miles: b.virtual.miles, testId: `virtual-bar-${b.key}` }, ...outdoor] : outdoor;
+    return b.virtual?.miles ? [{ series: SERIES.virtual, miles: b.virtual.miles, testId: `${testIdPrefix}virtual-bar-${b.key}` }, ...outdoor] : outdoor;
 }
 
 interface StatsBarChartProps {
@@ -34,12 +34,14 @@ interface StatsBarChartProps {
     bars: StatsBar[];
     activityNounPlural: string;
     onSelect?: (key: number) => void; // empty bars aren't selectable
+    formatValue?: (value: number) => string; // defaults to distance in the rider's units
+    testIdPrefix?: string; // keeps bar test ids unique when two charts share keys
 }
 
-export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: StatsBarChartProps) {
+export function StatsBarChart({ title, bars, activityNounPlural, onSelect, formatValue, testIdPrefix }: StatsBarChartProps) {
     const { units } = useUnits();
     const [hovered, setHovered] = useState<number | null>(null);
-    const formatDist = (miles: number) => `${Math.round(distanceFromMiles(miles, units)).toLocaleString()} ${distanceUnit(units)}`;
+    const formatDist = formatValue ?? ((miles: number) => `${Math.round(distanceFromMiles(miles, units)).toLocaleString()} ${distanceUnit(units)}`);
     const totalOf = (b: StatsBar) => b.miles + (b.virtual?.miles ?? 0);
     const maxMiles = Math.max(...bars.map(totalOf), 1);
     const legend = bars.some(b => b.virtual?.miles) ? [SERIES.virtual, ...(bars.some(b => b.type) ? [SERIES.mountain, SERIES.roadGravel] : [SERIES.outdoor])] : [];
@@ -78,7 +80,7 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
                                 <div role="tooltip" className={`absolute bottom-full mb-1 z-10 ${align} whitespace-nowrap rounded-lg bg-gray-900 text-white text-[11px] px-2.5 py-1.5 shadow-lg pointer-events-none`}>
                                     <div className="font-semibold">{b.tooltipTitle}</div>
                                     <div className="tabular-nums text-gray-300">{formatDist(total)} · {b.rides + (b.virtual?.rides ?? 0)} {activityNounPlural}</div>
-                                    {(b.type || b.virtual?.miles) && segmentsOf(b).map(seg => (
+                                    {(b.type || b.virtual?.miles) && segmentsOf(b, testIdPrefix).map(seg => (
                                         <div key={seg.series.label} className="flex items-center gap-1.5 tabular-nums"><span className={`w-2 h-2 rounded-sm ${seg.series.color}`} />{seg.series.label} {formatDist(seg.miles)}</div>
                                     ))}
                                 </div>
@@ -86,7 +88,7 @@ export function StatsBarChart({ title, bars, activityNounPlural, onSelect }: Sta
                             <div className="w-full flex-1 flex items-end">
                                 {total > 0 && (
                                     <div className="w-full rounded-t overflow-hidden flex flex-col-reverse hover:opacity-90 transition-opacity" style={{ height: `${Math.max(3, (total / maxMiles) * 100)}%` }}>
-                                        {segmentsOf(b).map(seg => (
+                                        {segmentsOf(b, testIdPrefix).map(seg => (
                                             <div key={seg.series.label} data-testid={seg.testId} className={`w-full ${seg.series.color}`} style={{ height: `${(seg.miles / total) * 100}%` }} />
                                         ))}
                                     </div>

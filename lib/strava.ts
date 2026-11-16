@@ -40,6 +40,7 @@ export interface StravaActivity {
     start_date: string;
     distance?: number; // meters
     total_elevation_gain?: number; // meters; Strava returns 0 if unknown
+    moving_time?: number; // seconds
     type: string;
     sport_type?: string;
     gear_id?: string | null;
@@ -53,6 +54,7 @@ export interface RiddenActivities {
     activityGearIds: string[];
     activityDistances: number[]; // meters
     activityStartDates: string[]; // ISO
+    activityMovingTimes: number[]; // seconds
     // Broader than riddenRoads: also includes VirtualRide (real cycling
     // effort, no real-world GPS location) for lifetime activity/elevation
     // totals — see isCyclingActivity.
@@ -63,6 +65,7 @@ export interface RiddenActivities {
     virtualDistances: number[]; // meters
     virtualElevations: number[];
     virtualStartDates: string[]; // ISO
+    virtualMovingTimes: number[]; // seconds
 }
 
 // Single source of truth for what the app treats as "ridden": real-world
@@ -129,11 +132,13 @@ export async function fetchCyclingRiddenRoads(creds?: { clientId?: string; clien
         activityGearIds: real.map(r => r.a.gear_id ?? ''),
         activityDistances: real.map(r => r.a.distance ?? 0),
         activityStartDates: real.map(r => r.a.start_date ?? ''),
+        activityMovingTimes: real.map(r => r.a.moving_time ?? 0),
         totalCyclingActivities: allCycling.length,
         totalCyclingElevationGainMeters: allCycling.reduce((sum, a) => sum + (a.total_elevation_gain ?? 0), 0),
         virtualDistances: virtual.map(a => a.distance ?? 0),
         virtualElevations: virtual.map(a => a.total_elevation_gain ?? 0),
         virtualStartDates: virtual.map(a => a.start_date ?? ''),
+        virtualMovingTimes: virtual.map(a => a.moving_time ?? 0),
     };
 }
 
@@ -413,6 +418,7 @@ export async function fetchStravaActivity(accessToken: string, activityId: strin
             start_date: d.start_date,
             distance: d.distance,
             total_elevation_gain: d.total_elevation_gain,
+            moving_time: d.moving_time,
             type: d.type,
             sport_type: d.sport_type,
             gear_id: d.gear_id,

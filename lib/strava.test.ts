@@ -82,8 +82,8 @@ describe('fetchCyclingRiddenRoads', () => {
 
     it('counts VirtualRide toward totalCyclingActivities/Elevation but not riddenRoads', async () => {
         const activities = [
-            mockActivity({ id: 1, type: 'Ride', total_elevation_gain: 100 }),
-            mockActivity({ id: 2, type: 'VirtualRide', total_elevation_gain: 50, map: { summary_polyline: REAL_POLYLINE } }),
+            mockActivity({ id: 1, type: 'Ride', total_elevation_gain: 100, moving_time: 3600 }),
+            mockActivity({ id: 2, type: 'VirtualRide', total_elevation_gain: 50, moving_time: 1800, map: { summary_polyline: REAL_POLYLINE } }),
         ];
         (global.fetch as jest.Mock).mockImplementation((url: string) => {
             if (url.includes('oauth/token')) return Promise.resolve({ ok: true, json: async () => ({ access_token: 'token', scope: 'activity:read' }) });
@@ -97,6 +97,8 @@ describe('fetchCyclingRiddenRoads', () => {
         });
 
         const result = await fetchCyclingRiddenRoads(creds);
+        expect(result.activityMovingTimes).toEqual([3600]); // seconds, for hours in stats (#230)
+        expect(result.virtualMovingTimes).toEqual([1800]);
 
         expect(result.riddenRoads.length).toBe(1); // VirtualRide excluded from real-world roads
         expect(result.totalCyclingActivities).toBe(2); // but counted in the broader total
@@ -459,9 +461,9 @@ describe('fetchStravaActivity (#118)', () => {
     };
 
     it('maps a detailed activity onto the cached list shape and returns its full track', async () => {
-        respond(200, { id: 5, name: 'Lunch', start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', gear_id: 'b1', comment_count: 0, kudos_count: 3, map: { summary_polyline: 'abc', polyline: 'full' } });
+        respond(200, { id: 5, name: 'Lunch', start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, moving_time: 600, type: 'Ride', sport_type: 'Ride', gear_id: 'b1', comment_count: 0, kudos_count: 3, map: { summary_polyline: 'abc', polyline: 'full' } });
         expect(await fetchStravaActivity('token', '5')).toEqual({
-            activity: { id: 5, name: 'Lunch', map: { summary_polyline: 'abc' }, start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, type: 'Ride', sport_type: 'Ride', gear_id: 'b1', comment_count: 0 },
+            activity: { id: 5, name: 'Lunch', map: { summary_polyline: 'abc' }, start_date: '2026-10-01T00:00:00Z', distance: 1000, total_elevation_gain: 10, moving_time: 600, type: 'Ride', sport_type: 'Ride', gear_id: 'b1', comment_count: 0 },
             fullPolyline: 'full',
         });
     });
