@@ -1,6 +1,6 @@
 jest.mock('./prisma', () => ({ prisma: {} }));
 
-import { reverseAddress } from './nominatim';
+import { reverseAddress, searchAddresses } from './nominatim';
 import { reverseGeocode } from './nominatim';
 import * as metrics from './metrics';
 
@@ -45,4 +45,38 @@ describe('nominatim metrics (#117)', () => {
         await expect(reverseAddress(2, 2)).rejects.toThrow('fetch failed');
         expect(calls.mock.calls).toEqual([['nominatim', 'rate_limited'], ['nominatim', 'error']]);
     });
+});
+
+describe('searchAddresses', () => {
+    const respond = (results: { lat: string; lon: string; display_name: string }[]) => ({ ok: true, json: async () => results });
+    const spokane = { lat: '47.63', lon: '-117.40', display_name: 'South Grand Boulevard, Spokane, Washington' };
+    const chicago = { lat: '41.81', lon: '-87.62', display_name: 'Grand Boulevard, Chicago, Illinois' };
+
+    beforeEach(() => fetchMock.mockReset());
+
+    it('looks near the map first, inside a box about 70 miles around it', async () => {
+        fetchMock.mockResolvedValueOnce(respond([spokane]));
+        const results = await searchAddresses('Grand Blvd', 5, { lat: 47.65, lon: -117.42 });
+        expect(results.map(r => r.label)).toEqual(['South Grand Boulevard, Spokane, Washington']);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const url = fetchMock.mock.calls[0][0] as string;
+        expect(url).toContain('&bounded=1');
+        const [west, north, east, south] = decodeURIComponent(url.match(/viewbox=([^&]+)/)![1]).split(',').map(Number);
+        expect(north - south).toBeCloseTo(2, 5);
+        expect(west).toBeLessThan(-117.42);
+        expect(east).toBeGreaterThan(-117.42);
+    }, 10000);
+
+    it('searches everywhere when nothing nearby matches', async () => {
+        fetchMock.mockResolvedValueOnce(respond([])).mockResolvedValueOnce(respond([chicago]));
+        const results = await searchAddresses('Grand Blvd Chicago', 5, { lat: 47.65, lon: -117.42 });
+        expect(results.map(r => r.label)).toEqual(['Grand Boulevard, Chicago, Illinois']);
+        expect(fetchMock.mock.calls[1][0]).not.toContain('viewbox');
+    }, 10000);
+
+    it('searches everywhere when it does not know where the rider is', async () => {
+        fetchMock.mockResolvedValueOnce(respond([chicago]));
+        await searchAddresses('Grand Blvd', 5);
+        expect(fetchMock.mock.calls[0][0]).not.toContain('viewbox');
+    }, 10000);
 });

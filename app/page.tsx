@@ -357,7 +357,10 @@ export default function Home() {
         setAddressResults([]);
     }, []);
 
-    // Debounced address autocomplete (#53): fetch candidate matches as the user types.
+    // Debounced address autocomplete (#53): fetch candidate matches as the user types,
+    // nearest the map's centre first.
+    const mapCenter = (b: { south: number; north: number; west: number; east: number } | null) =>
+        b ? { lat: (b.south + b.north) / 2, lon: (b.west + b.east) / 2 } : undefined;
     useEffect(() => {
         const q = addressInput.trim();
         if (q.length < 3) { setAddressResults([]); return; }
@@ -368,7 +371,7 @@ export default function Home() {
                 const res = await fetch('/api/geocode', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ address: q, limit: 5 })
+                    body: JSON.stringify({ address: q, limit: 5, near: mapCenter(bboxRef.current) })
                 });
                 const data = await res.json();
                 if (!cancelled) {

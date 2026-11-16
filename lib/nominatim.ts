@@ -197,11 +197,15 @@ interface GeocodeResult {
 
 // Forward geocode: return up to `limit` candidate matches for a free-text query.
 // Used for the start-point address autocomplete (#30/#53).
-export async function searchAddresses(query: string, limit = 5): Promise<GeocodeResult[]> {
-    const q = query.trim();
-    if (!q) return [];
+// Searches are first limited to roughly this far around `near` (about 70 miles), so
+// "Grand Blvd" finds the one in the rider's town before same-named streets elsewhere.
+// Nominatim's soft viewbox bias barely changes the order, so it's a hard bound.
+const NEARBY_LAT_DEG = 1;
+
+async function searchAddressesIn(q: string, limit: number, viewbox?: string): Promise<GeocodeResult[]> {
     await rateLimit();
-    const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(q)}&format=json&limit=${Math.min(10, Math.max(1, limit))}&accept-language=en`;
+    const area = viewbox ? `&viewbox=${viewbox}&bounded=1` : '';
+    const url = `${NOMINATIM_BASE}/search?q=${encodeURIComponent(q)}&format=json&limit=${Math.min(10, Math.max(1, limit))}&accept-language=en${area}`;
     const res = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
     if (!res.ok) {
         if (res.status === 429) throw new Error('Nominatim 429 (rate-limited)');
@@ -212,6 +216,20 @@ export async function searchAddresses(query: string, limit = 5): Promise<Geocode
     return arr
         .map((r: any) => ({ lat: parseFloat(r.lat), lon: parseFloat(r.lon), label: r.display_name ?? q }))
         .filter((r: GeocodeResult) => isFinite(r.lat) && isFinite(r.lon));
+}
+
+// Matches near `near` (the map the rider is looking at) when there are any; otherwise
+// anywhere, so typing another town's name still finds it.
+export async function searchAddresses(query: string, limit = 5, near?: { lat: number; lon: number }): Promise<GeocodeResult[]> {
+    const q = query.trim();
+    if (!q) return [];
+    if (near) {
+        const lonDeg = NEARBY_LAT_DEG / Math.max(0.2, Math.cos(near.lat * Math.PI / 180));
+        const viewbox = [near.lon - lonDeg, near.lat + NEARBY_LAT_DEG, near.lon + lonDeg, near.lat - NEARBY_LAT_DEG].map(n => n.toFixed(4)).join(',');
+        const nearby = await searchAddressesIn(q, limit, viewbox);
+        if (nearby.length > 0) return nearby;
+    }
+    return searchAddressesIn(q, limit);
 }
 
 // Street address for a point (the start point picked on the map, #30).
