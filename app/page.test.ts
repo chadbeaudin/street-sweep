@@ -33,6 +33,14 @@ describe('ridden-roads matching notice (#183)', () => {
     });
 });
 
+describe('suggest a route preference note (#227)', () => {
+    it('shows the note a hampered suggestion comes back with, and lets the rider dismiss it', () => {
+        expect(page).toContain('setSuggestNote(data.note ?? null)');
+        expect(page).toMatch(/\{suggestNote && \(/);
+        expect(page).toContain('onClick={() => setSuggestNote(null)}');
+    });
+});
+
 describe('suggest a route progress (#80)', () => {
     it('marks the picked start and shows a progress pill while the suggestion is planned', () => {
         expect(page).toMatch(/setSuggestStart\(start\);\s+setIsSuggesting\(true\)/);

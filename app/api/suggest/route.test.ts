@@ -4,7 +4,7 @@ jest.mock('@/lib/strava', () => ({ fetchRideTracks: jest.fn() }));
 jest.mock('@/lib/serverStravaCredentials', () => ({ resolveRequestStravaCredentials: jest.fn() }));
 jest.mock('@/lib/overpass', () => ({ fetchOSMData: jest.fn() }));
 jest.mock('@/lib/elevationFetch', () => ({ fetchElevationData: jest.fn() }));
-jest.mock('@/lib/suggestLoop', () => ({ planLoop: jest.fn(), loopReachM: jest.fn(), cachedRideGainM: jest.fn() }));
+jest.mock('@/lib/suggestLoop', () => ({ ...jest.requireActual('@/lib/suggestLoop'), planLoop: jest.fn(), loopReachM: jest.fn(), cachedRideGainM: jest.fn() }));
 jest.mock('@/lib/graph', () => ({
     StreetGraph: { getCachedGraphAsync: jest.fn(), reuseKey: jest.fn() },
     filterRiddenRoadsToBbox: jest.fn(),
@@ -38,7 +38,7 @@ beforeEach(() => {
     (loopReachM as jest.Mock).mockReturnValue(5000);
     (cachedRideGainM as jest.Mock).mockResolvedValue(350);
     graph.buildRiddenPenaltyMap.mockReturnValue(new Map());
-    (planLoop as jest.Mock).mockResolvedValue({ path: loopPath, distanceM: 29_000, gainM: 380, unriddenFraction: 0.7, score: 0 });
+    (planLoop as jest.Mock).mockResolvedValue({ path: loopPath, distanceM: 29_000, gainM: 380, unriddenFraction: 0.7, avoidedFraction: 0, score: 0 });
 });
 
 describe('POST /api/suggest (#80)', () => {
@@ -79,6 +79,19 @@ describe('POST /api/suggest (#80)', () => {
         await post({ start: HOME, activityMode: 'running' });
         expect(cachedRideGainM).toHaveBeenCalledWith(1, track(1, 'Far away', { lat: 40.76, lon: -111.89 }).poly, expect.any(Function));
         expect(fetchRideTracks).toHaveBeenCalledWith(expect.anything(), 'running');
+    });
+
+    it('points at the routing preferences that hampered a suggestion', async () => {
+        await post({ start: HOME, routingOptions: { avoidGravel: true } });
+        expect(lastResponse()[0].note).toBeNull();
+
+        (planLoop as jest.Mock).mockResolvedValue({ path: loopPath, distanceM: 29_000, gainM: 380, unriddenFraction: 0.7, avoidedFraction: 0.6, score: 0 });
+        await post({ start: HOME, routingOptions: { avoidGravel: true, avoidTrails: true } });
+        expect(lastResponse()[0].note).toMatch(/60%.*Avoid Gravel, Avoid Trails/);
+
+        (planLoop as jest.Mock).mockResolvedValue(null);
+        await post({ start: HOME, routingOptions: { avoidGravel: true } });
+        expect(lastResponse()[0].error).toMatch(/Avoid Gravel/);
     });
 
     it('says so when there are no rides, or no streets to plan on', async () => {

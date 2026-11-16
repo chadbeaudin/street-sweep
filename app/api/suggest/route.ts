@@ -9,7 +9,7 @@ import { StreetGraph, filterRiddenRoadsToBbox } from '@/lib/graph';
 import { polylineSetFingerprint } from '@/lib/riddenRoads';
 import { resolveRequestStravaCredentials } from '@/lib/serverStravaCredentials';
 import { findMostCommonRide, waypointsAlong, waypointSpacingM } from '@/lib/suggestRoute';
-import { planLoop, loopReachM, cachedRideGainM } from '@/lib/suggestLoop';
+import { planLoop, loopReachM, cachedRideGainM, activeAvoidPreferences, hamperedNote } from '@/lib/suggestLoop';
 import { LatLon, RoutingOptions, parseBody } from '@/lib/validation';
 
 const M_PER_DEG = 111_320;
@@ -52,16 +52,16 @@ async function handlePOST(request: Request) {
         const riddenPenalties = graph.buildRiddenPenaltyMap(routingOptions?.pointRoutePenalty || 4);
 
         const loop = await planLoop(graph, start, target, riddenPenalties, elevationsFor);
+        const preferences = activeAvoidPreferences(routingOptions);
         if (!loop) {
-            return NextResponse.json({ error: "Couldn't find streets to ride from there. Try a start point on a road." }, { status: 404 });
+            const hint = preferences.length > 0 ? ` Your routing preferences may be ruling roads out: ${preferences.join(', ')}.` : '';
+            return NextResponse.json({ error: `Couldn't find streets to ride from there. Try a start point on a road.${hint}` }, { status: 404 });
         }
 
         const waypoints = waypointsAlong(loop.path, waypointSpacingM(loop.distanceM));
         waypoints[0] = start;
         waypoints[waypoints.length - 1] = start;
-        return NextResponse.json({
-            waypoints,
-        });
+        return NextResponse.json({ waypoints, note: hamperedNote(loop, target, preferences) });
     } catch (error: any) {
         return errorResponse(error, 'Suggest route error:', "Couldn't suggest a route. Try again in a moment.");
     }

@@ -7,7 +7,7 @@ import { haversineM } from './geometry';
 // than coming in under), preferring unridden streets. Shape doesn't matter.
 
 export interface LoopTarget { distanceM: number; gainM: number }
-export interface LoopResult { path: [number, number][]; distanceM: number; gainM: number; unriddenFraction: number; score: number }
+export interface LoopResult { path: [number, number][]; distanceM: number; gainM: number; unriddenFraction: number; avoidedFraction: number; score: number }
 
 const M_PER_DEG = 111_320;
 // Roads wander: a triangle of straight sides r long rides about 1.3 × 3r.
@@ -53,6 +53,7 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
     const path: [number, number][] = [];
     let distanceM = 0;
     let unriddenM = 0;
+    let avoidedM = 0;
     for (let i = 1; i < nodes.length; i++) {
         if (nodes[i - 1] === nodes[i]) continue;
         const leg = graph.findClosestTargetCapped(nodes[i - 1]!, new Set([nodes[i]!]), penalties);
@@ -71,10 +72,11 @@ function routeTriangle(graph: StreetGraph, network: Set<string>, start: { lat: n
             const lengthM = haversineM(from.lat, from.lon, to.lat, to.lon);
             distanceM += lengthM;
             if (!link.data.isRidden) unriddenM += lengthM;
+            if (link.data.isAvoided) avoidedM += lengthM;
         }
     }
     if (path.length < 2) return null;
-    return { path, distanceM, unriddenFraction: distanceM > 0 ? unriddenM / distanceM : 0 };
+    return { path, distanceM, unriddenFraction: distanceM > 0 ? unriddenM / distanceM : 0, avoidedFraction: distanceM > 0 ? avoidedM / distanceM : 0 };
 }
 
 // Coarse enough to keep elevation lookups few, fine enough to compare whole loops' climbing (#223).
@@ -127,7 +129,7 @@ export async function planLoop(
     const maxR = loopReachM(target);
     // Snapping onto a stray path fragment would leave no way to reach the other corners.
     const network = graph.largestConnectedComponent();
-    const candidates: { path: [number, number][]; distanceM: number; unriddenFraction: number }[] = [];
+    const candidates: { path: [number, number][]; distanceM: number; unriddenFraction: number; avoidedFraction: number }[] = [];
     for (let k = 0; k < DIRECTIONS; k++) {
         const bearing = (360 / DIRECTIONS) * k;
         // Each direction is a few searches over a large graph; let other requests in between them (#216).
@@ -169,4 +171,30 @@ export async function planLoop(
         if (!best || loop.score < best.score) best = loop;
     }
     return best;
+}
+
+// A loop this far off the usual distance, or with this much of it on roads the rider
+// asked to avoid, means their routing preferences left too few roads to work with.
+const HAMPERED_DISTANCE_ERROR = 0.2;
+const HAMPERED_AVOIDED_FRACTION = 0.2;
+
+export function activeAvoidPreferences(options?: { avoidGravel?: boolean; avoidHighways?: boolean; avoidTrails?: boolean; avoidedRoads?: unknown[] }): string[] {
+    return [
+        options?.avoidGravel && 'Avoid Gravel',
+        options?.avoidHighways && 'Avoid Highways',
+        options?.avoidTrails && 'Avoid Trails',
+        options?.avoidedRoads?.length && 'roads you marked Avoid',
+    ].filter((name): name is string => typeof name === 'string');
+}
+
+// Tells the rider which of their preferences to look at when a suggestion came out poorly because of them.
+export function hamperedNote(loop: { distanceM: number; avoidedFraction: number }, target: LoopTarget, preferences: string[]): string | null {
+    if (preferences.length === 0) return null;
+    const offDistance = Math.abs(loop.distanceM - target.distanceM) / target.distanceM > HAMPERED_DISTANCE_ERROR;
+    const onAvoided = loop.avoidedFraction > HAMPERED_AVOIDED_FRACTION;
+    if (!offDistance && !onAvoided) return null;
+    const problem = onAvoided
+        ? `About ${Math.round(loop.avoidedFraction * 100)}% of this route is on roads your routing preferences avoid, because there are few other roads here.`
+        : "This route doesn't match your usual distance well, because your routing preferences rule out many roads here.";
+    return `${problem} Check Routing Options: ${preferences.join(', ')}.`;
 }

@@ -1,7 +1,7 @@
 import { StreetGraph } from './graph';
 import { OverpassResponse } from './types';
 import { haversineM } from './geometry';
-import { offsetPoint, scoreLoop, planLoop, loopReachM, measureGainM, cachedRideGainM } from './suggestLoop';
+import { offsetPoint, scoreLoop, planLoop, loopReachM, measureGainM, cachedRideGainM, activeAvoidPreferences, hamperedNote } from './suggestLoop';
 
 // 41×41 street grid at ~200 m spacing (8 km square) with the start in the middle.
 const N = 41, STEP = 0.0018, LAT0 = 47.6, LON0 = -117.4;
@@ -124,5 +124,30 @@ describe('cachedRideGainM (#223)', () => {
         expect(counting).toHaveBeenCalledTimes(1);
         await cachedRideGainM(8, overHill, counting);
         expect(counting).toHaveBeenCalledTimes(2);
+    });
+});
+
+describe('hamperedNote', () => {
+    const target = { distanceM: 40_000, gainM: 300 };
+
+    it('lists the avoid preferences that are switched on', () => {
+        expect(activeAvoidPreferences({ avoidGravel: true, avoidHighways: false, avoidedRoads: [[]] })).toEqual(['Avoid Gravel', 'roads you marked Avoid']);
+        expect(activeAvoidPreferences({ avoidedRoads: [] })).toEqual([]);
+    });
+
+    it('says nothing for a good loop, or when no preference could be to blame', () => {
+        expect(hamperedNote({ distanceM: 41_000, avoidedFraction: 0.05 }, target, ['Avoid Gravel'])).toBeNull();
+        expect(hamperedNote({ distanceM: 10_000, avoidedFraction: 0 }, target, [])).toBeNull();
+    });
+
+    it('names the preferences when much of the loop is on avoided roads or its distance is far off', () => {
+        expect(hamperedNote({ distanceM: 41_000, avoidedFraction: 0.62 }, target, ['Avoid Gravel'])).toMatch(/62%.*Routing Options: Avoid Gravel/);
+        expect(hamperedNote({ distanceM: 10_000, avoidedFraction: 0 }, target, ['Avoid Trails'])).toMatch(/usual distance.*Avoid Trails/);
+    });
+
+    it('reports how much of a planned loop is on avoided roads', async () => {
+        const gravel = buildGrid('gravel', { avoidGravel: true });
+        const loop = (await planLoop(gravel, START, { distanceM: 8_000, gainM: 0 }, new Map(), async pts => pts.map(() => 0)))!;
+        expect(loop.avoidedFraction).toBeCloseTo(1, 2);
     });
 });
