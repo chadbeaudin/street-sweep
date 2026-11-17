@@ -237,3 +237,37 @@ describe('POST /api/generate draw order (#52)', () => {
         expect(mockJson.mock.calls[0][1]?.status).toBe(400);
     });
 });
+
+describe('POST /api/generate imported route (#35)', () => {
+    const track: [number, number][] = [[-104.705, 39.02], [-104.7, 39.02], [-104.695, 39.02]];
+    const graphMock = () => {
+        const graph = {
+            solveCPP: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]),
+            optimizeAlongPath: jest.fn().mockReturnValue([{ lat: 39.02, lon: -104.7 }]),
+        };
+        mockedFetchOSM.mockResolvedValueOnce({ elements: [{ type: 'node', id: 1 }] } as any);
+        mockedGetCachedGraph.mockResolvedValueOnce(graph as any);
+        mockedFetchElevation.mockResolvedValueOnce({ elevations: [0], sampledCoords: [[-104.7, 39.02]] } as any);
+        mockedCalcElevationProfile.mockReturnValueOnce([{ distance: 1 } as any]);
+        return graph;
+    };
+
+    it('re-routes the imported track within the detour tolerance instead of solving a point route', async () => {
+        const graph = graphMock();
+        await POST(makeRequest({ bbox: validBbox, importedRoute: track, detourToleranceM: 250, routingOptions: { riddenPenalty: 8 } }));
+        expect(graph.optimizeAlongPath).toHaveBeenCalledWith(track, 250, 8);
+        expect(graph.solveCPP).not.toHaveBeenCalled();
+    });
+
+    it('defaults the detour tolerance to 100 m', async () => {
+        const graph = graphMock();
+        await POST(makeRequest({ bbox: validBbox, importedRoute: track }));
+        expect(graph.optimizeAlongPath).toHaveBeenCalledWith(track, 100, 15);
+    });
+
+    it('rejects a detour tolerance beyond the slider', async () => {
+        mockJson.mockClear();
+        await POST(makeRequest({ bbox: validBbox, importedRoute: track, detourToleranceM: 5000 }));
+        expect(mockJson.mock.calls[0][1]?.status).toBe(400);
+    });
+});

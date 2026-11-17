@@ -2,7 +2,7 @@
 
 import React, { useEffect, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle, Tooltip } from 'react-leaflet';
+import { MapContainer, TileLayer, Polyline, useMap, useMapEvents, Marker, Rectangle, Tooltip, Pane } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import { Plus, Minus, LocateFixed } from 'lucide-react';
@@ -93,6 +93,8 @@ interface MapProps {
     onRouteUpdate?: (route: [number, number, number?, number?][] | null) => void;
     preAreaPointCount?: number | null;
     isImportedRoute?: boolean;
+    // The imported route as it was, shown faintly under its optimized version (#35).
+    importedOverlay?: [number, number][] | null;
     // Each new object pans/zooms the map to these bounds once.
     fitBoundsRequest?: { south: number; west: number; north: number; east: number } | null;
     // Where a "Suggest a Route" start was picked, shown until the suggestion arrives.
@@ -499,7 +501,7 @@ function EraserTool({ route, onRouteUpdate }: { route: [number, number, number?,
     return null;
 }
 
-const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, fitBoundsRequest, suggestStart, onRouteHover, isMarkingRoads = false, markKind, preferredRoads, onPreferredRoadDelete, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
+const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stravaRoads, precomputedRidden, matchedRiddenTiles, startPoint, isPickingStart, onStartPick, selectedPoints, onPointAdd, onPointMove, onPointMoveStart, onPointMoveEnd, onPointDelete, onRouteSegmentInsert, manualRoute, allRoads, isSelectionMode = false, isLassoMode = false, selectionBoxes, selectionPolygons, onSelectionChange, onSelectionPolygonChange, onSelectionModeChange, onLassoModeChange, isEraserMode = false, onRouteUpdate, preAreaPointCount, isImportedRoute = false, importedOverlay, fitBoundsRequest, suggestStart, onRouteHover, isMarkingRoads = false, markKind, preferredRoads, onPreferredRoadDelete, onAvoidPointAdd, avoidedRoads, avoidDraftPath, avoidDraftPoints, onAvoidRoadDelete, isAvoidEraserMode = false, onAvoidedRoadsChange }) => {
     const [drawingBox, setDrawingBox] = React.useState<{ north: number; south: number; east: number; west: number } | null>(null);
     const [drawingLasso, setDrawingLasso] = React.useState<[number, number][] | null>(null);
     const mapRef = React.useRef<L.Map | null>(null);
@@ -1132,6 +1134,21 @@ const Map: React.FC<MapProps> = ({ bbox, onBBoxChange, route, hoveredPoint, stra
                         interactive={false}
                     />
                 ))}
+
+                {/* The imported route before optimizing, for before/after comparison (#35) */}
+                {/* Own pane so ridden-road layers repainting on pan/zoom can't bury it. */}
+                {importedOverlay && importedOverlay.length > 1 && (
+                    <Pane name="imported-overlay" style={{ zIndex: 450 }}>
+                        <Polyline
+                            positions={importedOverlay.map(p => [p[1], p[0]] as [number, number])}
+                            color="#7C3AED"
+                            weight={5}
+                            opacity={0.6}
+                            dashArray="6, 8"
+                            interactive={false}
+                        />
+                    </Pane>
+                )}
 
                 {/* Generated route - Normal segments */}
                 {normalSegments.map((segment, idx) => (

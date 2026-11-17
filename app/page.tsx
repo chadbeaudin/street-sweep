@@ -24,6 +24,7 @@ import { ExportTipsDialog } from '@/components/ExportTipsDialog';
 import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
+import { DetourToleranceDialog } from '@/components/DetourToleranceDialog';
 import { StravaCreditToggle } from '@/components/StravaCreditToggle';
 import { MaintenanceNotice } from '@/components/MaintenanceNotice';
 import { useUnits } from '@/components/UnitsContext';
@@ -246,6 +247,12 @@ export default function Home() {
     const [isImportedRoute, setIsImportedRoute] = useState(false);
     const importFileRef = useRef<HTMLInputElement>(null);
     const isImportedRouteRef = useRef(false);
+    // The imported route's full track (#35): what Regenerate optimizes, and the faint
+    // overlay once it has.
+    const importedTrackRef = useRef<[number, number][] | null>(null);
+    const [importedOverlay, setImportedOverlay] = useState<[number, number][] | null>(null);
+    const [showDetourDialog, setShowDetourDialog] = useState(false);
+    const [detourToleranceM, setDetourToleranceM] = useState(100);
     const [activeSteps, setActiveSteps] = useState(0);
     const [isAutoGenerating, setIsAutoGenerating] = useState(false);
     const clickChainRef = useRef<Promise<void>>(Promise.resolve());
@@ -702,9 +709,10 @@ export default function Home() {
         };
     }, [bbox]);
 
-    const handleGenerate = useCallback(async (isSilent = false) => {
+    const handleGenerate = useCallback(async (isSilent = false, detourM?: number) => {
         // Don't auto-regenerate while the imported route is the active display
         if (isSilent && isImportedRouteRef.current) return;
+        const importedTrack = detourM !== undefined ? importedTrackRef.current : null;
 
         const currentBbox = bboxRef.current;
         if (!currentBbox) {
@@ -778,6 +786,9 @@ export default function Home() {
                 // between them in the order they were drawn.
                 manualSegments: manualRouteRef.current,
                 areaAnchors: areaAnchorsRef.current,
+                // Re-route an imported track onto nearby unridden streets (#35).
+                importedRoute: importedTrack,
+                detourToleranceM: importedTrack ? detourM : undefined,
             };
 
             console.log('[handleGenerate] Sending request to build route...');
@@ -803,6 +814,7 @@ export default function Home() {
                 setRoute(feature.geometry.coordinates);
                 setElevationData(feature.properties.elevationProfile);
                 setTotalDistance(feature.properties.totalDistance);
+                if (importedTrack) setImportedOverlay(importedTrack);
 
                 // When an area/lasso sweep has no real waypoint placed after it yet,
                 // the coverage trail's end is a server-computed point the user has
@@ -1118,6 +1130,8 @@ export default function Home() {
         // Mark as imported so auto-generation is suppressed
         isImportedRouteRef.current = true;
         setIsImportedRoute(true);
+        importedTrackRef.current = coords.map(c => [c[0], c[1]]);
+        setImportedOverlay(null);
 
         // Update all state
         setSelectedPoints(newPoints);
@@ -1676,6 +1690,8 @@ export default function Home() {
 
         // Reset state
         setIsImportedRoute(false);
+        importedTrackRef.current = null;
+        setImportedOverlay(null);
         setSelectedPoints([]);
         setManualRoute([]);
         setHistory([]);
@@ -2261,7 +2277,7 @@ export default function Home() {
                         </button>
                     )}
                     <button
-                        onClick={() => handleGenerate()}
+                        onClick={() => isImportedRouteRef.current ? setShowDetourDialog(true) : handleGenerate()}
                         disabled={loading}
                         className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
                     >
@@ -2401,7 +2417,7 @@ export default function Home() {
                 {/* Mobile bottom action bar (Task D1: Option 2) */}
                 <div className="md:hidden absolute inset-x-0 bottom-0 z-[1010] flex items-center gap-2 px-3 pt-2 pb-2 safe-b bg-white/92 backdrop-blur border-t border-gray-200">
                     <button
-                        onClick={() => handleGenerate()}
+                        onClick={() => isImportedRouteRef.current ? setShowDetourDialog(true) : handleGenerate()}
                         disabled={loading}
                         className="flex-1 flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
                     >
@@ -2788,6 +2804,7 @@ export default function Home() {
                     onAvoidedRoadsChange={setAvoidedRoads}
                     onRouteUpdate={setRoute}
                     isImportedRoute={isImportedRoute}
+                    importedOverlay={importedOverlay}
                     fitBoundsRequest={fitBoundsRequest}
                     suggestStart={suggestStart}
                     onRouteHover={setRouteHoverPoint}
@@ -2835,6 +2852,12 @@ export default function Home() {
                     onContinue={handleRwgpsSaveConfirm}
                 />
 
+                <DetourToleranceDialog
+                    isOpen={showDetourDialog}
+                    initialMeters={detourToleranceM}
+                    onClose={() => setShowDetourDialog(false)}
+                    onConfirm={(m) => { setDetourToleranceM(m); setShowDetourDialog(false); handleGenerate(false, m); }}
+                />
                 <RouteNameDialog
                     isOpen={showRouteNameDialog}
                     initialName={routeName}

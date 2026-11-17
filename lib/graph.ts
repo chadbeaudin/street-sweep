@@ -93,6 +93,9 @@ export function graphCacheSize(): number {
 
 // Default penalty for previously-ridden roads. Can be overridden per-request.
 const DEFAULT_RIDDEN_PENALTY = 15;
+// GPS traces sit a little off the road centreline, so the imported route's own streets
+// always count as inside the corridor even at a detour tolerance of zero.
+const IMPORT_SNAP_SLACK_M = 30;
 // Odd-node (T-join) matching penalty for ridden roads. Deliberately much lower than
 // DEFAULT_RIDDEN_PENALTY: that value made the matcher double back on long unridden
 // required roads instead of taking a short ridden connector (#48). But using no
@@ -2204,6 +2207,115 @@ export class StreetGraph {
             }
         }
         return deduped;
+    }
+
+    // Links whose both ends lie within `meters` of `path` ([lat, lon] points). The path is
+    // sampled every half cell so distance-to-nearest-sample stands in for distance-to-line.
+    public linksNearPath(path: [number, number][], meters: number): Set<string> {
+        if (!this.edgeIndex) this.buildEdgeIndex();
+        const samples: [number, number][] = [];
+        const stepDeg = GRID_DEG / 2;
+        for (let i = 0; i < path.length; i++) {
+            if (i === 0) { samples.push(path[i]); continue; }
+            const [lat0, lon0] = path[i - 1];
+            const [lat1, lon1] = path[i];
+            const span = Math.max(Math.abs(lat1 - lat0), Math.abs(lon1 - lon0));
+            const steps = Math.max(1, Math.ceil(span / stepDeg));
+            for (let s = 1; s <= steps; s++) samples.push([lat0 + (lat1 - lat0) * s / steps, lon0 + (lon1 - lon0) * s / steps]);
+        }
+        const sampleCells = new Map<string, [number, number][]>();
+        for (const p of samples) {
+            const key = this.cellKey(p[0], p[1]);
+            let bucket = sampleCells.get(key);
+            if (!bucket) { bucket = []; sampleCells.set(key, bucket); }
+            bucket.push(p);
+        }
+        const ring = Math.ceil(meters / (GRID_DEG * 111000)) + 1;
+        const nearPath = (lat: number, lon: number): boolean => {
+            const cLat = Math.floor(lat / GRID_DEG);
+            const cLon = Math.floor(lon / GRID_DEG);
+            for (let dLat = -ring; dLat <= ring; dLat++) {
+                for (let dLon = -ring; dLon <= ring; dLon++) {
+                    const bucket = sampleCells.get(`${cLat + dLat}:${cLon + dLon}`);
+                    if (!bucket) continue;
+                    for (const [sLat, sLon] of bucket) if (this.haversine(lat, lon, sLat, sLon) <= meters) return true;
+                }
+            }
+            return false;
+        };
+        const nodeNear = new Map<string, boolean>();
+        const isNodeNear = (id: string): boolean => {
+            let v = nodeNear.get(id);
+            if (v === undefined) {
+                const n = this.graph.getNode(id);
+                v = !!n && nearPath(n.data.lat, n.data.lon);
+                nodeNear.set(id, v);
+            }
+            return v;
+        };
+        const links = new Set<string>();
+        for (const key of sampleCells.keys()) {
+            const [cLat, cLon] = key.split(':').map(Number);
+            for (let dLat = -ring; dLat <= ring; dLat++) {
+                for (let dLon = -ring; dLon <= ring; dLon++) {
+                    const bucket = this.edgeIndex!.get(`${cLat + dLat}:${cLon + dLon}`);
+                    if (!bucket) continue;
+                    for (const link of bucket) {
+                        if (isNodeNear(link.fromId) && isNodeNear(link.toId)) {
+                            links.add(link.id);
+                            const back = this.graph.getLink(link.toId, link.fromId);
+                            if (back) links.add(back.id);
+                        }
+                    }
+                }
+            }
+        }
+        return links;
+    }
+
+    // Re-routes an imported route ([lon, lat] points) to pick up unridden streets, straying
+    // at most `detourM` from it (#35). Anchors along the route are routed in turn inside a
+    // corridor that wide, with ridden streets penalised so a fresh parallel street wins.
+    public optimizeAlongPath(imported: [number, number][], detourM: number, riddenPenalty: number = DEFAULT_RIDDEN_PENALTY): { lat: number, lon: number, hasConstruction?: boolean }[] {
+        const path: [number, number][] = imported.map(p => [p[1], p[0]]);
+        if (path.length < 2) return [];
+        const corridor = this.linksNearPath(path, detourM + IMPORT_SNAP_SLACK_M);
+        const corridorNodes = new Set<string>();
+        this.graph.forEachLink((link: any) => {
+            if (corridor.has(link.id)) { corridorNodes.add(link.fromId); corridorNodes.add(link.toId); }
+        });
+        if (corridorNodes.size === 0) return [];
+        const penalties = this.buildRiddenPenaltyMap(riddenPenalty);
+        let riddenInCorridor = 0;
+        for (const id of corridor) if (penalties.has(id)) riddenInCorridor++;
+        console.log(`${ts()} Optimizing imported route: ${path.length} pts, detour ${detourM}m, corridor ${corridor.size} links (${riddenInCorridor} ridden), ${corridorNodes.size} nodes.`);
+
+        const spacingM = Math.min(3000, Math.max(400, 4 * detourM));
+        const anchors: string[] = [];
+        let since = Infinity;
+        for (let i = 0; i < path.length; i++) {
+            if (i > 0) since += this.haversine(path[i - 1][0], path[i - 1][1], path[i][0], path[i][1]);
+            if (since < spacingM && i !== path.length - 1) continue;
+            since = 0;
+            const id = this.findClosestNode(path[i][0], path[i][1], corridorNodes);
+            if (id && anchors[anchors.length - 1] !== id) anchors.push(id);
+        }
+
+        const route: { lat: number, lon: number, hasConstruction?: boolean }[] = [];
+        const push = (id: string, hasConstruction?: boolean) => {
+            const n = this.graph.getNode(id);
+            if (!n) return;
+            const prev = route[route.length - 1];
+            if (prev && prev.lat === n.data.lat && prev.lon === n.data.lon) return;
+            route.push(hasConstruction ? { lat: n.data.lat, lon: n.data.lon, hasConstruction } : { lat: n.data.lat, lon: n.data.lon });
+        };
+        if (anchors.length > 0) push(anchors[0]);
+        for (let i = 1; i < anchors.length; i++) {
+            let leg = this.findPath(anchors[i - 1], anchors[i], corridor, penalties);
+            if (leg.length === 0) leg = this.findPath(anchors[i - 1], anchors[i], undefined, penalties);
+            for (const seg of leg) push(seg.idNext, this.graph.getLink(seg.id, seg.idNext)?.data?.hasConstruction || undefined);
+        }
+        return route;
     }
 
     // Rides each leg in turn: the approach points, then that leg's areas, ending

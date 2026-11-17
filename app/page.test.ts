@@ -107,3 +107,17 @@ describe('preferred roads (#46)', () => {
         expect(page).toContain("toggleMarkMode('prefer')");
     });
 });
+
+describe('optimize an imported route (#35)', () => {
+    it('asks for a detour tolerance before regenerating an imported route', () => {
+        expect(page).toContain("onClick={() => isImportedRouteRef.current ? setShowDetourDialog(true) : handleGenerate()}");
+        expect(page).toContain("handleGenerate(false, m)");
+    });
+
+    it('sends the imported track and tolerance, and keeps the original as an overlay', () => {
+        expect(page).toContain("importedRoute: importedTrack,");
+        expect(page).toContain("detourToleranceM: importedTrack ? detourM : undefined,");
+        expect(page).toContain("if (importedTrack) setImportedOverlay(importedTrack);");
+        expect(page).toContain("importedOverlay={importedOverlay}");
+    });
+});
