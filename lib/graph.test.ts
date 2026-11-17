@@ -2200,3 +2200,52 @@ describe('StreetGraph.getCachedGraph metrics (#117)', () => {
         expect(lookups.mock.calls).toEqual([['graph', 'miss'], ['graph', 'memory']]);
     });
 });
+
+describe('optimizeAlongPath (#35)', () => {
+    // Two parallel east-west streets 100 m apart, joined at both ends. The south
+    // street has been ridden; an imported route runs along it.
+    const LAT = 47.6, LON = -117.4, DLAT = 0.0009, DLON = 0.0033; // ~100 m, ~250 m
+    const data = (): OverpassResponse => ({
+        version: 0.6, generator: 'test', osm3s: { timestamp_osm_base: '', copyright: '' },
+        elements: [
+            { type: 'node', id: 1, lat: LAT, lon: LON },
+            { type: 'node', id: 2, lat: LAT, lon: LON + DLON },
+            { type: 'node', id: 3, lat: LAT, lon: LON + 2 * DLON },
+            { type: 'node', id: 4, lat: LAT + DLAT, lon: LON },
+            { type: 'node', id: 5, lat: LAT + DLAT, lon: LON + DLON },
+            { type: 'node', id: 6, lat: LAT + DLAT, lon: LON + 2 * DLON },
+            { type: 'way', id: 100, nodes: [1, 2, 3], tags: { highway: 'residential' } },
+            { type: 'way', id: 101, nodes: [4, 5, 6], tags: { highway: 'residential' } },
+            { type: 'way', id: 102, nodes: [1, 4], tags: { highway: 'residential' } },
+            { type: 'way', id: 103, nodes: [3, 6], tags: { highway: 'residential' } },
+        ],
+    });
+    // Ridden roads are [lat, lon]; an imported route is [lon, lat].
+    const ridden: [number, number][][] = [[[LAT, LON], [LAT, LON + DLON], [LAT, LON + 2 * DLON]]];
+    const imported: [number, number][] = [[LON, LAT], [LON + DLON, LAT], [LON + 2 * DLON, LAT]];
+    const onNorthStreet = (route: { lat: number }[]) => route.some(p => Math.abs(p.lat - (LAT + DLAT)) < 1e-9);
+
+    it('takes the unridden parallel street when it is within the detour tolerance', () => {
+        const graph = new StreetGraph();
+        graph.buildFromOSM(data(), ridden);
+        const route = graph.optimizeAlongPath(imported, 200);
+        expect(route[0]).toEqual({ lat: LAT, lon: LON });
+        expect(route[route.length - 1]).toEqual({ lat: LAT, lon: LON + 2 * DLON });
+        expect(onNorthStreet(route)).toBe(true);
+    });
+
+    it('stays on the imported route when the tolerance is zero', () => {
+        const graph = new StreetGraph();
+        graph.buildFromOSM(data(), ridden);
+        const route = graph.optimizeAlongPath(imported, 0);
+        expect(route.map(p => p.lon)).toEqual([LON, LON + DLON, LON + 2 * DLON]);
+        expect(onNorthStreet(route)).toBe(false);
+    });
+
+    it('keeps to the imported route when nothing nearby is unridden', () => {
+        const graph = new StreetGraph();
+        graph.buildFromOSM(data(), [...ridden, [[LAT + DLAT, LON], [LAT + DLAT, LON + DLON], [LAT + DLAT, LON + 2 * DLON]]]);
+        const route = graph.optimizeAlongPath(imported, 200);
+        expect(onNorthStreet(route)).toBe(false);
+    });
+});

@@ -30,6 +30,9 @@ const GenerateBody = z.object({
     // Draw order (#52): the road path between each pair of waypoints, and how
     // many waypoints existed when each area was drawn.
     manualSegments: PolylineList.optional().nullable(),
+    // An imported route to re-route onto nearby unridden streets (#35), and how far it may stray.
+    importedRoute: Polyline.optional().nullable(),
+    detourToleranceM: z.number().finite().min(0).max(500).optional(),
     areaAnchors: z.object({
         boxes: z.array(z.number().int().min(0)).max(500),
         polygons: z.array(z.number().int().min(0)).max(500),
@@ -93,6 +96,16 @@ async function handlePOST(request: Request) {
                 maxLat = Math.max(maxLat, p[1]);
                 minLon = Math.min(minLon, p[0]);
                 maxLon = Math.max(maxLon, p[0]);
+            });
+        }
+
+        const importedRoute = check.data.importedRoute ?? null;
+        if (importedRoute) {
+            importedRoute.forEach(([lon, lat]) => {
+                minLat = Math.min(minLat, lat);
+                maxLat = Math.max(maxLat, lat);
+                minLon = Math.min(minLon, lon);
+                maxLon = Math.max(maxLon, lon);
             });
         }
 
@@ -172,7 +185,7 @@ async function handlePOST(request: Request) {
         // extra requests (the common case: one compact selection).
         const regionPaths: [number, number][][] = [];
         // manualRoute/exitRoute/approachRoute are [lon, lat]; regions want [lat, lon].
-        for (const path of [manualRoute, exitRoute, approachRoute]) {
+        for (const path of [manualRoute, exitRoute, approachRoute, importedRoute]) {
             if (path && path.length > 0) regionPaths.push(path.map((p: [number, number]) => [p[1], p[0]] as [number, number]));
         }
         const areaBboxes: BoundingBox[] = [];
@@ -264,7 +277,9 @@ async function handlePOST(request: Request) {
             && anchors.boxes.length === (selectionBoxes?.length ?? 0)
             && anchors.polygons.length === selectionPolygons.length
             && distinctAnchors(anchors).length > 1;
-        const circuit = ordered
+        const circuit = importedRoute
+            ? graph.optimizeAlongPath(importedRoute as [number, number][], check.data.detourToleranceM ?? 100, riddenPenalty)
+            : ordered
             ? graph.solveOrderedLegs(
                 buildAreaLegs(selectedPoints ?? [], (check.data.manualSegments ?? []) as [number, number][][], selectionBoxes ?? [], selectionPolygons, anchors!, persistentStart && typeof persistentStart.lat === 'number' ? persistentStart : null),
                 riddenPenalty, boxElasticityMeters,
