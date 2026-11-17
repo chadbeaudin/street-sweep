@@ -26,7 +26,7 @@ async function handlePOST(req: Request) {
         if (!address?.trim()) {
             return NextResponse.json({ error: 'address is required' }, { status: 400 });
         }
-        const results = await searchAddresses(address, limit ?? 5, near);
+        const results = await searchAddresses(address, limit ?? 5, near, req.signal);
         return NextResponse.json({ results });
     } catch (e: any) {
         return errorResponse(e, 'Geocode error:', "Address search isn't available right now. Try again in a moment.");

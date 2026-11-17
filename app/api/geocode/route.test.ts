@@ -27,14 +27,14 @@ describe('POST /api/geocode', () => {
         (searchAddresses as jest.Mock).mockResolvedValue([{ lat: 1, lon: 2, label: 'x' }]);
         const res = await post({ address: 'Bend', limit: 3 });
 
-        expect(searchAddresses).toHaveBeenCalledWith('Bend', 3, undefined);
+        expect(searchAddresses).toHaveBeenCalledWith('Bend', 3, undefined, expect.anything());
         expect(res._data).toEqual({ results: [{ lat: 1, lon: 2, label: 'x' }] });
     });
 
     it('passes where the rider is looking, so nearby matches come first', async () => {
         (searchAddresses as jest.Mock).mockResolvedValue([]);
         await post({ address: 'Grand Blvd', limit: 5, near: { lat: 47.65, lon: -117.42 } });
-        expect(searchAddresses).toHaveBeenCalledWith('Grand Blvd', 5, { lat: 47.65, lon: -117.42 });
+        expect(searchAddresses).toHaveBeenCalledWith('Grand Blvd', 5, { lat: 47.65, lon: -117.42 }, expect.anything());
     });
 
     it('rejects a request with neither a point nor an address', async () => {

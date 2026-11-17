@@ -54,7 +54,7 @@ describe('searchAddresses', () => {
 
     beforeEach(() => fetchMock.mockReset());
 
-    it('looks near the map first, inside a box about 70 miles around it', async () => {
+    it('looks near the map first, inside a box about 70 miles each way', async () => {
         fetchMock.mockResolvedValueOnce(respond([spokane]));
         const results = await searchAddresses('Grand Blvd', 5, { lat: 47.65, lon: -117.42 });
         expect(results.map(r => r.label)).toEqual(['South Grand Boulevard, Spokane, Washington']);
@@ -72,6 +72,14 @@ describe('searchAddresses', () => {
         const results = await searchAddresses('Grand Blvd Chicago', 5, { lat: 47.65, lon: -117.42 });
         expect(results.map(r => r.label)).toEqual(['Grand Boulevard, Chicago, Illinois']);
         expect(fetchMock.mock.calls[1][0]).not.toContain('viewbox');
+    }, 10000);
+
+    it('skips the wider search when the request was abandoned', async () => {
+        const controller = new AbortController();
+        fetchMock.mockImplementationOnce(async () => { controller.abort(); return respond([]); });
+        const results = await searchAddresses('Grand Blvd', 5, { lat: 47.65, lon: -117.42 }, controller.signal);
+        expect(results).toEqual([]);
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     }, 10000);
 
     it('searches everywhere when it does not know where the rider is', async () => {

@@ -61,6 +61,9 @@ import { reportClientError } from '@/lib/clientErrors';
 
 const RIDDEN_PREFETCH_FRACTION = 0.5;
 
+const mapCenter = (b: { south: number; north: number; west: number; east: number } | null) =>
+    b ? { lat: (b.south + b.north) / 2, lon: (b.west + b.east) / 2 } : undefined;
+
 export default function Home() {
     const { data: session, status: sessionStatus } = useSession();
     const [bbox, setBbox] = useState<{ south: number; west: number; north: number; east: number } | null>(null);
@@ -358,20 +361,21 @@ export default function Home() {
     }, []);
 
     // Debounced address autocomplete (#53): fetch candidate matches as the user types,
-    // nearest the map's centre first.
-    const mapCenter = (b: { south: number; north: number; west: number; east: number } | null) =>
-        b ? { lat: (b.south + b.north) / 2, lon: (b.west + b.east) / 2 } : undefined;
+    // nearest the map's centre first. Superseded keystrokes abort their request so
+    // the server doesn't spend Nominatim slots on them.
     useEffect(() => {
         const q = addressInput.trim();
         if (q.length < 3) { setAddressResults([]); return; }
         let cancelled = false;
+        const controller = new AbortController();
         setAddressLoading(true);
         const t = setTimeout(async () => {
             try {
                 const res = await fetch('/api/geocode', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ address: q, limit: 5, near: mapCenter(bboxRef.current) })
+                    body: JSON.stringify({ address: q, limit: 5, near: mapCenter(bboxRef.current) }),
+                    signal: controller.signal,
                 });
                 const data = await res.json();
                 if (!cancelled) {
@@ -384,7 +388,7 @@ export default function Home() {
                 if (!cancelled) setAddressLoading(false);
             }
         }, 350);
-        return () => { cancelled = true; clearTimeout(t); setAddressLoading(false); };
+        return () => { cancelled = true; controller.abort(); clearTimeout(t); setAddressLoading(false); };
     }, [addressInput]);
 
     // "Pick on map": the next map click sets the start point instead of a waypoint.
