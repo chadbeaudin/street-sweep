@@ -11,20 +11,22 @@ const Body = z.object({
     limit: z.number().int().min(1).max(10).optional(),
     lat: z.number().finite().min(-90).max(90).optional(),
     lon: z.number().finite().min(-180).max(180).optional(),
+    // Where the rider is looking, so nearby matches come first.
+    near: z.object({ lat: z.number().finite().min(-90).max(90), lon: z.number().finite().min(-180).max(180) }).optional(),
 });
 
 async function handlePOST(req: Request) {
     try {
         const parsed = await parseBody(req, Body);
         if ('error' in parsed) return parsed.error;
-        const { address, limit, lat, lon } = parsed.data;
+        const { address, limit, lat, lon, near } = parsed.data;
         if (lat !== undefined && lon !== undefined) {
             return NextResponse.json({ label: await reverseAddress(lat, lon) });
         }
         if (!address?.trim()) {
             return NextResponse.json({ error: 'address is required' }, { status: 400 });
         }
-        const results = await searchAddresses(address, limit ?? 5);
+        const results = await searchAddresses(address, limit ?? 5, near, req.signal);
         return NextResponse.json({ results });
     } catch (e: any) {
         return errorResponse(e, 'Geocode error:', "Address search isn't available right now. Try again in a moment.");
