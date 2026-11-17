@@ -1,9 +1,25 @@
 import fs from 'fs';
 import { test, expect } from '@playwright/test';
-import { E2E_BASE_URL, E2E_SESSION_TOKEN } from './env';
+import { haversineM } from '../lib/geometry';
+import { E2E_BASE_URL, E2E_ENV, E2E_LIVE, E2E_MAP_CENTER, E2E_SESSION_TOKEN } from './env';
 
-// The fixture area's bounds (e2e/fixtures/osm.json).
-const FIXTURE_BOUNDS = { south: 47.65, west: -117.4, north: 47.66, east: -117.37 };
+// Covers both clicks (about 500 m either side of the centre) plus room for the route to wander.
+const MAX_ROUTE_RADIUS_M = 1500;
+
+// The app falls back to public Overpass mirrors and Open-Meteo, which would hide a down NAS, so probe them directly.
+test('the live street and elevation services answer', async ({ request }) => {
+    test.skip(!E2E_LIVE, 'live run only');
+    const { latitude, longitude } = E2E_MAP_CENTER;
+    const overpass = await request.post(E2E_ENV.OVERPASS_URL, {
+        form: { data: `[out:json][timeout:25];way["highway"](around:200,${latitude},${longitude});out ids;` },
+    });
+    expect(overpass.status()).toBe(200);
+    expect((await overpass.json()).elements.length).toBeGreaterThan(0);
+
+    const elevation = await request.get(`${E2E_ENV.OPEN_TOPO_URL}/v1/copernicus90?locations=${latitude},${longitude}`);
+    expect(elevation.status()).toBe(200);
+    expect((await elevation.json()).results[0].elevation).toBeGreaterThan(0);
+});
 
 test('a signed-in rider sees their rides, routes between two points and exports a GPX', async ({ page, context }) => {
     // Map tiles and anything else off-box are dropped so the run never depends on the network.
@@ -36,9 +52,6 @@ test('a signed-in rider sees their rides, routes between two points and exports 
     const points = [...gpx.matchAll(/<trkpt lat="([-\d.]+)" lon="([-\d.]+)"/g)].map(m => ({ lat: Number(m[1]), lon: Number(m[2]) }));
     expect(points.length).toBeGreaterThan(10);
     for (const p of points) {
-        expect(p.lat).toBeGreaterThanOrEqual(FIXTURE_BOUNDS.south);
-        expect(p.lat).toBeLessThanOrEqual(FIXTURE_BOUNDS.north);
-        expect(p.lon).toBeGreaterThanOrEqual(FIXTURE_BOUNDS.west);
-        expect(p.lon).toBeLessThanOrEqual(FIXTURE_BOUNDS.east);
+        expect(haversineM(p.lat, p.lon, E2E_MAP_CENTER.latitude, E2E_MAP_CENTER.longitude)).toBeLessThan(MAX_ROUTE_RADIUS_M);
     }
 });
