@@ -35,6 +35,8 @@ test('a signed-in rider sees their rides, routes between two points and exports 
     expect((await rides.json()).riddenRoads).toHaveLength(2);
 
     await page.getByRole('button', { name: 'Cycling' }).click();
+    await expect(page.getByRole('button', { name: 'Generate Route' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Start Over' })).toBeDisabled();
     await page.getByRole('button', { name: 'Zoom in' }).click();
     await page.getByRole('button', { name: 'Zoom in' }).click();
 
@@ -45,9 +47,11 @@ test('a signed-in rider sees their rides, routes between two points and exports 
     await page.mouse.click(cx - 150, cy);
     await page.mouse.click(cx + 150, cy);
     expect((await generated).status()).toBe(200);
+    await expect(page.getByRole('button', { name: 'Regenerate Route' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Start Over' })).toBeEnabled();
 
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'GPX' }).click();
+    await page.getByRole('button', { name: 'GPX', exact: true }).click();
     const gpx = fs.readFileSync(await (await download).path(), 'utf8');
     const points = [...gpx.matchAll(/<trkpt lat="([-\d.]+)" lon="([-\d.]+)"/g)].map(m => ({ lat: Number(m[1]), lon: Number(m[2]) }));
     expect(points.length).toBeGreaterThan(10);

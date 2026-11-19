@@ -121,3 +121,55 @@ describe('optimize an imported route (#35)', () => {
         expect(page).toContain("importedOverlay={importedOverlay}");
     });
 });
+
+describe('header and mode toolbar consistency (#249)', () => {
+    it('says Generate until a route exists, and is disabled with nothing to route', () => {
+        expect(page).toContain("const generateLabel = route ? 'Regenerate Route' : 'Generate Route';");
+        expect(page).not.toContain("'Regenerate Route'\n");
+        expect(page.match(/disabled=\{loading \|\| !hasWork\}/g)).toHaveLength(2);
+    });
+
+    it('uses one name for the reset button', () => {
+        expect(page).not.toContain('Clear Workspace');
+        expect(page).toContain('disabled={!hasWork}');
+    });
+
+    it('offers Suggest only before any work starts', () => {
+        expect(page).toContain('const canSuggest = hasStravaCreds(stravaCredentials) && !hasWork;');
+    });
+
+    it('puts the buttons that come and go after the fixed ones in the header', () => {
+        const left = page.slice(page.indexOf('Fixed buttons sit right after the logo'), page.indexOf('hidden md:flex items-center gap-2 min-[1440px]:gap-3">'));
+        const order = ['RwgpsHeaderButton', 'title="Import a GPX', 'title="Preferences"', 'title="View coverage stats"', 'title="Browse your RideWithGPS library"', '{canSuggest && (', 'title="Clear imported route"'];
+        const positions = order.map(marker => left.indexOf(marker));
+        expect(positions.every(p => p >= 0)).toBe(true);
+        expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+
+        const right = page.slice(page.indexOf('hidden md:flex items-center gap-2 min-[1440px]:gap-3">'));
+        expect(right.indexOf('{route && (')).toBeLessThan(right.indexOf('onClick={handleUndo}'));
+    });
+
+    it('fits the header at 1280px by dropping secondary labels below 1440px', () => {
+        expect(page).toContain('<span className="hidden min-[1440px]:inline">Import</span>');
+        expect(page).toContain('<span className="hidden min-[1440px]:inline">Stats</span>');
+        expect(page).toContain('Below 1440px the full export row');
+        expect(page.split('className="hidden min-[1440px]:flex items-center')).toHaveLength(4);
+    });
+
+    it('pins the mode selector by putting its extra buttons to its left on desktop', () => {
+        expect(page).toContain('md:absolute md:right-full md:top-0 md:mr-1');
+    });
+
+    it('says when drawing an area or lasso drops back to Point mode', () => {
+        expect(page).toContain("showModeHint('Area added — back to Point mode');");
+        expect(page).toContain("showModeHint('Lasso added — back to Point mode');");
+    });
+
+    it('names the settings dialog after what it holds and uses switches for the avoid options', () => {
+        expect(page).toContain('title="Preferences"');
+        expect(page).toContain('>Preferences</h2>');
+        expect(page).not.toContain('Routing Preferences');
+        expect(page).toContain('<SwitchRow label="Avoid Gravel"');
+        expect(page).toContain('New Road Preference: {routingOptions.riddenPenalty}x');
+    });
+});

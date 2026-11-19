@@ -32,7 +32,7 @@ export function AccountButton() {
                             <LogOut className="w-3.5 h-3.5 text-indigo-600" />
                         </div>
                     )}
-                    <span className="max-w-[8rem] truncate">{session.user.name ?? 'Account'}</span>
+                    <span className="hidden min-[1440px]:inline max-w-[8rem] truncate">{session.user.name ?? 'Account'}</span>
                 </button>
                 {showMenu && (
                     <>

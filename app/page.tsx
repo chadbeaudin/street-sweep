@@ -6,7 +6,7 @@ import { ErrorDialog } from '@/components/ErrorDialog';
 import dynamic from 'next/dynamic';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSession, signIn, signOut } from 'next-auth/react';
-import { Loader2, Undo2, Redo2, Settings2, Check, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, ThumbsUp, Bike, Footprints } from 'lucide-react';
+import { Loader2, Undo2, Redo2, Settings2, ChevronDown, Eraser, Settings, BarChart3, Home as HomeIcon, X, Menu, MoreVertical, Sparkles, ThumbsUp, Bike, Footprints } from 'lucide-react';
 import { AccountButton } from '@/components/AccountButton';
 import { shouldShowStatsButton } from '@/lib/stats';
 import { boundsOf, placeSuggestedRoute, suggestTargetMessage } from '@/lib/suggestRoute';
@@ -21,6 +21,7 @@ import { RwgpsSuccessDialog } from '@/components/RwgpsSuccessDialog';
 import { RwgpsHeaderButton } from '@/components/RwgpsHeaderButton';
 import { HowToDialog } from '@/components/HowToDialog';
 import { ExportTipsDialog } from '@/components/ExportTipsDialog';
+import { SwitchRow } from '@/components/SwitchRow';
 import { RwgpsLibraryDialog } from '@/components/RwgpsLibraryDialog';
 import { RwgpsSaveConfirmDialog } from '@/components/RwgpsSaveConfirmDialog';
 import { DeleteAccountDialog } from '@/components/DeleteAccountDialog';
@@ -157,6 +158,7 @@ export default function Home() {
     const [allRoads, setAllRoads] = useState<[number, number][][]>([]);
     const [isSelectionMode, setIsSelectionMode] = useState(false);
     const [isLassoMode, setIsLassoMode] = useState(false);
+    const [modeHint, setModeHint] = useState<string | null>(null);
     const [selectionBoxes, setSelectionBoxes] = useState<{ north: number; south: number; east: number; west: number }[]>([]);
     const [selectionPolygons, setSelectionPolygons] = useState<[number, number][][]>([]);
     const [startPoint, setStartPoint] = useState<{ lat: number; lon: number; label: string } | null>(null);
@@ -186,7 +188,7 @@ export default function Home() {
     // Cycling vs running (#88): filters which Strava activity types count as
     // "ridden" everywhere (map overlay, coverage stats, routing penalty).
     // Prompted once on first run, then persisted; changeable later from
-    // Routing Preferences.
+    // Preferences.
     const { units, setUnits } = useUnits();
 
     const [chartsPreloaded, setChartsPreloaded] = useState(false);
@@ -1705,7 +1707,17 @@ export default function Home() {
         setRwgpsSourceRouteId(null);
     }, []);
 
-    const canSuggest = hasStravaCreds(stravaCredentials) && selectedPoints.length === 0 && !route && selectionBoxes.length === 0 && selectionPolygons.length === 0;
+    const hasWork = selectedPoints.length > 0 || manualRoute.length > 0 || !!route || selectionBoxes.length > 0 || selectionPolygons.length > 0;
+    const canSuggest = hasStravaCreds(stravaCredentials) && !hasWork;
+    const generateLabel = route ? 'Regenerate Route' : 'Generate Route';
+
+    // Drawing an area or lasso drops back to Point mode (components/Map.tsx); say so, or the switch goes unnoticed.
+    const modeHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const showModeHint = useCallback((message: string) => {
+        if (modeHintTimerRef.current) clearTimeout(modeHintTimerRef.current);
+        setModeHint(message);
+        modeHintTimerRef.current = setTimeout(() => setModeHint(null), 3000);
+    }, []);
 
     // "Suggest a Route" (#80): the planned loop arrives as waypoints with the routed path
     // between them, and is placed as ordinary points the rider can then move or delete.
@@ -1866,33 +1878,12 @@ export default function Home() {
 
                 {/* Fixed buttons sit right after the logo; mr-auto keeps them from shifting
                     when the route-dependent group on the right grows. */}
-                <div className="hidden md:flex items-center gap-3 ml-6 mr-auto">
+                <div className="hidden md:flex items-center gap-2 min-[1440px]:gap-3 ml-4 min-[1440px]:ml-6 mr-auto">
                     <RwgpsHeaderButton
                         isConnected={rwgpsConnected}
                         isLoading={isRwgpsUploading}
                         onClick={() => setShowRwgpsSettings(true)}
                     />
-
-                    {rwgpsConnected && (
-                        <button
-                            onClick={() => setShowRwgpsLibrary(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm mr-2"
-                            title="Browse your RideWithGPS library"
-                        >
-                            Library
-                        </button>
-                    )}
-
-                    {shouldShowStatsButton(hasStravaCreds(stravaCredentials), !!(session?.user as { athleteId?: string } | undefined)?.athleteId, stravaRoads) && (
-                        <button
-                            onClick={() => setShowStats(true)}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
-                            title="View coverage stats"
-                        >
-                            <BarChart3 className="w-4 h-4" />
-                            Stats
-                        </button>
-                    )}
 
                     <input
                         ref={importFileRef}
@@ -1916,32 +1907,8 @@ export default function Home() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                             </svg>
                         )}
-                        Import
+                        <span className="hidden min-[1440px]:inline">Import</span>
                     </button>
-                    {canSuggest && (
-                        <button
-                            onClick={() => setPickingSuggestStart(true)}
-                            disabled={isSuggesting}
-                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm disabled:opacity-60"
-                            title="Pick a start point and get a route like the ride you do most, taking unridden streets where it can"
-                        >
-                            {isSuggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                            Suggest
-                        </button>
-                    )}
-                    {isImportedRoute && route && (
-                        <button
-                            onClick={clearPoints}
-                            className="flex items-center gap-1 px-2 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-md text-sm font-medium hover:bg-purple-100 transition-colors"
-                            title="Clear imported route"
-                        >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                            Imported
-                        </button>
-                    )}
-
                     <div className="flex items-center gap-1">
                         <button
                             onClick={() => setShowOptions(true)}
@@ -1949,7 +1916,7 @@ export default function Home() {
                                 ? 'bg-indigo-50 text-indigo-700 border-indigo-300'
                                 : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                 }`}
-                            title="Routing Options"
+                            title="Preferences"
                         >
                             <Settings2 className="w-4 h-4" />
                         </button>
@@ -1964,7 +1931,7 @@ export default function Home() {
                                     onClick={(e) => e.stopPropagation()}
                                 >
                                     <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 sticky top-0">
-                                        <h2 className="text-lg font-bold text-gray-900">Routing Preferences</h2>
+                                        <h2 className="text-lg font-bold text-gray-900">Preferences</h2>
                                         <button
                                             onClick={() => setShowOptions(false)}
                                             className="p-2 hover:bg-gray-100 rounded-full transition-colors text-gray-500"
@@ -2041,39 +2008,12 @@ export default function Home() {
                                                     Start routes from this address
                                                 </label>
                                             </div>
-                                            <button
-                                                onClick={() => setRoutingOptions({ ...routingOptions, avoidGravel: !routingOptions.avoidGravel })}
-                                                className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidGravel ? 'bg-amber-50 text-amber-900' : 'text-gray-700 hover:bg-gray-100'}`}
-                                            >
-                                                <div className="flex items-center gap-2 text-left">
-                                                    <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${routingOptions.avoidGravel ? 'bg-amber-500' : 'bg-gray-200'}`}></div>
-                                                    <span>Avoid Gravel</span>
-                                                </div>
-                                                {routingOptions.avoidGravel && <Check className="w-4 h-4 text-amber-600" />}
-                                            </button>
-                                            <button
-                                                onClick={() => setRoutingOptions({ ...routingOptions, avoidHighways: !routingOptions.avoidHighways })}
-                                                className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidHighways ? 'bg-red-50 text-red-900' : 'text-gray-700 hover:bg-gray-100'}`}
-                                            >
-                                                <div className="flex items-center gap-2 text-left">
-                                                    <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${routingOptions.avoidHighways ? 'bg-red-500' : 'bg-gray-200'}`}></div>
-                                                    <span>Avoid Highways</span>
-                                                </div>
-                                                {routingOptions.avoidHighways && <Check className="w-4 h-4 text-red-600" />}
-                                            </button>
-                                            <button
-                                                onClick={() => setRoutingOptions({ ...routingOptions, avoidTrails: !routingOptions.avoidTrails })}
-                                                className={`w-full px-3 py-2 text-sm rounded-md flex items-center justify-between transition-colors ${routingOptions.avoidTrails ? 'bg-green-50 text-green-900' : 'text-gray-700 hover:bg-gray-100'}`}
-                                            >
-                                                <div className="flex items-center gap-2 text-left">
-                                                    <div className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${routingOptions.avoidTrails ? 'bg-green-500' : 'bg-gray-200'}`}></div>
-                                                    <span>Avoid Trails</span>
-                                                </div>
-                                                {routingOptions.avoidTrails && <Check className="w-4 h-4 text-green-600" />}
-                                            </button>
+                                            <SwitchRow label="Avoid Gravel" checked={routingOptions.avoidGravel} onChange={avoidGravel => setRoutingOptions({ ...routingOptions, avoidGravel })} />
+                                            <SwitchRow label="Avoid Highways" checked={routingOptions.avoidHighways} onChange={avoidHighways => setRoutingOptions({ ...routingOptions, avoidHighways })} />
+                                            <SwitchRow label="Avoid Trails" checked={routingOptions.avoidTrails} onChange={avoidTrails => setRoutingOptions({ ...routingOptions, avoidTrails })} />
                                             <div className="w-full px-3 py-3 border-t border-gray-200">
                                                 <label className="text-sm font-medium text-gray-700 mb-2 block">
-                                                    {activityMode === 'running' ? 'Run' : 'Ridden'} Road Penalty: {routingOptions.riddenPenalty}x
+                                                    New Road Preference: {routingOptions.riddenPenalty}x
                                                 </label>
                                                 <input
                                                     type="range"
@@ -2193,10 +2133,146 @@ export default function Home() {
                             </div>
                         )}
                     </div>
+
+                    {/* Buttons that come and go sit last, so the fixed ones before them never move (#249). */}
+                    {shouldShowStatsButton(hasStravaCreds(stravaCredentials), !!(session?.user as { athleteId?: string } | undefined)?.athleteId, stravaRoads) && (
+                        <button
+                            onClick={() => setShowStats(true)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
+                            title="View coverage stats"
+                        >
+                            <BarChart3 className="w-4 h-4" />
+                            <span className="hidden min-[1440px]:inline">Stats</span>
+                        </button>
+                    )}
+                    {rwgpsConnected && (
+                        <button
+                            onClick={() => setShowRwgpsLibrary(true)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm"
+                            title="Browse your RideWithGPS library"
+                        >
+                            Library
+                        </button>
+                    )}
+                    {canSuggest && (
+                        <button
+                            onClick={() => setPickingSuggestStart(true)}
+                            disabled={isSuggesting}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 shadow-sm disabled:opacity-60"
+                            title="Pick a start point and get a route like the ride you do most, taking unridden streets where it can"
+                        >
+                            {isSuggesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                            Suggest
+                        </button>
+                    )}
+                    {isImportedRoute && route && (
+                        <button
+                            onClick={clearPoints}
+                            className="flex items-center gap-1 px-2 py-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-md text-sm font-medium hover:bg-purple-100 transition-colors"
+                            title="Clear imported route"
+                        >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            Imported
+                        </button>
+                    )}
                 </div>
 
-                <div className="hidden md:flex items-center gap-3">
-                    <div className="flex items-center gap-1 mr-2 border-r border-gray-100 pr-3">
+                <div className="hidden md:flex items-center gap-2 min-[1440px]:gap-3">
+                    {route && (
+                        <>
+                            <button
+                                onClick={downloadGPX}
+                                className="flex items-center gap-2 px-3 min-[1440px]:px-4 py-2 max-md:min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400"
+                            >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                GPX
+                            </button>
+                            <button
+                                onClick={downloadFIT}
+                                disabled={isFitDownloading}
+                                title="Download FIT (Garmin native format)"
+                                className="hidden min-[1440px]:flex items-center gap-2 px-3 min-[1440px]:px-4 py-2 max-md:min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 disabled:opacity-60"
+                            >
+                                {isFitDownloading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                )}
+                                FIT
+                            </button>
+                            <button
+                                onClick={sendToGarmin}
+                                disabled={isGarminUploading}
+                                title="Send to Garmin"
+                                className="hidden min-[1440px]:flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
+                            >
+                                {isGarminUploading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <span>&rarr;</span>
+                                )}
+                                Garmin
+                            </button>
+                            <button
+                                onClick={sendToRwgps}
+                                disabled={isRwgpsUploading}
+                                title={rwgpsSourceRouteId ? 'Update on RideWithGPS' : 'Send to RideWithGPS'}
+                                className="hidden min-[1440px]:flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-[#FC4C02] text-white rounded-md text-sm font-semibold hover:bg-[#e34402] transition-all shadow-sm disabled:opacity-60"
+                            >
+                                {isRwgpsUploading ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                    <span>&rarr;</span>
+                                )}
+                                {rwgpsSourceRouteId ? 'Update RWGPS' : 'RWGPS'}
+                            </button>
+                            {/* Below 1440px the full export row doesn't fit beside the other actions (#249). */}
+                            <div className="relative min-[1440px]:hidden">
+                                <button
+                                    onClick={() => setShowMobileExport(!showMobileExport)}
+                                    title="More export options"
+                                    className="flex items-center justify-center px-2 py-2 bg-white border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50 transition-all"
+                                >
+                                    <MoreVertical className="w-4 h-4" />
+                                </button>
+                                {showMobileExport && (
+                                    <>
+                                        <div className="fixed inset-0 z-[1001]" onClick={() => setShowMobileExport(false)}></div>
+                                        <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-[1002] py-1 overflow-hidden ring-1 ring-black ring-opacity-5">
+                                            <button
+                                                onClick={() => { downloadFIT(); setShowMobileExport(false); }}
+                                                disabled={isFitDownloading}
+                                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                            >
+                                                {isFitDownloading ? 'Downloading…' : 'FIT'}
+                                            </button>
+                                            <button
+                                                onClick={() => { sendToGarmin(); setShowMobileExport(false); }}
+                                                disabled={isGarminUploading}
+                                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                            >
+                                                {isGarminUploading ? 'Uploading…' : 'Send to Garmin'}
+                                            </button>
+                                            <button
+                                                onClick={() => { sendToRwgps(); setShowMobileExport(false); }}
+                                                disabled={isRwgpsUploading}
+                                                className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-60"
+                                            >
+                                                {isRwgpsUploading ? 'Uploading…' : rwgpsSourceRouteId ? 'Update on RideWithGPS' : 'Send to RideWithGPS'}
+                                            </button>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </>
+                    )}
+                    <div className="flex items-center gap-1 border-x border-gray-100 px-2">
                         <button
                             onClick={handleUndo}
                             disabled={isMarkingRoads ? avoidDraftPoints.length === 0 : historyIndex < 0}
@@ -2214,81 +2290,26 @@ export default function Home() {
                             <Redo2 className="w-5 h-5" />
                         </button>
                     </div>
-                    {route && (
-                        <>
-                            <button
-                                onClick={downloadGPX}
-                                className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400"
-                            >
-                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                </svg>
-                                GPX
-                            </button>
-                            <button
-                                onClick={downloadFIT}
-                                disabled={isFitDownloading}
-                                title="Download FIT (Garmin native format)"
-                                className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-all hover:border-gray-400 disabled:opacity-60"
-                            >
-                                {isFitDownloading ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                    </svg>
-                                )}
-                                FIT
-                            </button>
-                            <button
-                                onClick={sendToGarmin}
-                                disabled={isGarminUploading}
-                                title="Send to Garmin"
-                                className="flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-blue-600 text-white rounded-md text-sm font-semibold hover:bg-blue-700 transition-all shadow-sm disabled:opacity-60"
-                            >
-                                {isGarminUploading ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                    <span>&rarr;</span>
-                                )}
-                                Garmin
-                            </button>
-                            <button
-                                onClick={sendToRwgps}
-                                disabled={isRwgpsUploading}
-                                title={rwgpsSourceRouteId ? 'Update on RideWithGPS' : 'Send to RideWithGPS'}
-                                className="flex items-center gap-1.5 px-3 py-2 max-md:min-h-[44px] bg-[#FC4C02] text-white rounded-md text-sm font-semibold hover:bg-[#e34402] transition-all shadow-sm disabled:opacity-60"
-                            >
-                                {isRwgpsUploading ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                    <span>&rarr;</span>
-                                )}
-                                {rwgpsSourceRouteId ? 'Update RWGPS' : 'RWGPS'}
-                            </button>
-                        </>
-                    )}
-                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
-                        <button
-                            onClick={clearPoints}
-                            className="flex items-center gap-2 px-4 py-2 bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all"
-                        >
-                            {(route || selectionBoxes.length > 0 || selectionPolygons.length > 0) ? 'Start Over' : 'Clear Workspace'}
-                        </button>
-                    )}
+                    {/* Always rendered (disabled when idle) so the header doesn't reflow as work starts (#249). */}
+                    <button
+                        onClick={clearPoints}
+                        disabled={!hasWork}
+                        className="flex items-center gap-2 px-3 min-[1440px]:px-4 py-2 whitespace-nowrap bg-white border border-red-200 rounded-md text-sm font-medium text-red-600 hover:bg-red-50 transition-all disabled:border-gray-200 disabled:text-gray-300 disabled:hover:bg-white"
+                    >
+                        Start Over
+                    </button>
                     <button
                         onClick={() => isImportedRouteRef.current ? setShowDetourDialog(true) : handleGenerate()}
-                        disabled={loading}
-                        className="flex items-center gap-2 px-4 py-2 max-md:min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
+                        disabled={loading || !hasWork}
+                        title={hasWork ? undefined : 'Add points or draw an area first'}
+                        className="flex items-center justify-center gap-2 min-[1440px]:min-w-[10rem] whitespace-nowrap px-3 min-[1440px]:px-4 py-2 max-md:min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-300 transition-colors shadow-sm"
                     >
                         {loading ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
                                 Generating...
                             </>
-                        ) : (
-                            'Regenerate Route'
-                        )}
+                        ) : generateLabel}
                     </button>
 
                     <AccountButton />
@@ -2418,17 +2439,15 @@ export default function Home() {
                 <div className="md:hidden absolute inset-x-0 bottom-0 z-[1010] flex items-center gap-2 px-3 pt-2 pb-2 safe-b bg-white/92 backdrop-blur border-t border-gray-200">
                     <button
                         onClick={() => isImportedRouteRef.current ? setShowDetourDialog(true) : handleGenerate()}
-                        disabled={loading}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-400 transition-colors shadow-sm"
+                        disabled={loading || !hasWork}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2 min-h-[44px] bg-indigo-600 text-white rounded-md text-sm font-semibold hover:bg-indigo-700 disabled:bg-indigo-300 transition-colors shadow-sm"
                     >
                         {loading ? (
                             <>
                                 <Loader2 className="w-4 h-4 animate-spin" />
                                 Generating...
                             </>
-                        ) : (
-                            'Regenerate Route'
-                        )}
+                        ) : generateLabel}
                     </button>
 
                     {route && (
@@ -2488,10 +2507,10 @@ export default function Home() {
                         </>
                     )}
 
-                    {(selectedPoints.length > 0 || manualRoute.length > 0 || route || selectionBoxes.length > 0 || selectionPolygons.length > 0) && (
+                    {hasWork && (
                         <button
                             onClick={clearPoints}
-                            title={(route || selectionBoxes.length > 0 || selectionPolygons.length > 0) ? 'Start Over' : 'Clear Workspace'}
+                            title="Start Over"
                             className="flex items-center justify-center min-h-[44px] min-w-[44px] px-2 py-2 bg-white border border-red-200 rounded-md text-red-600 hover:bg-red-50 transition-all shrink-0"
                         >
                             <Eraser className="w-4 h-4" />
@@ -2691,6 +2710,8 @@ export default function Home() {
                             Prefer
                         </button>
                     </div>
+                    {/* On desktop these sit to the left of the mode selector, so it doesn't jump when they appear (#249). */}
+                    <div className="flex items-center gap-1 md:absolute md:right-full md:top-0 md:mr-1">
                     {(routingOptions.avoidedRoads.length > 0 || isAvoidEraserMode) && (
                         <button
                             onClick={() => {
@@ -2718,7 +2739,13 @@ export default function Home() {
                             </svg>
                         </button>
                     )}
+                    </div>
                 </div>
+                {modeHint && (
+                    <div className="absolute top-16 right-4 z-[1000] bg-gray-900/85 text-white text-sm font-medium px-3 py-1.5 rounded-md shadow-md pointer-events-none">
+                        {modeHint}
+                    </div>
+                )}
 
                 <Map
                     bbox={bbox}
@@ -2753,6 +2780,7 @@ export default function Home() {
                             // See the lasso handler: a prior sweep's auto-computed endpoint
                             // is superseded by this new area rather than backtracked to.
                             dropComputedEndpointForNewArea();
+                            showModeHint('Area added — back to Point mode');
                             // Remember where in the point sequence this area was drawn (#52).
                             setAreaAnchors({ ...areaAnchorsRef.current, boxes: [...areaAnchorsRef.current.boxes, pointsRef.current.length] });
                             const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: newBoxes, selectionPolygons: [...selectionPolygonsRef.current], areaAnchors: areaAnchorsRef.current };
@@ -2775,6 +2803,7 @@ export default function Home() {
                             // the user picked — this new area supersedes it, so the route
                             // ends here instead of backtracking to where the last one did.
                             dropComputedEndpointForNewArea();
+                            showModeHint('Lasso added — back to Point mode');
                             // Remember where in the point sequence this area was drawn (#52).
                             setAreaAnchors({ ...areaAnchorsRef.current, polygons: [...areaAnchorsRef.current.polygons, pointsRef.current.length] });
                             const snapshot = { points: [...pointsRef.current], route: [...manualRouteRef.current], selectionBoxes: [...selectionBoxesRef.current], selectionPolygons: newPolygons, areaAnchors: areaAnchorsRef.current };
@@ -2913,7 +2942,7 @@ export default function Home() {
                     <div className="fixed inset-0 z-[2100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
                         <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-6 text-center">
                             <h2 className="text-lg font-bold text-gray-900 mb-2">What are you using StreetSweep for?</h2>
-                            <p className="text-sm text-gray-500 mb-5">This decides which Strava activities count as roads you&apos;ve covered. You can change it later in Routing Preferences.</p>
+                            <p className="text-sm text-gray-500 mb-5">This decides which Strava activities count as roads you&apos;ve covered. You can change it later in Preferences.</p>
                             <div className="flex gap-3">
                                 <button
                                     onClick={() => chooseActivityMode('cycling')}
